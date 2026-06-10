@@ -1,0 +1,12 @@
+{
+  "name": "unreal-plugin",
+  "profiles": [
+    "solid",
+    "simple-design",
+    "cpp",
+    "unreal",
+    "documentation",
+    "testing",
+    "ai-agent"
+  ]
+}

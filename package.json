@@ -1,0 +1,52 @@
+{
+  "name": "aidd-app-starter",
+  "version": "0.8.0",
+  "private": true,
+  "description": "AIDD desktop app starter: project creation, workflow-first, Markdown-backed, Git-ready.",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:main\"",
+    "dev:renderer": "vite --host 127.0.0.1",
+    "dev:main": "wait-on tcp:5173 && tsc -p tsconfig.main.json && electron .",
+    "build": "tsc -p tsconfig.main.json && vite build",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.main.json --noEmit",
+    "lint": "echo \"No linter configured yet.\"",
+    "package": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@isomorphic-git/lightning-fs": "^4.6.0",
+    "@toast-ui/editor": "^3.2.2",
+    "gray-matter": "^4.0.3",
+    "isomorphic-git": "^1.27.1",
+    "lucide-react": "^0.468.0",
+    "marked": "^13.0.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "net.westforge.aidd",
+    "productName": "AIDD",
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "resources/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "__PACKAGE_NAME__",
+  "version": "0.2.0",
+  "private": true,
+  "type": "component",
+  "scripts": {
+    "aidd": "node .aidd/scripts/aidd.mjs",
+    "aidd:check": "node .aidd/scripts/aidd.mjs check",
+    "aidd:list": "node .aidd/scripts/aidd.mjs list",
+    "aidd:component:create": "node .aidd/scripts/aidd.mjs component:create",
+    "aidd:component:list": "node .aidd/scripts/aidd.mjs component:list",
+    "aidd:capability:create": "node .aidd/scripts/aidd.mjs capability:create",
+    "aidd:capability:list": "node .aidd/scripts/aidd.mjs capability:list",
+    "aidd:bundle:create": "node .aidd/scripts/aidd.mjs bundle:create",
+    "aidd:bundle:ready": "node .aidd/scripts/aidd.mjs bundle:ready",
+    "aidd:bundle:export": "node .aidd/scripts/aidd.mjs bundle:export",
+    "aidd:bundle:list": "node .aidd/scripts/aidd.mjs bundle:list",
+    "aidd:delivery:roadmap": "node .aidd/scripts/aidd.mjs delivery:roadmap",
+    "aidd:standards:list": "node .aidd/scripts/aidd.mjs standards:list",
+    "aidd:standards:apply": "node .aidd/scripts/aidd.mjs standards:apply",
+    "aidd:standards:show": "node .aidd/scripts/aidd.mjs standards:show",
+    "aidd:standards:remove": "node .aidd/scripts/aidd.mjs standards:remove",
+    "aidd:capability": "node .aidd/scripts/aidd.mjs capability",
+    "aidd:clean": "node .aidd/scripts/aidd.mjs clean"
+  }
+}

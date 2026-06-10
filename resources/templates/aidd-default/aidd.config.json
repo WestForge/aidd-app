@@ -1,0 +1,9 @@
+{
+  "root": ".",
+  "foundationDir": "foundation",
+  "componentsDir": "components",
+  "capabilitiesDir": "capabilities",
+  "deliveryDir": "delivery",
+  "deliveryDelivery PackagesDir": "delivery/packages",
+  "sourceRoots": []
+}

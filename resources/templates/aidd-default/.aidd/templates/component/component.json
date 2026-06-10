@@ -1,0 +1,9 @@
+{
+  "slug": "__COMPONENT_SLUG__",
+  "title": "__COMPONENT_TITLE__",
+  "status": "template",
+  "createdAt": null,
+  "owns": [],
+  "dependsOn": [],
+  "exposes": []
+}

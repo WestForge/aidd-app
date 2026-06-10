@@ -1,0 +1,6 @@
+{
+  "templateId": "aidd-default",
+  "templateVersion": "0.6.0",
+  "description": "Default AIDD text-only project template with components, capabilities, delivery packages, standards, and local tooling.",
+  "version": "0.6.0"
+}

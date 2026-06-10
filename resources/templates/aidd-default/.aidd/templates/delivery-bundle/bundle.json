@@ -1,0 +1,9 @@
+{
+  "id": "__BUNDLE_ID__",
+  "title": "__BUNDLE_TITLE__",
+  "status": "template",
+  "capability": "__CAPABILITY_SLUG__",
+  "components": [],
+  "priority": 100,
+  "createdAt": null
+}

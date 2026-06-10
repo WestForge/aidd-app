@@ -1,0 +1,30 @@
+import { contextBridge, ipcRenderer } from 'electron';
+
+contextBridge.exposeInMainWorld('aidd', {
+  selectProjectFolder: () => ipcRenderer.invoke('project:selectFolder'),
+  listProjects: () => ipcRenderer.invoke('project:list'),
+  forgetProject: (projectId: string) => ipcRenderer.invoke('project:forget', projectId),
+  readProjectStatus: (projectPath: string) => ipcRenderer.invoke('project:status', projectPath),
+  validateProject: (projectPath: string) => ipcRenderer.invoke('project:validate', projectPath),
+  repairProject: (projectPath: string) => ipcRenderer.invoke('project:repair', projectPath),
+  readProjectSetup: (projectPath: string) => ipcRenderer.invoke('project:setup', projectPath),
+  readWorkflowDocuments: (projectPath: string) => ipcRenderer.invoke('project:workflowDocuments', projectPath),
+  saveWorkflowDocument: (input: unknown) => ipcRenderer.invoke('project:saveWorkflowDocument', input),
+  saveFoundationDocument: (input: unknown) => ipcRenderer.invoke('project:saveFoundationDocument', input),
+  defineStandards: (input: unknown) => ipcRenderer.invoke('project:defineStandards', input),
+  createComponent: (input: unknown) => ipcRenderer.invoke('project:createComponent', input),
+  readComponent: (input: unknown) => ipcRenderer.invoke('project:readComponent', input),
+  updateComponent: (input: unknown) => ipcRenderer.invoke('project:updateComponent', input),
+  createCapability: (input: unknown) => ipcRenderer.invoke('project:createCapability', input),
+  readCapability: (input: unknown) => ipcRenderer.invoke('project:readCapability', input),
+  updateCapability: (input: unknown) => ipcRenderer.invoke('project:updateCapability', input),
+  createDeliveryPackageFromCapability: (input: unknown) => ipcRenderer.invoke('project:createDeliveryPackageFromCapability', input),
+  readSourceReference: (projectPath: string) => ipcRenderer.invoke('project:readSourceReference', projectPath),
+  readSourceProjects: (projectPath: string) => ipcRenderer.invoke('project:readSourceProjects', projectPath),
+  addSourceProject: (projectPath: string) => ipcRenderer.invoke('project:addSourceProject', projectPath),
+  selectSourceDirectory: (projectPath: string) => ipcRenderer.invoke('project:selectSourceDirectory', projectPath),
+  createProject: (input: unknown) => ipcRenderer.invoke('project:create', input),
+  openExistingProject: () => ipcRenderer.invoke('project:openExisting'),
+  readText: (filePath: string) => ipcRenderer.invoke('fs:readText', filePath),
+  writeText: (filePath: string, content: string) => ipcRenderer.invoke('fs:writeText', filePath, content)
+});
