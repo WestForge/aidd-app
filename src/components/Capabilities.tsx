@@ -6,6 +6,29 @@ const statusOptions: AiddSetupStatus[] = ['not-started', 'draft', 'in-review', '
 
 type CapabilityView = 'list' | 'new' | 'edit';
 
+type CapabilitySection = {
+  key: string;
+  fileName: string;
+  title: string;
+  body: string;
+  status?: AiddSetupStatus | string;
+  prompt?: string;
+};
+
+const capabilityTemplateSections: CapabilitySection[] = [
+  { key: 'outcomes', fileName: '01-outcomes.md', title: 'Outcomes', body: '', prompt: 'Describe what this capability should make possible.' },
+  { key: 'scope', fileName: '02-scope.md', title: 'Scope', body: '', prompt: 'Define what is in scope and out of scope.' },
+  { key: 'user-journeys', fileName: '03-user-journeys.md', title: 'User Journeys', body: '', prompt: 'Describe the journeys or workflows this capability supports.' },
+  { key: 'functional-requirements', fileName: '04-functional-requirements.md', title: 'Functional Requirements', body: '', prompt: 'List the required behaviours and functions.' },
+  { key: 'non-functional-requirements', fileName: '05-non-functional-requirements.md', title: 'Non-Functional Requirements', body: '', prompt: 'List quality attributes, constraints, performance, reliability, security, or accessibility needs.' },
+  { key: 'data-model', fileName: '06-data-model.md', title: 'Data Model', body: '', prompt: 'Describe important data, records, state, and identifiers.' },
+  { key: 'integrations', fileName: '07-integrations.md', title: 'Integrations', body: '', prompt: 'Describe systems, services, components, or workflows this capability integrates with.' },
+  { key: 'architecture', fileName: '08-architecture.md', title: 'Architecture', body: '', prompt: 'Describe the expected architectural shape or constraints.' },
+  { key: 'ux-ui', fileName: '09-ux-ui.md', title: 'UX/UI', body: '', prompt: 'Describe user-facing screens, feedback, inspection tools, or UX expectations.' },
+  { key: 'risks', fileName: '10-risks.md', title: 'Risks', body: '', prompt: 'Capture risks, unknowns, edge cases, and failure modes.' },
+  { key: 'validation', fileName: '11-validation.md', title: 'Validation', body: '', prompt: 'Describe how this capability should be verified.' }
+];
+
 function statusLabel(status?: string) {
   return (status ?? 'draft').replace(/-/g, ' ');
 }
@@ -14,18 +37,26 @@ function statusClass(status?: string) {
   return `softPill status-${status ?? 'draft'}`;
 }
 
+function newSections() {
+  return capabilityTemplateSections.map((section) => ({ ...section, body: '', status: 'not-started' as AiddSetupStatus }));
+}
+
+function sectionProgress(sections: CapabilitySection[]) {
+  const completed = sections.filter((section) => section.body.trim() || section.status === 'complete').length;
+  return { completed, total: sections.length };
+}
+
 export function Capabilities({ activeProject }: { activeProject?: AiddTrackedProject | null }) {
   const [setup, setSetup] = useState<AiddProjectSetupState | null>(null);
   const [view, setView] = useState<CapabilityView>('list');
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [outcome, setOutcome] = useState('');
-  const [notes, setNotes] = useState('');
   const [status, setStatus] = useState<AiddSetupStatus>('draft');
   const [selectedComponents, setSelectedComponents] = useState<string[]>([]);
   const [inlineComponentTitle, setInlineComponentTitle] = useState('');
   const [inlineComponentDescription, setInlineComponentDescription] = useState('');
+  const [sections, setSections] = useState<CapabilitySection[]>(newSections());
+  const [activeSectionKey, setActiveSectionKey] = useState('outcomes');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,17 +84,18 @@ export function Capabilities({ activeProject }: { activeProject?: AiddTrackedPro
   }, [setup]);
 
   const foundationReady = foundationBlockers.length === 0;
+  const progress = sectionProgress(sections);
+  const activeSection = sections.find((section) => section.key === activeSectionKey) ?? sections[0];
 
   const resetForm = () => {
     setTitle('');
-    setDescription('');
-    setOutcome('');
-    setNotes('');
     setStatus('draft');
     setSelectedComponents([]);
     setInlineComponentTitle('');
     setInlineComponentDescription('');
     setSelectedSlug(null);
+    setSections(newSections());
+    setActiveSectionKey('outcomes');
     setMessage(null);
   };
 
@@ -81,13 +113,12 @@ export function Capabilities({ activeProject }: { activeProject?: AiddTrackedPro
       const detail = await window.aidd.readCapability({ projectPath: activeProject.path, slug });
       setSelectedSlug(detail.slug);
       setTitle(detail.title);
-      setDescription(detail.description || '');
-      setOutcome(detail.outcome || '');
-      setNotes(detail.notes || '');
       setStatus((detail.status as AiddSetupStatus) || 'draft');
       setSelectedComponents(detail.components || []);
       setInlineComponentTitle('');
       setInlineComponentDescription('');
+      setSections(detail.sections?.length ? detail.sections : newSections());
+      setActiveSectionKey(detail.sections?.[0]?.key || 'outcomes');
       setView('edit');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -100,6 +131,14 @@ export function Capabilities({ activeProject }: { activeProject?: AiddTrackedPro
     setSelectedComponents((current) => current.includes(slug) ? current.filter((item) => item !== slug) : [...current, slug]);
   };
 
+  const updateActiveSectionBody = (body: string) => {
+    setSections((current) => current.map((section) => section.key === activeSectionKey ? { ...section, body, status: body.trim() ? section.status === 'not-started' ? 'draft' : section.status : section.status } : section));
+  };
+
+  const updateActiveSectionStatus = (nextStatus: AiddSetupStatus) => {
+    setSections((current) => current.map((section) => section.key === activeSectionKey ? { ...section, status: nextStatus } : section));
+  };
+
   const createCapability = async () => {
     if (!activeProject?.path) return;
     setSaving(true);
@@ -108,12 +147,10 @@ export function Capabilities({ activeProject }: { activeProject?: AiddTrackedPro
       const next = await window.aidd.createCapability({
         projectPath: activeProject.path,
         title,
-        description,
-        outcome,
-        notes,
         componentSlugs: selectedComponents,
         inlineComponent: inlineComponentTitle.trim() ? { title: inlineComponentTitle, description: inlineComponentDescription } : undefined,
-        status
+        status,
+        sections
       });
       setSetup(next);
       resetForm();
@@ -135,14 +172,12 @@ export function Capabilities({ activeProject }: { activeProject?: AiddTrackedPro
         projectPath: activeProject.path,
         slug: selectedSlug,
         title,
-        description,
-        outcome,
-        notes,
         componentSlugs: selectedComponents,
-        status
+        status,
+        sections
       });
       setSetup(next);
-      setMessage('Capability saved.');
+      setMessage('Capability saved. Template section files were updated.');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -182,7 +217,7 @@ export function Capabilities({ activeProject }: { activeProject?: AiddTrackedPro
         <div>
           <p className="eyebrow">Capabilities</p>
           <h1>Define what your system can do</h1>
-          <p className="muted largeText">Capabilities describe outcomes, behaviours, or features. Click a capability to edit it, or turn it into a delivery package when it is ready.</p>
+          <p className="muted largeText">Capabilities are managed through a template-backed editor. Each ribbon tab writes to a separate Markdown file.</p>
         </div>
         <div className="heroActions">
           <button className="secondaryButton" onClick={load}>Refresh</button>
@@ -208,7 +243,7 @@ export function Capabilities({ activeProject }: { activeProject?: AiddTrackedPro
             <div className="panelTitleRow">
               <div>
                 <h2>Capability catalogue</h2>
-                <p className="muted">Each capability is stored as Markdown with workflow status in frontmatter.</p>
+                <p className="muted">Click a capability to open the ribbon editor.</p>
               </div>
               <button className="primaryButton" onClick={openNew}><Plus size={16} /> New Capability</button>
             </div>
@@ -226,7 +261,7 @@ export function Capabilities({ activeProject }: { activeProject?: AiddTrackedPro
                     <h3>{capability.title}</h3>
                     <p className="muted">{capability.components?.length ? `${capability.components.length} component(s) linked` : 'No components linked yet'}</p>
                     {capability.components?.length ? <div className="componentPicker compact">{capability.components.map((component) => <span key={component} className="softPill">{component}</span>)}</div> : null}
-                    <span className="cardActionHint"><FileText size={14} /> Open and edit</span>
+                    <span className="cardActionHint"><FileText size={14} /> Open ribbon editor</span>
                   </button>
                 );
               })}
@@ -244,32 +279,60 @@ export function Capabilities({ activeProject }: { activeProject?: AiddTrackedPro
       )}
 
       {view !== 'list' && (
-        <section className="guidedEditorGrid">
-          <div className="panel guidedStepsPanel">
-            <p className="eyebrow">{isEditing ? 'Capability lifecycle' : 'Guided definition'}</p>
-            <h2>{isEditing ? 'Edit Capability' : 'New Capability'}</h2>
-            <ol className="setupGuideList">
-              <li className={title.trim() ? 'complete' : ''}><strong>Name it</strong><span>Use a clear outcome or behaviour name.</span></li>
-              <li className={description.trim() ? 'complete' : ''}><strong>Describe it</strong><span>Explain the user or system value.</span></li>
-              <li className={outcome.trim() ? 'complete' : ''}><strong>Define the outcome</strong><span>Say what this makes possible.</span></li>
-              <li className={selectedComponents.length || inlineComponentTitle.trim() ? 'complete' : ''}><strong>Link components</strong><span>Select existing parts or create one inline.</span></li>
-            </ol>
-            {isEditing && !foundationReady && (
-              <div className="noticeCard warningNotice compactNotice">
-                <strong>Delivery package locked</strong>
-                <p>Complete Foundation and Standards before creating a delivery package. These documents are included in every package snapshot.</p>
-              </div>
-            )}
-            {isEditing && <button className="primaryButton fullWidthAction" onClick={createDeliveryPackage} disabled={saving || !foundationReady}><PackagePlus size={16} /> Create Delivery Package</button>}
+        <section className="capabilityRibbonShell">
+          <div className="capabilityRibbonTop">
+            <div className="ribbonMetaBlock">
+              <label className="fieldLabel">Capability name</label>
+              <input className="textInput" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Runtime save system" />
+            </div>
+            <div className="ribbonMetaBlock compactMeta">
+              <label className="fieldLabel">Lifecycle</label>
+              <select className="textInput" value={status} onChange={(event) => setStatus(event.target.value as AiddSetupStatus)}>{statusOptions.map((item) => <option key={item} value={item}>{statusLabel(item)}</option>)}</select>
+            </div>
+            <div className="ribbonMetaBlock progressMeta">
+              <span className="eyebrow">Template progress</span>
+              <strong>{progress.completed}/{progress.total}</strong>
+              <span className="muted">sections started</span>
+            </div>
+            <div className="ribbonActionBlock">
+              {isEditing && <button className="secondaryButton" onClick={createDeliveryPackage} disabled={saving || !foundationReady}><PackagePlus size={16} /> Create Delivery Package</button>}
+              {isEditing
+                ? <button className="primaryButton" onClick={saveCapability} disabled={saving || !title.trim()}><Save size={16} />{saving ? 'Saving...' : 'Save Capability'}</button>
+                : <button className="primaryButton" onClick={createCapability} disabled={saving || !title.trim()}><Plus size={16} />{saving ? 'Creating...' : 'Create Capability'}</button>}
+            </div>
           </div>
 
-          <div className="panel desktopPanel">
-            <div className="sectionTitleIcon"><Sparkles size={18} /><h2>Capability details</h2></div>
-            <label className="fieldLabel">Capability name</label>
-            <input className="textInput" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Runtime save system" />
-            <AiddMarkdownEditor label="Description" hint="Describe the behaviour, outcome, or feature in product language." value={description} onChange={setDescription} minHeight={220} />
-            <AiddMarkdownEditor label="Outcome" hint="What should this capability make possible?" value={outcome} onChange={setOutcome} minHeight={200} />
-            <label className="fieldLabel">Components touched</label>
+          <div className="capabilityRibbonTabs" role="tablist" aria-label="Capability sections">
+            {sections.map((section) => (
+              <button key={section.key} className={section.key === activeSectionKey ? 'active' : ''} onClick={() => setActiveSectionKey(section.key)}>
+                <span>{section.title}</span>
+                <small>{section.fileName}</small>
+              </button>
+            ))}
+          </div>
+
+          <section className="panel desktopPanel capabilitySectionEditor">
+            <div className="panelTitleRow">
+              <div>
+                <p className="eyebrow">{activeSection?.fileName}</p>
+                <h2>{activeSection?.title}</h2>
+                <p className="muted">{activeSection?.prompt}</p>
+              </div>
+              <div className="sectionStatusControl">
+                <label className="fieldLabel">Section status</label>
+                <select className="textInput" value={(activeSection?.status as AiddSetupStatus) || 'not-started'} onChange={(event) => updateActiveSectionStatus(event.target.value as AiddSetupStatus)}>
+                  {statusOptions.map((item) => <option key={item} value={item}>{statusLabel(item)}</option>)}
+                </select>
+              </div>
+            </div>
+            <AiddMarkdownEditor value={activeSection?.body || ''} onChange={updateActiveSectionBody} minHeight={360} />
+          </section>
+
+          <section className="panel desktopPanel capabilitySidePanel">
+            <div>
+              <h2>Components touched</h2>
+              <p className="muted">Link the system parts involved in this capability.</p>
+            </div>
             <div className="componentPicker">
               {setup?.components.map((component) => (
                 <button key={component.slug} className={selectedComponents.includes(component.slug) ? 'softPill selectedPill' : 'softPill'} onClick={() => toggleComponent(component.slug)}>{component.title}</button>
@@ -284,16 +347,14 @@ export function Capabilities({ activeProject }: { activeProject?: AiddTrackedPro
               <label className="fieldLabel">Component description</label>
               <textarea className="textArea" value={inlineComponentDescription} onChange={(event) => setInlineComponentDescription(event.target.value)} />
             </div>}
-            <AiddMarkdownEditor label="Notes" hint="Optional notes, constraints, open questions, or review context." value={notes} onChange={setNotes} minHeight={180} />
-            <label className="fieldLabel">Status</label>
-            <select className="textInput" value={status} onChange={(event) => setStatus(event.target.value as AiddSetupStatus)}>{statusOptions.map((item) => <option key={item} value={item}>{statusLabel(item)}</option>)}</select>
             {status === 'deprecated' && <div className="noticeCard warningNotice"><strong>Deprecated:</strong> This capability should not be used for new delivery packages unless the package is specifically about migration or removal.</div>}
-            <div className="buttonGroup left">
-              {isEditing
-                ? <button className="primaryButton" onClick={saveCapability} disabled={saving || !title.trim()}><Save size={16} />{saving ? 'Saving...' : 'Save Capability'}</button>
-                : <button className="primaryButton" onClick={createCapability} disabled={saving || !title.trim()}><Plus size={16} />{saving ? 'Creating...' : 'Create Capability'}</button>}
-            </div>
-          </div>
+            {isEditing && !foundationReady && (
+              <div className="noticeCard warningNotice compactNotice">
+                <strong>Delivery package locked</strong>
+                <p>Complete Foundation and Standards before creating a delivery package. These documents are included in every package snapshot.</p>
+              </div>
+            )}
+          </section>
         </section>
       )}
     </main>

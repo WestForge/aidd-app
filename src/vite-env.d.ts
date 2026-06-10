@@ -154,6 +154,15 @@ interface AiddUpdateComponentInput {
 }
 
 
+interface AiddCapabilitySection {
+  key: string;
+  fileName: string;
+  title: string;
+  body: string;
+  status?: AiddSetupStatus | string;
+  prompt?: string;
+}
+
 interface AiddCapabilityDetail {
   slug: string;
   title: string;
@@ -162,6 +171,7 @@ interface AiddCapabilityDetail {
   description: string;
   outcome: string;
   notes: string;
+  sections: AiddCapabilitySection[];
   body: string;
   filePath: string;
 }
@@ -180,6 +190,7 @@ interface AiddUpdateCapabilityInput {
   notes?: string;
   status?: AiddSetupStatus;
   componentSlugs?: string[];
+  sections?: AiddCapabilitySection[];
 }
 
 interface AiddSourceReference {
@@ -207,6 +218,7 @@ interface AiddCreateCapabilityInput {
   notes?: string;
   status?: AiddSetupStatus;
   inlineComponent?: { title: string; description?: string };
+  sections?: AiddCapabilitySection[];
 }
 
 interface AiddWorkflowDocument {

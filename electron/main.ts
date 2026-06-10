@@ -158,6 +158,14 @@ interface UpdateComponentInput {
   sourceProjects?: string[];
 }
 
+interface CapabilitySectionInput {
+  key: string;
+  fileName: string;
+  title: string;
+  body: string;
+  status?: SetupStepStatus;
+}
+
 interface CreateCapabilityInput {
   projectPath: string;
   title: string;
@@ -167,6 +175,7 @@ interface CreateCapabilityInput {
   notes?: string;
   status?: SetupStepStatus;
   inlineComponent?: { title: string; description?: string };
+  sections?: CapabilitySectionInput[];
 }
 
 
@@ -184,6 +193,7 @@ interface UpdateCapabilityInput {
   notes?: string;
   status?: SetupStepStatus;
   componentSlugs?: string[];
+  sections?: CapabilitySectionInput[];
 }
 
 interface CreateDeliveryPackageFromCapabilityInput {
@@ -1083,6 +1093,98 @@ Describe the app, service, plugin, module, library, workflow, integration, tool,
 `;
 }
 
+
+const CAPABILITY_TEMPLATE_SECTIONS = [
+  { key: 'outcomes', fileName: '01-outcomes.md', title: 'Outcomes', prompt: 'Describe what this capability should make possible.' },
+  { key: 'scope', fileName: '02-scope.md', title: 'Scope', prompt: 'Define what is in scope and out of scope.' },
+  { key: 'user-journeys', fileName: '03-user-journeys.md', title: 'User Journeys', prompt: 'Describe the journeys or workflows this capability supports.' },
+  { key: 'functional-requirements', fileName: '04-functional-requirements.md', title: 'Functional Requirements', prompt: 'List the required behaviours and functions.' },
+  { key: 'non-functional-requirements', fileName: '05-non-functional-requirements.md', title: 'Non-Functional Requirements', prompt: 'List quality attributes, constraints, performance, reliability, security, or accessibility needs.' },
+  { key: 'data-model', fileName: '06-data-model.md', title: 'Data Model', prompt: 'Describe important data, records, state, and identifiers.' },
+  { key: 'integrations', fileName: '07-integrations.md', title: 'Integrations', prompt: 'Describe systems, services, components, or workflows this capability integrates with.' },
+  { key: 'architecture', fileName: '08-architecture.md', title: 'Architecture', prompt: 'Describe the expected architectural shape or constraints.' },
+  { key: 'ux-ui', fileName: '09-ux-ui.md', title: 'UX/UI', prompt: 'Describe user-facing screens, feedback, inspection tools, or UX expectations.' },
+  { key: 'risks', fileName: '10-risks.md', title: 'Risks', prompt: 'Capture risks, unknowns, edge cases, and failure modes.' },
+  { key: 'validation', fileName: '11-validation.md', title: 'Validation', prompt: 'Describe how this capability should be verified.' }
+];
+
+function normaliseCapabilitySections(inputSections?: CapabilitySectionInput[], fallback?: Partial<Record<string, string>>) {
+  const byKey = new Map<string, CapabilitySectionInput>();
+  for (const section of inputSections || []) {
+    if (!section?.key) continue;
+    byKey.set(section.key, section);
+  }
+
+  return CAPABILITY_TEMPLATE_SECTIONS.map((template) => {
+    const input = byKey.get(template.key);
+    const body = input?.body ?? fallback?.[template.key] ?? '';
+    return {
+      key: template.key,
+      fileName: template.fileName,
+      title: template.title,
+      body,
+      status: input?.status || (body.trim() ? 'draft' : 'not-started') as SetupStepStatus,
+      prompt: template.prompt
+    };
+  });
+}
+
+function buildCapabilitySectionMarkdown(input: { slug: string; capabilityTitle: string; section: ReturnType<typeof normaliseCapabilitySections>[number]; capabilityStatus: string; components: string[] }) {
+  const body = input.section.body?.trim() || input.section.prompt;
+  return matter.stringify([
+    `# ${input.capabilityTitle} ${input.section.title}`,
+    '',
+    body,
+    ''
+  ].join('\n'), {
+    aidd: {
+      type: 'capability-section',
+      id: `${input.slug}-${input.section.key}`,
+      title: `${input.capabilityTitle} ${input.section.title}`,
+      status: input.section.status || 'not-started',
+      required: true,
+      capability: input.slug,
+      section: input.section.key,
+      components: input.components,
+      templateVersion: TEMPLATE_VERSION,
+      updatedAt: new Date().toISOString()
+    }
+  });
+}
+
+function buildCapabilityIndexMarkdown(input: { slug: string; title: string; status: string; components: string[]; sections: ReturnType<typeof normaliseCapabilitySections> }) {
+  return matter.stringify([
+    `# ${input.title}`,
+    '',
+    'This capability is managed by AIDD as a set of template-backed section files.',
+    '',
+    '## Sections',
+    '',
+    ...input.sections.map((section) => `- [${section.title}](./${section.fileName})`),
+    '',
+    '## Components Touched',
+    '',
+    input.components.length ? input.components.map((component) => `- ${component}`).join('\n') : 'No components linked yet.',
+    ''
+  ].join('\n'), {
+    aidd: {
+      type: 'capability',
+      id: input.slug,
+      title: input.title,
+      status: input.status || 'draft',
+      required: true,
+      components: input.components,
+      templateVersion: TEMPLATE_VERSION,
+      updatedAt: new Date().toISOString()
+    }
+  });
+}
+
+function sectionBodyFromMarkdown(raw: string) {
+  const parsed = matter(raw || '');
+  return parsed.content.replace(/^# .*\n+/, '').replace(/^\s*\n/, '').trim();
+}
+
 function buildCapabilityOutcomeMarkdown(input: CreateCapabilityInput & { slug: string; title: string; components: string[] }) {
   const sections = [
     `# ${input.title}`,
@@ -1226,16 +1328,41 @@ async function createCapability(root: string, input: CreateCapabilityInput) {
   const dir = path.join(root, 'capabilities', slug);
   if (await exists(dir)) return slug;
 
+  const fallback: Partial<Record<string, string>> = {
+    outcomes: input.outcome || input.description || '',
+    scope: '',
+    'user-journeys': '',
+    'functional-requirements': '',
+    'non-functional-requirements': '',
+    'data-model': '',
+    integrations: '',
+    architecture: '',
+    'ux-ui': '',
+    risks: input.notes || '',
+    validation: ''
+  };
+  const sections = normaliseCapabilitySections(input.sections, fallback);
+  const status = input.status || 'draft';
+
   await fsp.mkdir(dir, { recursive: true });
   await writeJson(path.join(dir, 'capability.json'), {
     slug,
     title,
-    status: input.status || 'draft',
+    status,
     components: componentSlugs,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    template: {
+      id: TEMPLATE_ID,
+      version: TEMPLATE_VERSION,
+      sectionFiles: sections.map((section) => section.fileName)
+    }
   });
-  await fsp.writeFile(path.join(dir, 'index.md'), buildCapabilityOutcomeMarkdown({ ...input, slug, title, components: componentSlugs }), 'utf8');
-  await fsp.writeFile(path.join(dir, 'behaviour-examples.md'), buildCapabilityBehaviourMarkdown({ slug, title }), 'utf8');
+
+  await fsp.writeFile(path.join(dir, 'index.md'), buildCapabilityIndexMarkdown({ slug, title, status, components: componentSlugs, sections }), 'utf8');
+  for (const section of sections) {
+    await fsp.writeFile(path.join(dir, section.fileName), buildCapabilitySectionMarkdown({ slug, capabilityTitle: title, section, capabilityStatus: status, components: componentSlugs }), 'utf8');
+  }
+
   await refreshCapabilitiesIndex(root);
   await refreshComponentsIndex(root);
   return slug;
@@ -1255,18 +1382,50 @@ async function readCapability(input: ReadCapabilityInput) {
   const markdownPath = path.join(dir, 'index.md');
   if (!(await exists(manifestPath))) throw new Error(`Capability not found: ${slug}`);
   const manifest = await readJson<any>(manifestPath);
-  const raw = await exists(markdownPath) ? await fsp.readFile(markdownPath, 'utf8') : '';
-  const parsed = matter(raw);
-  const aidd = (parsed.data as any)?.aidd || {};
+  const rawIndex = await exists(markdownPath) ? await fsp.readFile(markdownPath, 'utf8') : '';
+  const parsedIndex = matter(rawIndex);
+  const aidd = (parsedIndex.data as any)?.aidd || {};
+  const title = String(manifest.title || aidd.title || slug);
+  const components = Array.isArray(manifest.components) ? manifest.components : Array.isArray(manifest.modules) ? manifest.modules : (Array.isArray(aidd.components) ? aidd.components : []);
+  const status = String(manifest.status || aidd.status || 'draft');
+
+  const fallbackFromLegacyIndex: Partial<Record<string, string>> = {
+    outcomes: extractSection(parsedIndex.content, 'Outcome') || extractSection(parsedIndex.content, 'Description'),
+    risks: extractSection(parsedIndex.content, 'Notes')
+  };
+
+  const sections = [];
+  for (const template of CAPABILITY_TEMPLATE_SECTIONS) {
+    const filePath = path.join(dir, template.fileName);
+    let body = fallbackFromLegacyIndex[template.key] || '';
+    let sectionStatus: SetupStepStatus = body.trim() ? 'draft' : 'not-started';
+    if (await exists(filePath)) {
+      const raw = await fsp.readFile(filePath, 'utf8');
+      const parsed = matter(raw);
+      const sectionAidd = (parsed.data as any)?.aidd || {};
+      body = sectionBodyFromMarkdown(raw);
+      sectionStatus = sectionAidd.status || (body.trim() ? 'draft' : 'not-started');
+    }
+    sections.push({
+      key: template.key,
+      fileName: template.fileName,
+      title: template.title,
+      body,
+      status: sectionStatus,
+      prompt: template.prompt
+    });
+  }
+
   return {
     slug,
-    title: String(manifest.title || aidd.title || slug),
-    status: String(manifest.status || aidd.status || 'draft'),
-    components: manifest.components || aidd.components || [],
-    description: extractSection(parsed.content, 'Description'),
-    outcome: extractSection(parsed.content, 'Outcome'),
-    notes: extractSection(parsed.content, 'Notes'),
-    body: parsed.content.replace(/^\s*\n/, ''),
+    title,
+    status,
+    components,
+    description: sections.find((section) => section.key === 'outcomes')?.body || '',
+    outcome: sections.find((section) => section.key === 'outcomes')?.body || '',
+    notes: sections.find((section) => section.key === 'risks')?.body || '',
+    sections,
+    body: parsedIndex.content.replace(/^\s*\n/, ''),
     filePath: markdownPath
   };
 }
@@ -1278,30 +1437,38 @@ async function updateCapability(input: UpdateCapabilityInput) {
   if (!(await exists(manifestPath))) throw new Error(`Capability not found: ${slug}`);
   const manifest = await readJson<any>(manifestPath);
   const title = input.title.trim() || manifest.title || slug;
-  const components: string[] = Array.from(new Set<string>(input.componentSlugs || manifest.components || []));
+  const components: string[] = Array.from(new Set<string>(input.componentSlugs || manifest.components || manifest.modules || []));
   const status = input.status || manifest.status || 'draft';
+  const fallback: Partial<Record<string, string>> = {
+    outcomes: input.outcome || input.description || '',
+    risks: input.notes || ''
+  };
+  const sections = normaliseCapabilitySections(input.sections, fallback);
+
   await writeJson(manifestPath, {
     ...manifest,
     title,
     status,
     components,
-    updatedAt: new Date().toISOString()
+    modules: undefined,
+    updatedAt: new Date().toISOString(),
+    template: {
+      id: TEMPLATE_ID,
+      version: TEMPLATE_VERSION,
+      sectionFiles: sections.map((section) => section.fileName)
+    }
   });
-  await fsp.writeFile(path.join(dir, 'index.md'), buildCapabilityOutcomeMarkdown({
-    projectPath: input.projectPath,
-    title,
-    description: input.description,
-    outcome: input.outcome,
-    notes: input.notes,
-    componentSlugs: components,
-    status,
-    slug,
-    components
-  }), 'utf8');
+
+  await fsp.writeFile(path.join(dir, 'index.md'), buildCapabilityIndexMarkdown({ slug, title, status, components, sections }), 'utf8');
+  for (const section of sections) {
+    await fsp.writeFile(path.join(dir, section.fileName), buildCapabilitySectionMarkdown({ slug, capabilityTitle: title, section, capabilityStatus: status, components }), 'utf8');
+  }
+
   await refreshCapabilitiesIndex(input.projectPath);
   await refreshComponentsIndex(input.projectPath);
   return readProjectSetup(input.projectPath);
 }
+
 
 
 async function assertProjectFoundationReady(projectPath: string) {
@@ -1385,7 +1552,16 @@ async function createDeliveryPackageFromCapability(input: CreateDeliveryPackageF
     '',
     '## Capability Snapshot',
     '',
-    capability.body.trim(),
+    Array.isArray((capability as any).sections) && (capability as any).sections.length
+      ? (capability as any).sections.map((section: any) => [
+          `### ${section.title}`,
+          '',
+          `- Source: capabilities/${capability.slug}/${section.fileName}`,
+          `- Status: ${section.status || 'not-started'}`,
+          '',
+          section.body?.trim() || '_No content captured._'
+        ].join('\n')).join('\n\n')
+      : capability.body.trim(),
     '',
     '## Component Snapshots',
     '',
