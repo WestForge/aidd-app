@@ -1,145 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Code2, FolderOpen, Link2, RefreshCw } from 'lucide-react';
-import { Alert } from './ui/alert';
-import { Badge } from './ui/badge';
+import { useEffect, useState } from 'react';
+import { Code2, FolderPlus } from 'lucide-react';
 import { Button } from './ui/button';
+import { Badge } from './ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 
 export function SourceCode({ activeProject }: { activeProject?: AiddTrackedProject | null }) {
-  const [sourceProjects, setSourceProjects] = useState<AiddSourceCodeProject[]>([]);
-  const [components, setComponents] = useState<AiddComponentSummary[]>([]);
+  const [projects, setProjects] = useState<AiddSourceCodeProject[]>([]);
+  const [setup, setSetup] = useState<AiddProjectSetupState | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const load = async () => {
-    if (!activeProject?.path) return;
-    const [projects, setup] = await Promise.all([
-      window.aidd.readSourceProjects(activeProject.path),
-      window.aidd.readProjectSetup(activeProject.path)
-    ]);
-    setSourceProjects(projects);
-    setComponents(setup.components);
-  };
-
-  useEffect(() => {
-    load().catch((err) => setError(err instanceof Error ? err.message : String(err)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProject?.path]);
-
-  const addSourceProject = async () => {
-    if (!activeProject?.path) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const created = await window.aidd.addSourceProject(activeProject.path);
-      if (created) await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const projectUsage = useMemo(() => {
-    const usage = new Map<string, AiddComponentSummary[]>();
-    for (const component of components) {
-      for (const projectId of component.sourceProjects ?? []) {
-        const list = usage.get(projectId) ?? [];
-        list.push(component);
-        usage.set(projectId, list);
-      }
-    }
-    return usage;
-  }, [components]);
-
-  if (!activeProject) {
-    return (
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-5 p-8">
-        <Card>
-          <CardHeader>
-            <CardTitle>No project selected</CardTitle>
-            <CardDescription>Create or open a project first.</CardDescription>
-          </CardHeader>
-        </Card>
-      </main>
-    );
-  }
-
-  return (
-    <main className="mx-auto flex w-full max-w-7xl flex-col gap-5 p-8">
-      <div className="flex flex-col gap-4 rounded-lg border bg-card p-5 text-card-foreground shadow-sm md:flex-row md:items-start md:justify-between">
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Source code projects</p>
-          <h1 className="text-2xl font-semibold tracking-tight">Reference implementation code</h1>
-          <p className="max-w-3xl text-sm leading-6 text-muted-foreground">Add one or more local source projects, then map them to components. AIDD stores references only; it does not copy source code into the AIDD project.</p>
-        </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <Button variant="outline" onClick={load}><RefreshCw size={16} /> Refresh</Button>
-          <Button onClick={addSourceProject} disabled={saving}><FolderOpen size={16} /> {saving ? 'Selecting...' : 'Add Source Project'}</Button>
-        </div>
-      </div>
-
-      {error && <Alert variant="destructive"><strong>Source project error:</strong> {error}</Alert>}
-
-      <div className="grid gap-3 md:grid-cols-3">
-        <Card><CardContent className="pt-5"><strong className="text-2xl">{sourceProjects.length}</strong><p className="text-sm text-muted-foreground">Source projects</p></CardContent></Card>
-        <Card><CardContent className="pt-5"><strong className="text-2xl">{components.filter((component) => (component.sourceProjects ?? []).length > 0).length}</strong><p className="text-sm text-muted-foreground">Mapped components</p></CardContent></Card>
-        <Card><CardContent className="pt-5"><strong className="text-2xl">{components.filter((component) => (component.sourceProjects ?? []).length === 0).length}</strong><p className="text-sm text-muted-foreground">Unmapped components</p></CardContent></Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2"><Code2 size={18} /><CardTitle>Source project catalogue</CardTitle></div>
-          <CardDescription>These are local source directories that components can reference during delivery planning and AI review.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {sourceProjects.length ? (
-            <div className="grid gap-4">
-              {sourceProjects.map((project) => {
-                const mappedComponents = projectUsage.get(project.id) ?? [];
-                return (
-                  <Card key={project.id} className="bg-background">
-                    <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
-                      <div className="min-w-0">
-                        <CardTitle className="truncate">{project.name}</CardTitle>
-                        <CardDescription className="break-all">{project.path}</CardDescription>
-                      </div>
-                      <Badge variant="outline" className="shrink-0">{project.detectedType}</Badge>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <div className="rounded-lg border bg-card p-3">
-                          <p className="text-xs font-medium text-muted-foreground">Indicators</p>
-                          <p className="mt-1 text-sm font-semibold">{project.indicators.length ? project.indicators.join(', ') : 'No strong indicators found'}</p>
-                        </div>
-                        <div className="rounded-lg border bg-card p-3">
-                          <p className="text-xs font-medium text-muted-foreground">Last checked</p>
-                          <p className="mt-1 text-sm font-semibold">{new Date(project.updatedAt).toLocaleString()}</p>
-                        </div>
-                      </div>
-                      <div className="rounded-lg border bg-card p-3">
-                        <p className="mb-2 flex items-center gap-2 text-sm text-muted-foreground"><Link2 size={14} /> Components mapped to this source project</p>
-                        {mappedComponents.length ? (
-                          <div className="flex flex-wrap gap-2">
-                            {mappedComponents.map((component) => <Badge key={component.slug} variant="secondary">{component.title}</Badge>)}
-                          </div>
-                        ) : <p className="text-sm text-muted-foreground">No components mapped yet. Open a component and select this source project.</p>}
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed p-10 text-center">
-              <Code2 size={36} className="text-muted-foreground" />
-              <h2 className="text-lg font-semibold">No source projects yet</h2>
-              <p className="max-w-2xl text-sm text-muted-foreground">Add source directories such as an app, plugin, library, service, Unreal project, package, or tool. Components can then be mapped to one or more source projects.</p>
-              <Button onClick={addSourceProject}><FolderOpen size={16} /> Add Source Project</Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </main>
-  );
+  const load = async () => { if (!activeProject?.path) return; const [sourceProjects, projectSetup] = await Promise.all([window.aidd.readSourceProjects(activeProject.path), window.aidd.readProjectSetup(activeProject.path)]); setProjects(sourceProjects); setSetup(projectSetup); };
+  useEffect(() => { load().catch((err) => setError(String(err))); }, [activeProject?.path]);
+  const addProject = async () => { if (!activeProject?.path) return; const project = await window.aidd.addSourceProject(activeProject.path); if (project) await load(); };
+  if (!activeProject) return <div className="flex h-full items-center justify-center p-6"><Card><CardHeader><CardTitle>No project selected</CardTitle></CardHeader></Card></div>;
+  return <div className="flex h-full flex-col overflow-hidden"><header className="flex h-16 shrink-0 items-center justify-between border-b px-6"><div><h1 className="text-xl font-semibold">Source Code</h1><p className="text-sm text-muted-foreground">Register implementation directories and map them to components.</p></div><Button onClick={addProject}><FolderPlus className="h-4 w-4" /> Add source project</Button></header><main className="min-h-0 flex-1 overflow-auto p-6">{error && <Alert variant="destructive" className="mb-4"><AlertTitle>Error</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{projects.map((project) => { const mappedComponents = setup?.components.filter((component) => component.sourceProjects?.includes(project.id)) ?? []; return <Card key={project.id}><CardHeader><div className="flex items-start gap-3"><Code2 className="mt-1 h-5 w-5" /><div className="min-w-0"><CardTitle className="truncate text-base">{project.name}</CardTitle><CardDescription className="truncate">{project.path}</CardDescription></div></div></CardHeader><CardContent className="space-y-3"><Badge variant="outline">{project.detectedType}</Badge><div className="flex flex-wrap gap-2">{project.indicators.map((indicator) => <Badge key={indicator} variant="secondary">{indicator}</Badge>)}</div><div><div className="mb-1 text-sm font-medium">Mapped components</div>{mappedComponents.length ? <div className="flex flex-wrap gap-2">{mappedComponents.map((component) => <Badge key={component.slug}>{component.title}</Badge>)}</div> : <p className="text-sm text-muted-foreground">No components mapped yet.</p>}</div></CardContent></Card>; })}{projects.length === 0 && <Card className="md:col-span-2 xl:col-span-3"><CardHeader><CardTitle>No source projects</CardTitle><CardDescription>Add implementation directories so components can reference code.</CardDescription></CardHeader><CardContent><Button onClick={addProject}>Add source project</Button></CardContent></Card>}</div></main></div>;
 }
