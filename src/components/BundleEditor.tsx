@@ -954,6 +954,10 @@ function FileNavigationPanel({
                 const isDirectory = file.kind === "directory";
                 const isSelectable = Boolean(targetTab);
                 const Icon = isDirectory ? FolderOpen : FileText;
+                const fileSizeLabel =
+                  file.kind === "file" && "sizeBytes" in file && file.sizeBytes !== undefined
+                    ? ` · ${formatFileSize(file.sizeBytes)}`
+                    : "";
 
                 return (
                   <div
@@ -968,7 +972,7 @@ function FileNavigationPanel({
                           ? `Phase ${String(phaseInfo.index + 1).padStart(2, "0")} · ${phaseInfo.phase.title}`
                           : labelForDeliveryFile(file)
                       }
-                      fileName={`${file.relativePath}${file.kind === "file" && file.sizeBytes !== undefined ? ` · ${formatFileSize(file.sizeBytes)}` : ""}`}
+                      fileName={`${file.relativePath}${fileSizeLabel}`}
                       status={statusForDeliveryFile(file, detail)}
                       muted={!isSelectable}
                       disabled={isDirectory}

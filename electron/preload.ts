@@ -35,12 +35,20 @@ contextBridge.exposeInMainWorld('aidd', {
   saveDeliveryPackage: (input: unknown) => ipcRenderer.invoke('project:saveDeliveryPackage', input),
   createDeliveryPackagePhase: (input: unknown) => ipcRenderer.invoke('project:createDeliveryPackagePhase', input),
   assembleDeliveryPackage: (input: unknown) => ipcRenderer.invoke('project:assembleDeliveryPackage', input),
+  readDecisions: (projectPath: string) => ipcRenderer.invoke('project:readDecisions', projectPath),
+  createDecision: (input: unknown) => ipcRenderer.invoke('project:createDecision', input),
   readSourceReference: (projectPath: string) => ipcRenderer.invoke('project:readSourceReference', projectPath),
   readSourceProjects: (projectPath: string) => ipcRenderer.invoke('project:readSourceProjects', projectPath),
   addSourceProject: (projectPath: string) => ipcRenderer.invoke('project:addSourceProject', projectPath),
   selectSourceDirectory: (projectPath: string) => ipcRenderer.invoke('project:selectSourceDirectory', projectPath),
   createProject: (input: unknown) => ipcRenderer.invoke('project:create', input),
   openExistingProject: () => ipcRenderer.invoke('project:openExisting'),
+  gitSync: {
+    readSettings: (projectPath: string) => ipcRenderer.invoke('gitSync:readSettings', projectPath),
+    saveSettings: (input: unknown) => ipcRenderer.invoke('gitSync:saveSettings', input),
+    testConnection: (input: unknown) => ipcRenderer.invoke('gitSync:testConnection', input),
+    clearToken: (projectPath: string) => ipcRenderer.invoke('gitSync:clearToken', projectPath)
+  },
   readText: (filePath: string) => ipcRenderer.invoke('fs:readText', filePath),
   writeText: (filePath: string, content: string) => ipcRenderer.invoke('fs:writeText', filePath, content)
 });

@@ -12,6 +12,51 @@ interface AiddNotifyInput {
   body?: string;
 }
 
+type AiddGitProvider = 'github' | 'gitlab';
+
+interface AiddGitSyncSettings {
+  provider: AiddGitProvider;
+  repoUrl: string;
+  branch: string;
+  authorName: string;
+  authorEmail: string;
+  hasToken: boolean;
+}
+
+interface AiddSaveGitSyncSettingsInput {
+  projectPath: string;
+  provider: AiddGitProvider;
+  repoUrl: string;
+  branch: string;
+  authorName: string;
+  authorEmail: string;
+  token?: string;
+}
+
+interface AiddGitSyncTestInput {
+  projectPath: string;
+  provider: AiddGitProvider;
+  repoUrl: string;
+  branch: string;
+  token?: string;
+}
+
+interface AiddGitSyncTestResult {
+  ok: boolean;
+  code:
+    | 'OK'
+    | 'MISSING_PROJECT'
+    | 'INVALID_REPO_URL'
+    | 'INVALID_PROVIDER'
+    | 'MISSING_TOKEN'
+    | 'AUTH_FAILED'
+    | 'EMPTY_REPOSITORY'
+    | 'BRANCH_NOT_FOUND'
+    | 'NETWORK_ERROR'
+    | 'UNKNOWN_ERROR';
+  message: string;
+}
+
 interface AiddTrackedProject {
   id: string;
   name: string;
@@ -305,6 +350,25 @@ interface AiddDeliveryPackageDetail extends AiddDeliveryPackageSummary {
   files: AiddDeliveryPackageFile[];
 }
 
+
+interface AiddDecisionRecord {
+  id: string;
+  title: string;
+  status: string;
+  relativePath: string;
+  body: string;
+  createdAt?: string;
+}
+
+interface AiddCreateDecisionInput {
+  projectPath: string;
+  title: string;
+  context: string;
+  decision: string;
+  consequences: string;
+  status: string;
+}
+
 interface AiddWorkflowDocument {
   id: string;
   title: string;
@@ -380,12 +444,20 @@ interface Window {
     saveDeliveryPackage: (input: { projectPath: string; id: string; title?: string; status?: string; snapshotBody?: string; strategyBody?: string; phases?: AiddDeliveryPackagePhase[] }) => Promise<AiddDeliveryPackageDetail>;
     createDeliveryPackagePhase: (input: { projectPath: string; packageId: string; title: string; body?: string }) => Promise<AiddDeliveryPackageDetail>;
     assembleDeliveryPackage: (input: { projectPath: string; packageId: string }) => Promise<AiddDeliveryPackageDetail>;
+    readDecisions: (projectPath: string) => Promise<AiddDecisionRecord[]>;
+    createDecision: (input: AiddCreateDecisionInput) => Promise<AiddDecisionRecord[]>;
     readSourceReference: (projectPath: string) => Promise<AiddSourceReference | null>;
     readSourceProjects: (projectPath: string) => Promise<AiddSourceCodeProject[]>;
     addSourceProject: (projectPath: string) => Promise<AiddSourceCodeProject | null>;
     selectSourceDirectory: (projectPath: string) => Promise<AiddSourceReference | null>;
     createProject: (input: AiddProjectCreateInput) => Promise<AiddTrackedProject>;
     openExistingProject: () => Promise<AiddTrackedProject | null>;
+    gitSync: {
+      readSettings: (projectPath: string) => Promise<AiddGitSyncSettings | null>;
+      saveSettings: (input: AiddSaveGitSyncSettingsInput) => Promise<AiddGitSyncSettings>;
+      testConnection: (input: AiddGitSyncTestInput) => Promise<AiddGitSyncTestResult>;
+      clearToken: (projectPath: string) => Promise<AiddGitSyncSettings | null>;
+    };
     readText: (filePath: string) => Promise<string>;
     writeText: (filePath: string, content: string) => Promise<boolean>;
   };

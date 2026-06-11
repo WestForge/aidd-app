@@ -4,6 +4,10 @@ import fsp from 'node:fs/promises';
 import fs from 'node:fs';
 import git from 'isomorphic-git';
 import matter from 'gray-matter';
+import { createKeytarCredentialStore } from './services/gitCredentialStore';
+import { readGitSyncSettings, saveGitSyncSettings } from './services/gitSyncSettingsStore';
+import { testGitRemoteConnection } from './services/gitRemoteTester';
+import type { AiddSaveGitSyncSettingsInput, AiddGitSyncTestInput } from './services/gitSyncTypes';
 
 const isDev = process.env.NODE_ENV !== 'production';
 const TEMPLATE_ID = 'aidd-default';
@@ -2929,6 +2933,54 @@ ipcMain.handle('project:selectSourceDirectory', async (_event, projectPath: stri
   const result = await dialog.showOpenDialog({ title: 'Select source code directory', properties: ['openDirectory'] });
   if (result.canceled || result.filePaths.length === 0) return null;
   return writeSourceReference(projectPath, result.filePaths[0]);
+});
+
+
+const gitCredentialStore = createKeytarCredentialStore();
+
+ipcMain.handle('gitSync:readSettings', async (_event, projectPath: string) => {
+  if (!projectPath) return null;
+  const settings = await readGitSyncSettings(app.getPath('userData'), projectPath);
+  if (!settings) return null;
+  return {
+    ...settings,
+    hasToken: await gitCredentialStore.hasToken(projectPath, settings.provider)
+  };
+});
+
+ipcMain.handle('gitSync:saveSettings', async (_event, input: AiddSaveGitSyncSettingsInput) => {
+  if (!input?.projectPath) throw new Error('Project path is required.');
+
+  const saved = await saveGitSyncSettings(app.getPath('userData'), input.projectPath, {
+    provider: input.provider,
+    repoUrl: input.repoUrl || '',
+    branch: input.branch || 'main',
+    authorName: input.authorName || '',
+    authorEmail: input.authorEmail || ''
+  });
+
+  if (input.token?.trim()) {
+    await gitCredentialStore.saveToken(input.projectPath, saved.provider, input.token);
+  }
+
+  const settings = await readGitSyncSettings(app.getPath('userData'), input.projectPath, await gitCredentialStore.hasToken(input.projectPath, saved.provider));
+  if (!settings) throw new Error('Git Sync settings could not be saved.');
+  return settings;
+});
+
+ipcMain.handle('gitSync:testConnection', async (_event, input: AiddGitSyncTestInput) => {
+  return testGitRemoteConnection(input, gitCredentialStore);
+});
+
+ipcMain.handle('gitSync:clearToken', async (_event, projectPath: string) => {
+  if (!projectPath) return null;
+  const settings = await readGitSyncSettings(app.getPath('userData'), projectPath);
+  if (!settings) return null;
+  await gitCredentialStore.clearToken(projectPath, settings.provider);
+  return {
+    ...settings,
+    hasToken: false
+  };
 });
 
 ipcMain.handle('fs:readText', async (_event, filePath: string) => fsp.readFile(filePath, 'utf8'));
