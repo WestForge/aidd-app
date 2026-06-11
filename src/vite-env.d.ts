@@ -65,6 +65,43 @@ interface AiddProjectRepairReport {
   validation: AiddProjectValidationReport;
 }
 
+
+interface AiddHomeWorkDeliveryItem {
+  id: string;
+  title: string;
+  status: string;
+  sourceCapability?: string;
+  components: string[];
+  phaseCount: number;
+  priority?: number;
+  reason: string;
+}
+
+interface AiddHomeWorkCapabilityItem {
+  slug: string;
+  title: string;
+  status: string;
+  components: string[];
+  incompleteSections: number;
+  reason: string;
+}
+
+interface AiddHomeWorkComponentItem {
+  slug: string;
+  title: string;
+  status: string;
+  sourceProjects: string[];
+  capabilities: string[];
+  reason: string;
+}
+
+interface AiddHomeWork {
+  delivery: AiddHomeWorkDeliveryItem[];
+  capabilities: AiddHomeWorkCapabilityItem[];
+  components: AiddHomeWorkComponentItem[];
+  total: number;
+}
+
 interface AiddProjectStatus {
   status: 'draft' | 'setting-up' | 'ready-for-planning' | 'ready-for-ai-delivery' | 'active' | 'needs-attention';
   label: string;
@@ -250,12 +287,22 @@ interface AiddDeliveryPackagePhase {
   body: string;
 }
 
+interface AiddDeliveryPackageFile {
+  name: string;
+  relativePath: string;
+  kind: 'file' | 'directory';
+  sizeBytes?: number;
+  extension?: string;
+  editable: boolean;
+}
+
 interface AiddDeliveryPackageDetail extends AiddDeliveryPackageSummary {
   packagePath: string;
   snapshotBody: string;
   strategyBody: string;
   packagedBody: string;
   phases: AiddDeliveryPackagePhase[];
+  files: AiddDeliveryPackageFile[];
 }
 
 interface AiddWorkflowDocument {
@@ -287,6 +334,16 @@ interface AiddPrepareFoundationDragFileInput {
   body: string;
 }
 
+interface AiddPrepareMarkdownDragFileInput {
+  projectPath: string;
+  directory?: string;
+  fileName: string;
+  title?: string;
+  status?: AiddSetupStatus | string;
+  body: string;
+  metadata?: Record<string, unknown>;
+}
+
 interface Window {
   aidd: {
     notify: (input: AiddNotifyInput) => Promise<boolean>;
@@ -295,11 +352,13 @@ interface Window {
     listProjects: () => Promise<AiddTrackedProject[]>;
     forgetProject: (projectId: string) => Promise<AiddTrackedProject[]>;
     readProjectStatus: (projectPath: string) => Promise<AiddProjectStatus>;
+    readHomeWork: (projectPath: string) => Promise<AiddHomeWork>;
     validateProject: (projectPath: string) => Promise<AiddProjectValidationReport>;
     repairProject: (projectPath: string) => Promise<AiddProjectRepairReport>;
     readProjectSetup: (projectPath: string) => Promise<AiddProjectSetupState>;
     prepareFoundationReviewPackage: (projectPath: string) => Promise<{ filePath: string; fileName: string }>;
     prepareFoundationDragFile: (input: AiddPrepareFoundationDragFileInput) => Promise<string>;
+    prepareMarkdownDragFile: (input: AiddPrepareMarkdownDragFileInput) => Promise<string>;
     prepareNativeDragTestFile: () => Promise<{ filePath: string; fileName: string }>;
     startNativeFileDrag: (filePath: string) => void;
     startFileDrag: (filePath: string) => void;
@@ -315,10 +374,11 @@ interface Window {
     updateCapability: (input: AiddUpdateCapabilityInput) => Promise<AiddProjectSetupState>;
     createDeliveryPackageFromCapability: (input: { projectPath: string; capabilitySlug: string }) => Promise<{ id: string; path: string }>;
     readDeliveryPackages: (projectPath: string) => Promise<AiddDeliveryPackageSummary[]>;
+    deleteDeliveryPackage: (input: { projectPath: string; id: string }) => Promise<AiddDeliveryPackageSummary[]>;
     reorderDeliveryPackage: (input: { projectPath: string; id: string; direction: 'up' | 'down' }) => Promise<AiddDeliveryPackageSummary[]>;
     readDeliveryPackage: (input: { projectPath: string; id: string }) => Promise<AiddDeliveryPackageDetail>;
-    saveDeliveryPackage: (input: { projectPath: string; id: string; status?: string; strategyBody?: string; phases?: AiddDeliveryPackagePhase[] }) => Promise<AiddDeliveryPackageDetail>;
-    createDeliveryPackagePhase: (input: { projectPath: string; packageId: string; title: string }) => Promise<AiddDeliveryPackageDetail>;
+    saveDeliveryPackage: (input: { projectPath: string; id: string; title?: string; status?: string; snapshotBody?: string; strategyBody?: string; phases?: AiddDeliveryPackagePhase[] }) => Promise<AiddDeliveryPackageDetail>;
+    createDeliveryPackagePhase: (input: { projectPath: string; packageId: string; title: string; body?: string }) => Promise<AiddDeliveryPackageDetail>;
     assembleDeliveryPackage: (input: { projectPath: string; packageId: string }) => Promise<AiddDeliveryPackageDetail>;
     readSourceReference: (projectPath: string) => Promise<AiddSourceReference | null>;
     readSourceProjects: (projectPath: string) => Promise<AiddSourceCodeProject[]>;

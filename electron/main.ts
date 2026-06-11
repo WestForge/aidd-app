@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, dialog, shell, Notification } from 'electron';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import fs from 'node:fs';
@@ -8,6 +8,20 @@ import matter from 'gray-matter';
 const isDev = process.env.NODE_ENV !== 'production';
 const TEMPLATE_ID = 'aidd-default';
 const TEMPLATE_VERSION = '0.8.0';
+
+
+interface NotifyInput {
+  title: string;
+  body?: string;
+}
+
+function showNativeNotification(input: Partial<NotifyInput> = {}) {
+  if (!Notification.isSupported()) return false;
+  const title = input.title?.trim() || 'AIDD';
+  const body = input.body?.trim();
+  new Notification({ title, ...(body ? { body } : {}) }).show();
+  return true;
+}
 
 interface CreateProjectInput {
   name: string;
@@ -47,6 +61,42 @@ interface ProjectStatus {
   foundation: ProjectStatusItem[];
   setup: ProjectStatusItem[];
   nextAction: string;
+}
+
+interface HomeWorkDeliveryItem {
+  id: string;
+  title: string;
+  status: string;
+  sourceCapability?: string;
+  components: string[];
+  phaseCount: number;
+  priority?: number;
+  reason: string;
+}
+
+interface HomeWorkCapabilityItem {
+  slug: string;
+  title: string;
+  status: string;
+  components: string[];
+  incompleteSections: number;
+  reason: string;
+}
+
+interface HomeWorkComponentItem {
+  slug: string;
+  title: string;
+  status: string;
+  sourceProjects: string[];
+  capabilities: string[];
+  reason: string;
+}
+
+interface HomeWork {
+  delivery: HomeWorkDeliveryItem[];
+  capabilities: HomeWorkCapabilityItem[];
+  components: HomeWorkComponentItem[];
+  total: number;
 }
 
 
@@ -144,6 +194,16 @@ interface PrepareFoundationDragFileInput {
   body: string;
 }
 
+interface PrepareMarkdownDragFileInput {
+  projectPath: string;
+  directory?: string;
+  fileName: string;
+  title?: string;
+  status?: SetupStepStatus | string;
+  body: string;
+  metadata?: Record<string, unknown>;
+}
+
 interface CreateComponentInput {
   projectPath: string;
   title: string;
@@ -207,6 +267,66 @@ interface UpdateCapabilityInput {
 interface CreateDeliveryPackageFromCapabilityInput {
   projectPath: string;
   capabilitySlug: string;
+}
+
+interface DeliveryPackageSummary {
+  id: string;
+  title: string;
+  status: string;
+  sourceCapability?: string;
+  components: string[];
+  createdAt?: string;
+  packaged: boolean;
+  phaseCount: number;
+  priority?: number;
+}
+
+interface DeleteDeliveryPackageInput {
+  projectPath: string;
+  id: string;
+}
+
+interface DeliveryPackagePhaseDetail {
+  id: string;
+  title: string;
+  status: string;
+  fileName: string;
+  body: string;
+}
+
+interface DeliveryPackageFileDetail {
+  name: string;
+  relativePath: string;
+  kind: 'file' | 'directory';
+  sizeBytes?: number;
+  extension?: string;
+  editable: boolean;
+}
+
+interface DeliveryPackageDetail extends DeliveryPackageSummary {
+  packagePath: string;
+  snapshotBody: string;
+  strategyBody: string;
+  packagedBody: string;
+  phases: DeliveryPackagePhaseDetail[];
+  files: DeliveryPackageFileDetail[];
+}
+
+interface SaveDeliveryPackageInput {
+  projectPath: string;
+  id: string;
+  status?: string;
+  title?: string;
+  strategyBody?: string;
+  snapshotBody?: string;
+  phases?: DeliveryPackagePhaseDetail[];
+}
+
+interface CreateDeliveryPackagePhaseInput {
+  projectPath: string;
+  packageId: string;
+  title: string;
+  body?: string;
 }
 
 interface DefineStandardsInput {
@@ -525,6 +645,131 @@ async function dirCount(root: string, dirName: string, manifest: string) {
 
 async function deliveryBundleCount(root: string) {
   return (await readEntities(root, 'delivery/packages', 'package.json')).length || (await readEntities(root, 'delivery/bundles', 'bundle.json')).length;
+}
+
+
+function isTerminalHomeStatus(status?: string) {
+  return ['active', 'accepted', 'complete', 'deprecated', 'skipped', 'superseded'].includes(String(status || '').toLowerCase());
+}
+
+function isTerminalDeliveryStatus(status?: string) {
+  return ['accepted', 'complete', 'deprecated', 'skipped', 'superseded'].includes(String(status || '').toLowerCase());
+}
+
+async function readCapabilityIncompleteSectionCount(projectPath: string, capability: any) {
+  const slug = String(capability.slug || capability.id || '').trim();
+  if (!slug) return 0;
+  const capabilityDir = path.join(projectPath, 'capabilities', slug);
+  const templateFiles = Array.isArray(capability.template?.sectionFiles) ? capability.template.sectionFiles : CAPABILITY_TEMPLATE_SECTIONS.map((section) => section.fileName);
+  let incomplete = 0;
+  for (const fileName of templateFiles) {
+    const sectionPath = path.join(capabilityDir, String(fileName));
+    if (!(await exists(sectionPath))) {
+      incomplete += 1;
+      continue;
+    }
+    const raw = await fsp.readFile(sectionPath, 'utf8');
+    const parsed = matter(raw);
+    const aidd = (parsed.data as any)?.aidd || {};
+    const sectionStatus = String(aidd.status || 'not-started');
+    const body = sectionBodyFromMarkdown(raw);
+    if (!['complete', 'skipped'].includes(sectionStatus) || !body.trim()) incomplete += 1;
+  }
+  return incomplete;
+}
+
+async function readHomeWork(projectPath: string): Promise<HomeWork> {
+  const componentsRaw = (await readEntities(projectPath, 'components', 'component.json')).concat(await readEntities(projectPath, 'modules', 'module.json'));
+  const capabilitiesRaw = (await readEntities(projectPath, 'capabilities', 'capability.json')).map((capability: any) => ({
+    ...capability,
+    components: Array.isArray(capability.components) ? capability.components : Array.isArray(capability.modules) ? capability.modules : []
+  }));
+  const deliveriesRaw = (await readEntities(projectPath, 'delivery/packages', 'package.json')).concat(await readEntities(projectPath, 'delivery/bundles', 'bundle.json'));
+
+  const capabilityByComponent = new Map<string, string[]>();
+  for (const capability of capabilitiesRaw) {
+    const title = String(capability.title || capability.slug || capability.id || 'Untitled capability');
+    for (const componentSlug of capability.components || []) {
+      const list = capabilityByComponent.get(componentSlug) || [];
+      list.push(title);
+      capabilityByComponent.set(componentSlug, list);
+    }
+  }
+
+  const components: HomeWorkComponentItem[] = componentsRaw
+    .map((component: any) => {
+      const slug = String(component.slug || component.id || '').trim();
+      const status = String(component.status || component.lifecycle || 'draft');
+      const sourceProjects = Array.isArray(component.sourceProjects) ? component.sourceProjects : [];
+      const capabilities = capabilityByComponent.get(slug) || [];
+      const reasons: string[] = [];
+      if (!isTerminalHomeStatus(status)) reasons.push(`Status is ${status.replace(/-/g, ' ')}`);
+      if (!sourceProjects.length) reasons.push('No source mapping');
+      if (!capabilities.length) reasons.push('No capability mapping');
+      return {
+        slug,
+        title: String(component.title || slug || 'Untitled component'),
+        status,
+        sourceProjects,
+        capabilities,
+        reason: reasons.join(' · ') || 'Needs review'
+      };
+    })
+    .filter((component) => !isTerminalHomeStatus(component.status) || !component.sourceProjects.length || !component.capabilities.length)
+    .sort((a, b) => a.title.localeCompare(b.title));
+
+  const capabilities: HomeWorkCapabilityItem[] = [];
+  for (const capability of capabilitiesRaw) {
+    const slug = String(capability.slug || capability.id || '').trim();
+    const status = String(capability.status || capability.lifecycle || 'draft');
+    const components = Array.isArray(capability.components) ? capability.components : [];
+    const incompleteSections = await readCapabilityIncompleteSectionCount(projectPath, capability);
+    const reasons: string[] = [];
+    if (!isTerminalHomeStatus(status)) reasons.push(`Status is ${status.replace(/-/g, ' ')}`);
+    if (!components.length) reasons.push('No components selected');
+    if (incompleteSections > 0) reasons.push(`${incompleteSections} section${incompleteSections === 1 ? '' : 's'} incomplete`);
+    if (reasons.length) {
+      capabilities.push({
+        slug,
+        title: String(capability.title || slug || 'Untitled capability'),
+        status,
+        components,
+        incompleteSections,
+        reason: reasons.join(' · ')
+      });
+    }
+  }
+  capabilities.sort((a, b) => a.title.localeCompare(b.title));
+
+  const delivery: HomeWorkDeliveryItem[] = deliveriesRaw
+    .map((pkg: any) => {
+      const status = String(pkg.status || 'draft');
+      const components = Array.isArray(pkg.components) ? pkg.components : [];
+      const phaseCount = Array.isArray(pkg.phases) ? pkg.phases.length : Number(pkg.phaseCount || 0);
+      const reasons: string[] = [];
+      if (!isTerminalDeliveryStatus(status)) reasons.push(`Status is ${status.replace(/-/g, ' ')}`);
+      if (!components.length) reasons.push('No components captured');
+      if (!phaseCount && status !== 'draft') reasons.push('No phases defined');
+      return {
+        id: String(pkg.id || pkg.slug || 'delivery-package'),
+        title: String(pkg.title || pkg.name || 'Untitled delivery package'),
+        status,
+        sourceCapability: pkg.sourceCapability ? String(pkg.sourceCapability) : undefined,
+        components,
+        phaseCount,
+        priority: typeof pkg.priority === 'number' ? pkg.priority : undefined,
+        reason: reasons.join(' · ') || 'Delivery package needs attention'
+      };
+    })
+    .filter((pkg) => !isTerminalDeliveryStatus(pkg.status))
+    .sort((a, b) => (a.priority ?? 9999) - (b.priority ?? 9999) || a.id.localeCompare(b.id));
+
+  return {
+    delivery,
+    capabilities,
+    components,
+    total: delivery.length + capabilities.length + components.length
+  };
 }
 
 async function readProjectStatus(projectPath: string): Promise<ProjectStatus> {
@@ -1112,17 +1357,193 @@ Describe the app, service, plugin, module, library, workflow, integration, tool,
 
 
 const CAPABILITY_TEMPLATE_SECTIONS = [
-  { key: 'outcomes', fileName: '01-outcomes.md', title: 'Outcomes', prompt: 'Describe what this capability should make possible.' },
-  { key: 'scope', fileName: '02-scope.md', title: 'Scope', prompt: 'Define what is in scope and out of scope.' },
-  { key: 'user-journeys', fileName: '03-user-journeys.md', title: 'User Journeys', prompt: 'Describe the journeys or workflows this capability supports.' },
-  { key: 'functional-requirements', fileName: '04-functional-requirements.md', title: 'Functional Requirements', prompt: 'List the required behaviours and functions.' },
-  { key: 'non-functional-requirements', fileName: '05-non-functional-requirements.md', title: 'Non-Functional Requirements', prompt: 'List quality attributes, constraints, performance, reliability, security, or accessibility needs.' },
-  { key: 'data-model', fileName: '06-data-model.md', title: 'Data Model', prompt: 'Describe important data, records, state, and identifiers.' },
-  { key: 'integrations', fileName: '07-integrations.md', title: 'Integrations', prompt: 'Describe systems, services, components, or workflows this capability integrates with.' },
-  { key: 'architecture', fileName: '08-architecture.md', title: 'Architecture', prompt: 'Describe the expected architectural shape or constraints.' },
-  { key: 'ux-ui', fileName: '09-ux-ui.md', title: 'UX/UI', prompt: 'Describe user-facing screens, feedback, inspection tools, or UX expectations.' },
-  { key: 'risks', fileName: '10-risks.md', title: 'Risks', prompt: 'Capture risks, unknowns, edge cases, and failure modes.' },
-  { key: 'validation', fileName: '11-validation.md', title: 'Validation', prompt: 'Describe how this capability should be verified.' }
+  {
+    key: 'outcomes',
+    fileName: '01-outcomes.md',
+    title: 'Outcomes',
+    prompt: 'Describe what this capability should make possible.',
+    body: `## Purpose
+Describe the user or business outcome this capability must enable.
+
+## Success Criteria
+- [ ] The capability has a clear reason to exist.
+- [ ] Success can be observed or measured.
+- [ ] The expected behaviour is specific enough for delivery work.
+
+## Notes
+- Primary users:
+- Main problem solved:
+- Expected result:`
+  },
+  {
+    key: 'scope',
+    fileName: '02-scope.md',
+    title: 'Scope',
+    prompt: 'Define what is in scope and out of scope.',
+    body: `## In Scope
+- 
+
+## Out of Scope
+- 
+
+## Assumptions
+- 
+
+## Boundaries
+Describe where this capability starts and stops, especially where another capability or component takes over.`
+  },
+  {
+    key: 'user-journeys',
+    fileName: '03-user-journeys.md',
+    title: 'User Journeys',
+    prompt: 'Describe the journeys or workflows this capability supports.',
+    body: `## Primary Journey
+1. The user starts by...
+2. The system responds by...
+3. The user completes the task when...
+
+## Alternate Journeys
+- 
+
+## Error / Recovery Journeys
+- `
+  },
+  {
+    key: 'functional-requirements',
+    fileName: '04-functional-requirements.md',
+    title: 'Functional Requirements',
+    prompt: 'List the required behaviours and functions.',
+    body: `## Required Behaviours
+- [ ] The system shall...
+- [ ] The user can...
+- [ ] The capability prevents...
+
+## Rules
+- 
+
+## Acceptance Notes
+Describe the minimum behaviour required before implementation can be accepted.`
+  },
+  {
+    key: 'non-functional-requirements',
+    fileName: '05-non-functional-requirements.md',
+    title: 'Non-Functional Requirements',
+    prompt: 'List quality attributes, constraints, performance, reliability, security, or accessibility needs.',
+    body: `## Quality Attributes
+- Performance:
+- Reliability:
+- Security:
+- Accessibility:
+- Observability:
+
+## Constraints
+- 
+
+## Service Expectations
+Describe any limits, response times, scale, offline behaviour, or compatibility needs.`
+  },
+  {
+    key: 'data-model',
+    fileName: '06-data-model.md',
+    title: 'Data Model',
+    prompt: 'Describe important data, records, state, and identifiers.',
+    body: `## Key Data
+| Name | Purpose | Owner / Source | Notes |
+| --- | --- | --- | --- |
+|  |  |  |  |
+
+## State
+Describe important state transitions, identifiers, and persistence rules.
+
+## Data Rules
+- `
+  },
+  {
+    key: 'integrations',
+    fileName: '07-integrations.md',
+    title: 'Integrations',
+    prompt: 'Describe systems, services, components, or workflows this capability integrates with.',
+    body: `## Internal Integrations
+- Components:
+- Capabilities:
+- Workflows:
+
+## External Integrations
+- Services:
+- Files / APIs:
+- Authentication / permissions:
+
+## Integration Rules
+- `
+  },
+  {
+    key: 'architecture',
+    fileName: '08-architecture.md',
+    title: 'Architecture',
+    prompt: 'Describe the expected architectural shape or constraints.',
+    body: `## Proposed Shape
+Describe the technical approach, affected layers, and important design decisions.
+
+## Components Involved
+- 
+
+## Constraints
+- 
+
+## Open Questions
+- `
+  },
+  {
+    key: 'ux-ui',
+    fileName: '09-ux-ui.md',
+    title: 'UX/UI',
+    prompt: 'Describe user-facing screens, feedback, inspection tools, or UX expectations.',
+    body: `## User Interface
+Describe screens, panels, controls, messages, empty states, and error states.
+
+## User Feedback
+- Success feedback:
+- Failure feedback:
+- Progress / loading feedback:
+
+## Accessibility Notes
+- `
+  },
+  {
+    key: 'risks',
+    fileName: '10-risks.md',
+    title: 'Risks',
+    prompt: 'Capture risks, unknowns, edge cases, and failure modes.',
+    body: `## Risks
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+|  |  |  |
+
+## Unknowns
+- 
+
+## Edge Cases
+- `
+  },
+  {
+    key: 'validation',
+    fileName: '11-validation.md',
+    title: 'Validation',
+    prompt: 'Describe how this capability should be verified.',
+    body: `## Verification Approach
+Describe how this capability will be checked before it is considered ready.
+
+## Acceptance Checks
+- [ ] 
+- [ ] 
+- [ ] 
+
+## Test Notes
+- Unit checks:
+- Integration checks:
+- Manual checks:
+- Regression risks:`
+  }
 ];
 
 function normaliseCapabilitySections(inputSections?: CapabilitySectionInput[], fallback?: Partial<Record<string, string>>) {
@@ -1134,7 +1555,7 @@ function normaliseCapabilitySections(inputSections?: CapabilitySectionInput[], f
 
   return CAPABILITY_TEMPLATE_SECTIONS.map((template) => {
     const input = byKey.get(template.key);
-    const body = input?.body ?? fallback?.[template.key] ?? '';
+    const body = input?.body ?? fallback?.[template.key] ?? template.body ?? '';
     return {
       key: template.key,
       fileName: template.fileName,
@@ -1640,6 +2061,344 @@ async function createDeliveryPackageFromCapability(input: CreateDeliveryPackageF
   return { id, path: dir };
 }
 
+function deliveryStatusFromManifest(manifest: any, packaged: boolean, phaseCount: number): string {
+  const raw = String(manifest.status || '').trim().toLowerCase();
+  if (raw) return raw;
+  if (manifest.acceptedAt || manifest.completedAt) return 'done';
+  if (manifest.startedAt || manifest.inProgressAt) return 'in-progress';
+  if (manifest.approvedAt) return 'approved';
+  if (manifest.reviewRequestedAt || manifest.submittedAt) return 'review';
+  if (packaged || phaseCount > 0) return 'review';
+  return 'draft';
+}
+
+async function countPackagePhases(dir: string) {
+  if (!(await exists(dir))) return 0;
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+  return entries.filter((entry) => entry.isFile() && /^phase-[\w-]+\.md$/i.test(entry.name)).length;
+}
+
+async function readDeliveryPackageSummariesFrom(root: string, relativeDir: string, manifestName: string): Promise<DeliveryPackageSummary[]> {
+  const dir = path.join(root, relativeDir);
+  if (!(await exists(dir))) return [];
+  const items: DeliveryPackageSummary[] = [];
+
+  for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
+    const packageDir = path.join(dir, entry.name);
+    const manifestPath = path.join(packageDir, manifestName);
+    if (!(await exists(manifestPath))) continue;
+
+    const manifest = await readJson<any>(manifestPath);
+    const snapshotExists = await exists(path.join(packageDir, 'snapshot.md'));
+    const strategyExists = await exists(path.join(packageDir, 'implementation-strategy.md'));
+    const assembledExists = await exists(path.join(packageDir, 'delivery-package.md')) || await exists(path.join(packageDir, 'package.md'));
+    const phaseCount = await countPackagePhases(packageDir);
+    const packaged = Boolean(assembledExists || (snapshotExists && strategyExists));
+
+    items.push({
+      id: String(manifest.id || entry.name),
+      title: String(manifest.title || manifest.name || entry.name),
+      status: deliveryStatusFromManifest(manifest, packaged, phaseCount),
+      sourceCapability: manifest.sourceCapability || manifest.capability || manifest.capabilitySlug,
+      components: Array.isArray(manifest.components) ? manifest.components.map(String) : [],
+      createdAt: manifest.createdAt || manifest.updatedAt,
+      packaged,
+      phaseCount,
+      priority: typeof manifest.priority === 'number' ? manifest.priority : undefined
+    });
+  }
+
+  return items;
+}
+
+async function readDeliveryPackages(projectPath: string): Promise<DeliveryPackageSummary[]> {
+  const packages = await readDeliveryPackageSummariesFrom(projectPath, 'delivery/packages', 'package.json');
+  const bundles = await readDeliveryPackageSummariesFrom(projectPath, 'delivery/bundles', 'bundle.json');
+  const seen = new Set<string>();
+  return [...packages, ...bundles]
+    .filter((item) => {
+      const key = item.id.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => {
+      const priority = (a.priority ?? 999) - (b.priority ?? 999);
+      if (priority !== 0) return priority;
+      return a.id.localeCompare(b.id);
+    });
+}
+
+
+async function findDeliveryPackageTarget(projectPath: string, id: string) {
+  const cleanId = String(id || '').trim();
+  if (!cleanId) throw new Error('Delivery package id is required.');
+
+  const candidates = [
+    { dir: path.join(projectPath, 'delivery', 'packages', cleanId), manifestName: 'package.json' },
+    { dir: path.join(projectPath, 'delivery', 'bundles', cleanId), manifestName: 'bundle.json' }
+  ];
+
+  const projectRoot = path.resolve(projectPath);
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate.dir);
+    if (!resolved.startsWith(projectRoot + path.sep)) continue;
+    if (await exists(path.join(candidate.dir, candidate.manifestName))) return candidate;
+  }
+
+  throw new Error(`Delivery package not found: ${cleanId}`);
+}
+
+async function readMarkdownBody(filePath: string) {
+  if (!(await exists(filePath))) return '';
+  const parsed = matter(await fsp.readFile(filePath, 'utf8'));
+  return parsed.content.trim();
+}
+
+async function writeMarkdownBody(filePath: string, body: string, fallbackData: Record<string, unknown> = {}) {
+  let data = fallbackData;
+  if (await exists(filePath)) {
+    data = { ...fallbackData, ...matter(await fsp.readFile(filePath, 'utf8')).data };
+  }
+  await fsp.writeFile(filePath, matter.stringify((body || '').trim() + '\n', data), 'utf8');
+}
+
+function phaseIdFromFileName(fileName: string) {
+  return fileName.replace(/\.md$/i, '');
+}
+
+
+async function listDeliveryPackageFiles(packageDir: string): Promise<DeliveryPackageFileDetail[]> {
+  const files: DeliveryPackageFileDetail[] = [];
+
+  async function walk(currentDir: string, relativeDir = '') {
+    const entries = await fsp.readdir(currentDir, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+    for (const entry of entries) {
+      const relativePath = relativeDir ? path.join(relativeDir, entry.name).replace(/\\/g, '/') : entry.name;
+      const absolutePath = path.join(currentDir, entry.name);
+
+      if (entry.isDirectory()) {
+        files.push({
+          name: entry.name,
+          relativePath,
+          kind: 'directory',
+          editable: false
+        });
+        await walk(absolutePath, relativePath);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+
+      const stat = await fsp.stat(absolutePath);
+      const extension = path.extname(entry.name).toLowerCase();
+      files.push({
+        name: entry.name,
+        relativePath,
+        kind: 'file',
+        sizeBytes: stat.size,
+        extension,
+        editable: extension === '.md'
+      });
+    }
+  }
+
+  await walk(packageDir);
+  return files;
+}
+
+async function readDeliveryPackage(input: { projectPath: string; id: string }): Promise<DeliveryPackageDetail> {
+  const target = await findDeliveryPackageTarget(input.projectPath, input.id);
+  const manifestPath = path.join(target.dir, target.manifestName);
+  const manifest = await readJson<any>(manifestPath);
+  const summary = (await readDeliveryPackages(input.projectPath)).find((item) => item.id === String(manifest.id || input.id)) || {
+    id: String(manifest.id || input.id),
+    title: String(manifest.title || manifest.name || input.id),
+    status: String(manifest.status || 'draft'),
+    sourceCapability: manifest.sourceCapability || manifest.capability || manifest.capabilitySlug,
+    components: Array.isArray(manifest.components) ? manifest.components.map(String) : [],
+    createdAt: manifest.createdAt || manifest.updatedAt,
+    packaged: false,
+    phaseCount: 0
+  };
+
+  const entries = await fsp.readdir(target.dir, { withFileTypes: true });
+  const phases: DeliveryPackagePhaseDetail[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !/^phase-[\w-]+\.md$/i.test(entry.name)) continue;
+    const filePath = path.join(target.dir, entry.name);
+    const parsed = matter(await fsp.readFile(filePath, 'utf8'));
+    phases.push({
+      id: String(parsed.data.id || phaseIdFromFileName(entry.name)),
+      title: String(parsed.data.title || phaseIdFromFileName(entry.name).replace(/^phase-/, '').replace(/-/g, ' ')),
+      status: String(parsed.data.status || 'draft'),
+      fileName: entry.name,
+      body: parsed.content.trim()
+    });
+  }
+  phases.sort((a, b) => a.fileName.localeCompare(b.fileName, undefined, { numeric: true }));
+
+  return {
+    ...summary,
+    packagePath: target.dir,
+    snapshotBody: await readMarkdownBody(path.join(target.dir, 'snapshot.md')),
+    strategyBody: await readMarkdownBody(path.join(target.dir, 'implementation-strategy.md')),
+    packagedBody: await readMarkdownBody(path.join(target.dir, 'delivery-package.md')) || await readMarkdownBody(path.join(target.dir, 'package.md')),
+    phases,
+    files: await listDeliveryPackageFiles(target.dir)
+  };
+}
+
+async function saveDeliveryPackage(input: SaveDeliveryPackageInput): Promise<DeliveryPackageDetail> {
+  const target = await findDeliveryPackageTarget(input.projectPath, input.id);
+  const manifestPath = path.join(target.dir, target.manifestName);
+  const manifest = await readJson<any>(manifestPath);
+
+  if (typeof input.status === 'string') manifest.status = input.status;
+  if (typeof input.title === 'string') manifest.title = input.title;
+  manifest.updatedAt = new Date().toISOString();
+  await writeJson(manifestPath, manifest);
+
+  if (typeof input.snapshotBody === 'string') {
+    await writeMarkdownBody(path.join(target.dir, 'snapshot.md'), input.snapshotBody, {
+      aidd: { type: 'delivery-package-snapshot', templateVersion: TEMPLATE_VERSION },
+      id: input.id,
+      title: manifest.title,
+      status: manifest.status
+    });
+  }
+
+  if (typeof input.strategyBody === 'string') {
+    await writeMarkdownBody(path.join(target.dir, 'implementation-strategy.md'), input.strategyBody, {
+      aidd: { type: 'implementation-strategy', templateVersion: TEMPLATE_VERSION },
+      id: `${input.id}-strategy`,
+      deliveryPackage: input.id,
+      status: manifest.status || 'draft'
+    });
+  }
+
+  if (Array.isArray(input.phases)) {
+    const existingEntries = await fsp.readdir(target.dir, { withFileTypes: true });
+    for (const entry of existingEntries) {
+      if (entry.isFile() && /^phase-[\w-]+\.md$/i.test(entry.name)) {
+        await fsp.rm(path.join(target.dir, entry.name), { force: true });
+      }
+    }
+
+    for (const [index, phase] of input.phases.entries()) {
+      const title = phase.title?.trim() || `Phase ${index + 1}`;
+      const safeFileName = `phase-${String(index + 1).padStart(2, '0')}-${slugify(title)}.md`;
+      await writeMarkdownBody(path.join(target.dir, safeFileName), phase.body || '', {
+        aidd: { type: 'delivery-package-phase', templateVersion: TEMPLATE_VERSION },
+        id: phaseIdFromFileName(safeFileName),
+        title,
+        status: phase.status || 'packaging',
+        deliveryPackage: input.id,
+        order: index + 1
+      });
+    }
+  }
+
+  return readDeliveryPackage({ projectPath: input.projectPath, id: input.id });
+}
+
+async function createDeliveryPackagePhase(input: CreateDeliveryPackagePhaseInput): Promise<DeliveryPackageDetail> {
+  const target = await findDeliveryPackageTarget(input.projectPath, input.packageId);
+  const title = input.title.trim() || 'Implementation Phase';
+  const entries = await fsp.readdir(target.dir, { withFileTypes: true });
+  const phaseNumber = entries.filter((entry) => entry.isFile() && /^phase-[\w-]+\.md$/i.test(entry.name)).length + 1;
+  const fileName = `phase-${String(phaseNumber).padStart(2, '0')}-${slugify(title)}.md`;
+  const body = input.body?.trim() || [
+    `# ${title}`,
+    '',
+    '## Goal',
+    '',
+    'Describe the outcome this phase should deliver.',
+    '',
+    '## Implementation Steps',
+    '',
+    '- TODO: Add implementation steps.',
+    '',
+    '## Files / Components',
+    '',
+    '- TODO: List files, components, or areas touched.',
+    '',
+    '## Verification',
+    '',
+    '- TODO: Define how this phase will be checked.',
+    ''
+  ].join('\n');
+
+  await writeMarkdownBody(path.join(target.dir, fileName), body, {
+    aidd: { type: 'delivery-package-phase', templateVersion: TEMPLATE_VERSION },
+    id: phaseIdFromFileName(fileName),
+    title,
+    status: 'packaging',
+    deliveryPackage: input.packageId,
+    createdAt: new Date().toISOString()
+  });
+
+  return readDeliveryPackage({ projectPath: input.projectPath, id: input.packageId });
+}
+
+async function assembleDeliveryPackage(input: { projectPath: string; packageId: string }): Promise<DeliveryPackageDetail> {
+  const detail = await readDeliveryPackage({ projectPath: input.projectPath, id: input.packageId });
+  const body = [
+    `# ${detail.id} ${detail.title}`,
+    '',
+    `Status: ${detail.status}`,
+    '',
+    '> This package is the implementation instruction set for the AI agent. Project snapshot/context is used to refine the strategy, but is intentionally excluded from this assembled handoff to reduce token load.',
+    '',
+    '## Implementation Strategy',
+    '',
+    detail.strategyBody || '_No implementation strategy content._',
+    '',
+    '## Implementation Phases',
+    '',
+    detail.phases.length
+      ? detail.phases.map((phase, index) => [`### Phase ${index + 1}: ${phase.title}`, '', phase.body || '_No phase content._'].join('\n')).join('\n\n')
+      : '_No implementation phases have been created._',
+    ''
+  ].join('\n');
+
+  const target = await findDeliveryPackageTarget(input.projectPath, input.packageId);
+  await writeMarkdownBody(path.join(target.dir, 'delivery-package.md'), body, {
+    aidd: { type: 'assembled-delivery-package', templateVersion: TEMPLATE_VERSION },
+    id: `${input.packageId}-assembled`,
+    deliveryPackage: input.packageId,
+    status: detail.status,
+    includes: ['implementation-strategy', 'implementation-phases'],
+    excludes: ['project-snapshot'],
+    updatedAt: new Date().toISOString()
+  });
+
+  return readDeliveryPackage({ projectPath: input.projectPath, id: input.packageId });
+}
+
+async function deleteDeliveryPackage(input: DeleteDeliveryPackageInput) {
+  const id = String(input.id || '').trim();
+  if (!id) throw new Error('Delivery package id is required.');
+
+  const candidates = [
+    path.join(input.projectPath, 'delivery', 'packages', id),
+    path.join(input.projectPath, 'delivery', 'bundles', id)
+  ];
+
+  const projectRoot = path.resolve(input.projectPath);
+  const target = candidates.find((candidate) => {
+    const resolved = path.resolve(candidate);
+    return resolved.startsWith(projectRoot + path.sep) && fs.existsSync(resolved);
+  });
+
+  if (!target) throw new Error(`Delivery package not found: ${id}`);
+  await fsp.rm(target, { recursive: true, force: true });
+  return readDeliveryPackages(input.projectPath);
+}
+
 function detectSourceType(entries: string[]) {
   const names = new Set(entries.map((item) => item.toLowerCase()));
   const indicators: string[] = [];
@@ -1871,6 +2630,7 @@ ipcMain.handle('project:forget', async (_event, projectId: string) => {
 });
 
 ipcMain.handle('project:status', async (_event, projectPath: string) => readProjectStatus(projectPath));
+ipcMain.handle('project:homeWork', async (_event, projectPath: string) => readHomeWork(projectPath));
 
 ipcMain.handle('project:validate', async (_event, projectPath: string) => validateProject(projectPath));
 
@@ -1975,6 +2735,41 @@ function safeDragFileName(fileName: string) {
   return `${baseName}${ext}`;
 }
 
+function safeDragDirectory(directory?: string) {
+  return (directory || 'markdown')
+    .split(/[\\/]+/)
+    .map((part) => slugify(part))
+    .filter(Boolean);
+}
+
+async function prepareMarkdownDragFile(input: PrepareMarkdownDragFileInput) {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.fileName) throw new Error('Markdown file name is required.');
+
+  const projectPath = path.resolve(input.projectPath);
+  const dragDir = path.join(projectPath, '.aidd', 'drag-files', ...safeDragDirectory(input.directory));
+  await fsp.mkdir(dragDir, { recursive: true });
+
+  const safeName = safeDragFileName(input.fileName);
+  const outputPath = path.join(dragDir, safeName);
+  const title = input.title?.trim() || path.parse(safeName).name;
+  const status = input.status || 'draft';
+  const body = input.body?.trim() || '';
+
+  await fsp.writeFile(outputPath, matter.stringify(body ? `${body}\n` : '', {
+    aidd: {
+      type: 'drag-export',
+      title,
+      status,
+      templateVersion: TEMPLATE_VERSION,
+      updatedAt: new Date().toISOString(),
+      ...(input.metadata || {})
+    }
+  }), 'utf8');
+
+  return outputPath;
+}
+
 async function prepareFoundationDragFile(input: PrepareFoundationDragFileInput) {
   if (!input.projectPath) throw new Error('Project path is required.');
   if (!input.fileName) throw new Error('Foundation file name is required.');
@@ -2009,6 +2804,7 @@ async function prepareNativeDragTestFile() {
 }
 
 ipcMain.handle('drag:prepareFoundationFile', async (_event, input: PrepareFoundationDragFileInput) => prepareFoundationDragFile(input));
+ipcMain.handle('drag:prepareMarkdownFile', async (_event, input: PrepareMarkdownDragFileInput) => prepareMarkdownDragFile(input));
 ipcMain.handle('drag:prepareNativeTestFile', async () => prepareNativeDragTestFile());
 
 // Use ipcMain.on + ipcRenderer.send for native drag-out. This keeps the call as close as possible
@@ -2031,6 +2827,9 @@ ipcMain.on('drag:startNativeFile', (event, filePath: string) => {
     icon
   });
 });
+
+
+ipcMain.handle('app:notify', async (_event, input: NotifyInput) => showNativeNotification(input));
 
 ipcMain.handle('app:showItemInFolder', async (_event, filePath: string) => {
   const resolvedPath = path.resolve(filePath || '');
@@ -2103,6 +2902,14 @@ ipcMain.handle('project:createDeliveryPackageFromCapability', async (_event, inp
   if (!input.projectPath || !input.capabilitySlug) throw new Error('Project path and capability slug are required.');
   return createDeliveryPackageFromCapability(input);
 });
+
+ipcMain.handle('project:readDeliveryPackages', async (_event, projectPath: string) => readDeliveryPackages(projectPath));
+ipcMain.handle('project:readDeliveryPackage', async (_event, input: { projectPath: string; id: string }) => readDeliveryPackage(input));
+ipcMain.handle('project:saveDeliveryPackage', async (_event, input: SaveDeliveryPackageInput) => saveDeliveryPackage(input));
+ipcMain.handle('project:createDeliveryPackagePhase', async (_event, input: CreateDeliveryPackagePhaseInput) => createDeliveryPackagePhase(input));
+ipcMain.handle('project:assembleDeliveryPackage', async (_event, input: { projectPath: string; packageId: string }) => assembleDeliveryPackage(input));
+
+ipcMain.handle('project:deleteDeliveryPackage', async (_event, input: DeleteDeliveryPackageInput) => deleteDeliveryPackage(input));
 
 ipcMain.handle('project:readDecisions', async (_event, projectPath: string) => readDecisions(projectPath));
 

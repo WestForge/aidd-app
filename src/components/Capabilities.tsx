@@ -1,70 +1,1029 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, CheckCircle2, Circle, Database, FileText, GitBranch, Layers, ListChecks, PackagePlus, Plus, Save, ShieldAlert, Sparkles, Users, Workflow, Zap } from 'lucide-react';
-import { AiddMarkdownEditor } from './editor/AiddMarkdownEditor';
-import { Button } from './ui/button';
-import { Badge } from './ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Input } from './ui/input';
-import { Textarea } from './ui/textarea';
-import { Select } from './ui/select';
-import { Label } from './ui/label';
-import { Alert, AlertDescription, AlertTitle } from './ui/alert';
-import { cn } from '../lib/utils';
+import { useEffect, useMemo, useState } from "react";
+import {
+  Archive,
+  ArrowLeft,
+  CheckCircle2,
+  Circle,
+  CircleDashed,
+  Database,
+  Eye,
+  FileText,
+  FolderOpen,
+  GitBranch,
+  Layers,
+  ListChecks,
+  PackagePlus,
+  Pencil,
+  PlayCircle,
+  Plus,
+  Save,
+  ShieldAlert,
+  SkipForward,
+  Sparkles,
+  Users,
+  Workflow,
+  Zap,
+} from "lucide-react";
+import { AiddMarkdownEditor } from "./editor/AiddMarkdownEditor";
+import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "./ui/card";
+import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
+import { Select } from "./ui/select";
+import { Label } from "./ui/label";
+import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
+import { cn } from "../lib/utils";
 
-const statusOptions: AiddSetupStatus[] = ['not-started', 'draft', 'in-review', 'active', 'deprecated', 'complete', 'skipped'];
-type CapabilityView = 'list' | 'new' | 'edit';
-type CapabilitySection = { key: string; fileName: string; title: string; body: string; status?: AiddSetupStatus | string; prompt?: string; };
-const icons = [Sparkles, ListChecks, Users, Zap, ShieldAlert, Database, GitBranch, Layers, Workflow, ShieldAlert, CheckCircle2];
-const capabilityTemplateSections: CapabilitySection[] = [
-  { key: 'outcomes', fileName: '01-outcomes.md', title: 'Outcomes', body: '', prompt: 'Describe what this capability should make possible.' },
-  { key: 'scope', fileName: '02-scope.md', title: 'Scope', body: '', prompt: 'Define what is in scope and out of scope.' },
-  { key: 'user-journeys', fileName: '03-user-journeys.md', title: 'User Journeys', body: '', prompt: 'Describe the journeys or workflows this capability supports.' },
-  { key: 'functional-requirements', fileName: '04-functional-requirements.md', title: 'Functional Requirements', body: '', prompt: 'List the required behaviours and functions.' },
-  { key: 'non-functional-requirements', fileName: '05-non-functional-requirements.md', title: 'Non-Functional Requirements', body: '', prompt: 'List quality attributes, constraints, performance, reliability, security, or accessibility needs.' },
-  { key: 'data-model', fileName: '06-data-model.md', title: 'Data Model', body: '', prompt: 'Describe important data, records, state, and identifiers.' },
-  { key: 'integrations', fileName: '07-integrations.md', title: 'Integrations', body: '', prompt: 'Describe systems, services, components, or workflows this capability integrates with.' },
-  { key: 'architecture', fileName: '08-architecture.md', title: 'Architecture', body: '', prompt: 'Describe the expected architectural shape or constraints.' },
-  { key: 'ux-ui', fileName: '09-ux-ui.md', title: 'UX/UI', body: '', prompt: 'Describe user-facing screens, feedback, inspection tools, or UX expectations.' },
-  { key: 'risks', fileName: '10-risks.md', title: 'Risks', body: '', prompt: 'Capture risks, unknowns, edge cases, and failure modes.' },
-  { key: 'validation', fileName: '11-validation.md', title: 'Validation', body: '', prompt: 'Describe how this capability should be verified.' }
+const statusOptions: AiddSetupStatus[] = [
+  "not-started",
+  "draft",
+  "in-review",
+  "active",
+  "deprecated",
+  "complete",
+  "skipped",
 ];
-function statusLabel(status?: string) { return (status ?? 'draft').replace(/-/g, ' '); }
-function newSections() { return capabilityTemplateSections.map((section) => ({ ...section, body: '', status: 'not-started' as AiddSetupStatus })); }
-function sectionReady(section: CapabilitySection) { return section.status === 'active' || section.status === 'complete'; }
+type CapabilityView = "list" | "new" | "edit";
+type CapabilitySection = {
+  key: string;
+  fileName: string;
+  title: string;
+  body: string;
+  status?: AiddSetupStatus | string;
+  prompt?: string;
+};
+const icons = [
+  Sparkles,
+  ListChecks,
+  Users,
+  Zap,
+  ShieldAlert,
+  Database,
+  GitBranch,
+  Layers,
+  Workflow,
+  ShieldAlert,
+  CheckCircle2,
+];
+const capabilityTemplateSections: CapabilitySection[] = [
+  {
+    key: "outcomes",
+    fileName: "01-outcomes.md",
+    title: "Outcomes",
+    body: `## Purpose
+Describe the user or business outcome this capability must enable.
 
-export function Capabilities({ activeProject }: { activeProject?: AiddTrackedProject | null }) {
+## Success Criteria
+- [ ] The capability has a clear reason to exist.
+- [ ] Success can be observed or measured.
+- [ ] The expected behaviour is specific enough for delivery work.
+
+## Notes
+- Primary users:
+- Main problem solved:
+- Expected result:`,
+    prompt: "Describe what this capability should make possible.",
+  },
+  {
+    key: "scope",
+    fileName: "02-scope.md",
+    title: "Scope",
+    body: `## In Scope
+- 
+
+## Out of Scope
+- 
+
+## Assumptions
+- 
+
+## Boundaries
+Describe where this capability starts and stops, especially where another capability or component takes over.`,
+    prompt: "Define what is in scope and out of scope.",
+  },
+  {
+    key: "user-journeys",
+    fileName: "03-user-journeys.md",
+    title: "User Journeys",
+    body: `## Primary Journey
+1. The user starts by...
+2. The system responds by...
+3. The user completes the task when...
+
+## Alternate Journeys
+- 
+
+## Error / Recovery Journeys
+- `,
+    prompt: "Describe the journeys or workflows this capability supports.",
+  },
+  {
+    key: "functional-requirements",
+    fileName: "04-functional-requirements.md",
+    title: "Functional Requirements",
+    body: `## Required Behaviours
+- [ ] The system shall...
+- [ ] The user can...
+- [ ] The capability prevents...
+
+## Rules
+- 
+
+## Acceptance Notes
+Describe the minimum behaviour required before implementation can be accepted.`,
+    prompt: "List the required behaviours and functions.",
+  },
+  {
+    key: "non-functional-requirements",
+    fileName: "05-non-functional-requirements.md",
+    title: "Non-Functional Requirements",
+    body: `## Quality Attributes
+- Performance:
+- Reliability:
+- Security:
+- Accessibility:
+- Observability:
+
+## Constraints
+- 
+
+## Service Expectations
+Describe any limits, response times, scale, offline behaviour, or compatibility needs.`,
+    prompt:
+      "List quality attributes, constraints, performance, reliability, security, or accessibility needs.",
+  },
+  {
+    key: "data-model",
+    fileName: "06-data-model.md",
+    title: "Data Model",
+    body: `## Key Data
+| Name | Purpose | Owner / Source | Notes |
+| --- | --- | --- | --- |
+|  |  |  |  |
+
+## State
+Describe important state transitions, identifiers, and persistence rules.
+
+## Data Rules
+- `,
+    prompt: "Describe important data, records, state, and identifiers.",
+  },
+  {
+    key: "integrations",
+    fileName: "07-integrations.md",
+    title: "Integrations",
+    body: `## Internal Integrations
+- Components:
+- Capabilities:
+- Workflows:
+
+## External Integrations
+- Services:
+- Files / APIs:
+- Authentication / permissions:
+
+## Integration Rules
+- `,
+    prompt:
+      "Describe systems, services, components, or workflows this capability integrates with.",
+  },
+  {
+    key: "architecture",
+    fileName: "08-architecture.md",
+    title: "Architecture",
+    body: `## Proposed Shape
+Describe the technical approach, affected layers, and important design decisions.
+
+## Components Involved
+- 
+
+## Constraints
+- 
+
+## Open Questions
+- `,
+    prompt: "Describe the expected architectural shape or constraints.",
+  },
+  {
+    key: "ux-ui",
+    fileName: "09-ux-ui.md",
+    title: "UX/UI",
+    body: `## User Interface
+Describe screens, panels, controls, messages, empty states, and error states.
+
+## User Feedback
+- Success feedback:
+- Failure feedback:
+- Progress / loading feedback:
+
+## Accessibility Notes
+- `,
+    prompt:
+      "Describe user-facing screens, feedback, inspection tools, or UX expectations.",
+  },
+  {
+    key: "risks",
+    fileName: "10-risks.md",
+    title: "Risks",
+    body: `## Risks
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+|  |  |  |
+
+## Unknowns
+- 
+
+## Edge Cases
+- `,
+    prompt: "Capture risks, unknowns, edge cases, and failure modes.",
+  },
+  {
+    key: "validation",
+    fileName: "11-validation.md",
+    title: "Validation",
+    body: `## Verification Approach
+Describe how this capability will be checked before it is considered ready.
+
+## Acceptance Checks
+- [ ] 
+- [ ] 
+- [ ] 
+
+## Test Notes
+- Unit checks:
+- Integration checks:
+- Manual checks:
+- Regression risks:`,
+    prompt: "Describe how this capability should be verified.",
+  },
+];
+function statusLabel(status?: string) {
+  return (status ?? "draft").replace(/-/g, " ");
+}
+const statusVisuals: Record<
+  AiddSetupStatus,
+  {
+    icon: typeof Circle;
+    className: string;
+    surfaceClassName: string;
+    badgeClassName: string;
+    barClassName: string;
+  }
+> = {
+  "not-started": {
+    icon: CircleDashed,
+    className: "text-muted-foreground",
+    surfaceClassName: "border-muted-foreground/30 bg-muted/20",
+    badgeClassName:
+      "border-muted-foreground/30 bg-muted/40 text-muted-foreground",
+    barClassName: "bg-muted-foreground/45",
+  },
+  draft: {
+    icon: Pencil,
+    className: "text-sky-400",
+    surfaceClassName: "border-sky-400/45 bg-sky-400/10",
+    badgeClassName: "border-sky-400/45 bg-sky-400/15 text-sky-100",
+    barClassName: "bg-sky-400",
+  },
+  "in-review": {
+    icon: Eye,
+    className: "text-amber-400",
+    surfaceClassName: "border-amber-400/50 bg-amber-400/10",
+    badgeClassName: "border-amber-400/50 bg-amber-400/15 text-amber-100",
+    barClassName: "bg-amber-400",
+  },
+  active: {
+    icon: PlayCircle,
+    className: "text-emerald-400",
+    surfaceClassName: "border-emerald-400/55 bg-emerald-400/10",
+    badgeClassName: "border-emerald-400/55 bg-emerald-400/15 text-emerald-100",
+    barClassName: "bg-emerald-400",
+  },
+  deprecated: {
+    icon: Archive,
+    className: "text-orange-400",
+    surfaceClassName: "border-orange-400/50 bg-orange-400/10",
+    badgeClassName: "border-orange-400/50 bg-orange-400/15 text-orange-100",
+    barClassName: "bg-orange-400",
+  },
+  complete: {
+    icon: CheckCircle2,
+    className: "text-green-400",
+    surfaceClassName: "border-green-400/55 bg-green-400/10",
+    badgeClassName: "border-green-400/55 bg-green-400/15 text-green-100",
+    barClassName: "bg-green-400",
+  },
+  skipped: {
+    icon: SkipForward,
+    className: "text-zinc-400",
+    surfaceClassName: "border-zinc-400/40 bg-zinc-400/10",
+    badgeClassName: "border-zinc-400/40 bg-zinc-400/15 text-zinc-100",
+    barClassName: "bg-zinc-400",
+  },
+};
+function getStatusVisual(status?: string) {
+  return (
+    statusVisuals[(status as AiddSetupStatus) || "draft"] ?? statusVisuals.draft
+  );
+}
+function StatusIcon({
+  status,
+  className,
+}: {
+  status?: string;
+  className?: string;
+}) {
+  const visual = getStatusVisual(status);
+  const Icon = visual.icon;
+  return (
+    <Icon className={cn("h-4 w-4 shrink-0", visual.className, className)} />
+  );
+}
+function StatusPill({ status }: { status?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <StatusIcon status={status} />
+      {statusLabel(status)}
+    </span>
+  );
+}
+function StatusBadge({ status, label }: { status?: string; label?: string }) {
+  const visual = getStatusVisual(status);
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs font-medium capitalize",
+        visual.badgeClassName,
+      )}
+    >
+      <StatusIcon status={status} className="h-3.5 w-3.5" />
+      {label ? `${label}: ` : null}
+      {statusLabel(status)}
+    </span>
+  );
+}
+function newSections() {
+  return capabilityTemplateSections.map((section) => ({
+    ...section,
+    body: "",
+    status: "not-started" as AiddSetupStatus,
+  }));
+}
+function sectionReady(section: CapabilitySection) {
+  return section.status === "active" || section.status === "complete";
+}
+
+export function Capabilities({
+  activeProject,
+  onDeliveryPackageCreated,
+}: {
+  activeProject?: AiddTrackedProject | null;
+  onDeliveryPackageCreated?: (id: string) => void;
+}) {
   const [setup, setSetup] = useState<AiddProjectSetupState | null>(null);
-  const [view, setView] = useState<CapabilityView>('list');
+  const [view, setView] = useState<CapabilityView>("list");
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
-  const [title, setTitle] = useState('');
-  const [status, setStatus] = useState<AiddSetupStatus>('draft');
+  const [title, setTitle] = useState("");
+  const [status, setStatus] = useState<AiddSetupStatus>("draft");
   const [selectedComponents, setSelectedComponents] = useState<string[]>([]);
-  const [inlineComponentTitle, setInlineComponentTitle] = useState('');
-  const [inlineComponentDescription, setInlineComponentDescription] = useState('');
+  const [inlineComponentTitle, setInlineComponentTitle] = useState("");
+  const [inlineComponentDescription, setInlineComponentDescription] =
+    useState("");
   const [sections, setSections] = useState<CapabilitySection[]>(newSections());
-  const [activeSectionKey, setActiveSectionKey] = useState('outcomes');
+  const [activeSectionKey, setActiveSectionKey] = useState("outcomes");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const load = async () => { if (!activeProject?.path) return; setSetup(await window.aidd.readProjectSetup(activeProject.path)); };
-  useEffect(() => { load().catch((err) => setError(String(err))); }, [activeProject?.path]);
-  const foundationBlockers = useMemo(() => { if (!setup) return ['Load the project foundation before creating delivery packages.']; const blockers = setup.foundation.filter((doc) => doc.required !== false && doc.status !== 'complete').map((doc) => `${doc.title} is ${statusLabel(doc.status)}`); if (setup.standards.status !== 'complete') blockers.push(`Project Standards are ${statusLabel(setup.standards.status)}`); return blockers; }, [setup]);
+  const [dragFilePath, setDragFilePath] = useState<string | null>(null);
+  const [dragError, setDragError] = useState<string | null>(null);
+  const load = async () => {
+    if (!activeProject?.path) return;
+    setSetup(await window.aidd.readProjectSetup(activeProject.path));
+  };
+  useEffect(() => {
+    load().catch((err) => setError(String(err)));
+  }, [activeProject?.path]);
+  const foundationBlockers = useMemo(() => {
+    if (!setup)
+      return ["Load the project foundation before creating delivery packages."];
+    const blockers = setup.foundation
+      .filter((doc) => doc.required !== false && doc.status !== "complete")
+      .map((doc) => `${doc.title} is ${statusLabel(doc.status)}`);
+    if (setup.standards.status !== "complete")
+      blockers.push(
+        `Project Standards are ${statusLabel(setup.standards.status)}`,
+      );
+    return blockers;
+  }, [setup]);
   const foundationReady = foundationBlockers.length === 0;
-  const progress = { completed: sections.filter(sectionReady).length, total: sections.length };
-  const activeSection = sections.find((section) => section.key === activeSectionKey) ?? sections[0];
+  const progress = {
+    completed: sections.filter(sectionReady).length,
+    total: sections.length,
+  };
+  const activeSection =
+    sections.find((section) => section.key === activeSectionKey) ?? sections[0];
   const allSectionsReady = sections.every(sectionReady);
-  const canCreateDeliveryPackage = foundationReady && (status === 'active' || status === 'complete') && allSectionsReady;
-  const resetForm = () => { setTitle(''); setStatus('draft'); setSelectedComponents([]); setInlineComponentTitle(''); setInlineComponentDescription(''); setSelectedSlug(null); setSections(newSections()); setActiveSectionKey('outcomes'); setMessage(null); };
-  const openCapability = async (slug: string) => { if (!activeProject?.path) return; setSaving(true); setError(null); try { const detail = await window.aidd.readCapability({ projectPath: activeProject.path, slug }); setSelectedSlug(detail.slug); setTitle(detail.title); setStatus((detail.status as AiddSetupStatus) || 'draft'); setSelectedComponents(detail.components || []); setSections(detail.sections?.length ? detail.sections : newSections()); setActiveSectionKey(detail.sections?.[0]?.key || 'outcomes'); setView('edit'); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } finally { setSaving(false); } };
-  const toggleComponent = (slug: string) => setSelectedComponents((current) => current.includes(slug) ? current.filter((item) => item !== slug) : [...current, slug]);
-  const updateActiveSectionBody = (body: string) => setSections((current) => current.map((section) => section.key === activeSectionKey ? { ...section, body, status: body.trim() && section.status === 'not-started' ? 'draft' : section.status } : section));
-  const updateActiveSectionStatus = (nextStatus: AiddSetupStatus) => setSections((current) => current.map((section) => section.key === activeSectionKey ? { ...section, status: nextStatus } : section));
-  const createCapability = async () => { if (!activeProject?.path) return; setSaving(true); setError(null); try { const next = await window.aidd.createCapability({ projectPath: activeProject.path, title, componentSlugs: selectedComponents, inlineComponent: inlineComponentTitle.trim() ? { title: inlineComponentTitle, description: inlineComponentDescription } : undefined, status, sections }); setSetup(next); resetForm(); setView('list'); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } finally { setSaving(false); } };
-  const saveCapability = async () => { if (!activeProject?.path || !selectedSlug) return; setSaving(true); setError(null); try { const next = await window.aidd.updateCapability({ projectPath: activeProject.path, slug: selectedSlug, title, componentSlugs: selectedComponents, status, sections }); setSetup(next); setMessage('Capability saved.'); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } finally { setSaving(false); } };
-  const createDeliveryPackage = async () => { if (!activeProject?.path || !selectedSlug) return; setSaving(true); setError(null); try { const result = await window.aidd.createDeliveryPackageFromCapability({ projectPath: activeProject.path, capabilitySlug: selectedSlug }); await load(); setMessage(`Created delivery package ${result.id}.`); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } finally { setSaving(false); } };
-  if (!activeProject) return <div className="flex h-full items-center justify-center p-6"><Card><CardHeader><CardTitle>No project selected</CardTitle></CardHeader></Card></div>;
+  const canCreateDeliveryPackage =
+    foundationReady &&
+    (status === "active" || status === "complete") &&
+    allSectionsReady;
 
-  if (view === 'list') return <div className="flex h-full flex-col overflow-hidden"><header className="flex h-16 shrink-0 items-center justify-between border-b px-6"><div><h1 className="text-xl font-semibold">Capabilities</h1><p className="text-sm text-muted-foreground">Define what your system can do.</p></div><Button onClick={() => { resetForm(); setView('new'); }}><Plus className="h-4 w-4" /> New Capability</Button></header><main className="min-h-0 flex-1 overflow-auto p-6">{error && <Alert variant="destructive" className="mb-4"><AlertTitle>Error</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{setup?.capabilities.map((capability) => <Card key={capability.slug} className="cursor-pointer hover:bg-accent" onClick={() => openCapability(capability.slug)}><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle className="text-base">{capability.title}</CardTitle><CardDescription>{capability.components?.length ? `${capability.components.length} component(s) linked` : 'No components linked yet'}</CardDescription></div><Badge variant="outline">{statusLabel(capability.status)}</Badge></div></CardHeader><CardContent>{capability.components?.length ? <div className="flex flex-wrap gap-2">{capability.components.map((component) => <Badge key={component} variant="secondary">{component}</Badge>)}</div> : <p className="text-sm text-muted-foreground">Open the editor to define sections and component links.</p>}</CardContent></Card>)}{setup && setup.capabilities.length === 0 && <Card className="md:col-span-2 xl:col-span-3"><CardHeader><CardTitle>No capabilities yet</CardTitle><CardDescription>Create the first capability by describing what the system should make possible.</CardDescription></CardHeader><CardContent><Button onClick={() => { resetForm(); setView('new'); }}>New Capability</Button></CardContent></Card>}</div></main></div>;
+  useEffect(() => {
+    if (!activeProject?.path || !activeSection) {
+      setDragFilePath(null);
+      return;
+    }
 
-  return <div className="flex h-full flex-col overflow-hidden"><header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b px-6"><div className="min-w-0"><div className="flex items-center gap-2"><Button variant="ghost" size="icon" onClick={() => { resetForm(); setView('list'); }}><ArrowLeft className="h-4 w-4" /></Button><Input className="max-w-lg text-base font-semibold" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Capability name" /></div></div><div className="flex items-center gap-2">{view === 'edit' && <Button variant="outline" onClick={createDeliveryPackage} disabled={saving || !canCreateDeliveryPackage}><PackagePlus className="h-4 w-4" /> Create Delivery Package</Button>}{view === 'edit' ? <Button onClick={saveCapability} disabled={saving || !title.trim()}><Save className="h-4 w-4" /> Save</Button> : <Button onClick={createCapability} disabled={saving || !title.trim()}><Plus className="h-4 w-4" /> Create</Button>}</div></header>{error && <div className="shrink-0 px-6 pt-4"><Alert variant="destructive"><AlertTitle>Error</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>}{message && <div className="shrink-0 px-6 pt-4"><Alert><AlertTitle>Saved</AlertTitle><AlertDescription>{message}</AlertDescription></Alert></div>}<div className="flex shrink-0 gap-2 overflow-x-auto border-b bg-muted/30 px-6 py-2">{sections.map((section, index) => { const Icon = icons[index] ?? FileText; const ready = sectionReady(section); return <button key={section.key} className={cn('relative flex h-20 w-28 shrink-0 flex-col items-center justify-center gap-1 rounded-md border bg-card text-xs hover:bg-accent', activeSectionKey === section.key && 'ring-2 ring-ring')} onClick={() => setActiveSectionKey(section.key)}><Icon className="h-5 w-5" /><span className="line-clamp-2 px-1 text-center leading-tight">{section.title}</span>{ready ? <CheckCircle2 className="absolute right-1.5 top-1.5 h-4 w-4" /> : <Circle className="absolute right-1.5 top-1.5 h-4 w-4 text-muted-foreground" />}</button>; })}</div><main className="grid min-h-0 flex-1 gap-4 overflow-hidden p-6 xl:grid-cols-[1fr_320px]"><Card className="flex min-h-0 flex-col"><CardHeader className="shrink-0"><div className="flex items-start justify-between gap-4"><div><CardTitle>{activeSection?.title}</CardTitle><CardDescription>{activeSection?.prompt}</CardDescription></div><Select className="w-48" value={(activeSection?.status as AiddSetupStatus) || 'not-started'} onChange={(event) => updateActiveSectionStatus(event.target.value as AiddSetupStatus)}>{statusOptions.map((item) => <option key={item} value={item}>{statusLabel(item)}</option>)}</Select></div></CardHeader><CardContent className="min-h-0 flex-1"><AiddMarkdownEditor value={activeSection?.body || ''} onChange={updateActiveSectionBody} minHeight={520} /></CardContent></Card><aside className="space-y-4 overflow-auto"><Card><CardHeader><CardTitle>Status</CardTitle><CardDescription>Delivery package creation requires complete foundation, active capability, and active/complete sections.</CardDescription></CardHeader><CardContent className="space-y-3 text-sm"><div className="flex justify-between"><span>Lifecycle</span><Select className="w-40" value={status} onChange={(event) => setStatus(event.target.value as AiddSetupStatus)}>{statusOptions.map((item) => <option key={item} value={item}>{statusLabel(item)}</option>)}</Select></div><div className="flex justify-between"><span>Template progress</span><strong>{progress.completed}/{progress.total}</strong></div><div className="flex justify-between"><span>Foundation</span><Badge variant={foundationReady ? 'secondary' : 'destructive'}>{foundationReady ? 'Ready' : 'Blocked'}</Badge></div></CardContent></Card><Card><CardHeader><CardTitle>Components touched</CardTitle></CardHeader><CardContent className="space-y-3"><div className="flex flex-wrap gap-2">{setup?.components.map((component) => <Button key={component.slug} variant={selectedComponents.includes(component.slug) ? 'secondary' : 'outline'} size="sm" onClick={() => toggleComponent(component.slug)}>{component.title}</Button>)}{setup?.components.length === 0 && <p className="text-sm text-muted-foreground">No components yet.</p>}</div>{view === 'new' && <div className="space-y-2 rounded-md border p-3"><Label>Create new component inline</Label><Input value={inlineComponentTitle} onChange={(e) => setInlineComponentTitle(e.target.value)} placeholder="Component name" /><Textarea value={inlineComponentDescription} onChange={(e) => setInlineComponentDescription(e.target.value)} placeholder="Component description" /></div>}</CardContent></Card></aside></main></div>;
+    const capabilityName = title.trim() || "New capability";
+    const timer = window.setTimeout(() => {
+      window.aidd
+        .prepareMarkdownDragFile({
+          projectPath: activeProject.path,
+          directory: selectedSlug
+            ? `capabilities/${selectedSlug}`
+            : "capabilities/draft",
+          fileName: activeSection.fileName,
+          title: `${capabilityName} - ${activeSection.title}`,
+          status: activeSection.status || "draft",
+          body: activeSection.body || "",
+          metadata: {
+            capability: selectedSlug || "draft",
+            section: activeSection.key,
+          },
+        })
+        .then((filePath) => {
+          setDragFilePath(filePath);
+          setDragError(null);
+        })
+        .catch((err) => {
+          setDragFilePath(null);
+          setDragError(err instanceof Error ? err.message : String(err));
+        });
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    activeProject?.path,
+    selectedSlug,
+    title,
+    activeSection?.key,
+    activeSection?.fileName,
+    activeSection?.title,
+    activeSection?.status,
+    activeSection?.body,
+  ]);
+
+  const startCapabilitySectionDrag = (
+    event: React.DragEvent<HTMLDivElement>,
+  ) => {
+    if (!dragFilePath) {
+      event.preventDefault();
+      setDragError(
+        "The drag file is still being prepared. Try again in a moment.",
+      );
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("text/plain", dragFilePath);
+    event.preventDefault();
+    window.aidd.startNativeFileDrag(dragFilePath);
+  };
+
+  const openDragFileLocation = () => {
+    if (!dragFilePath) return;
+    window.aidd
+      .showItemInFolder(dragFilePath)
+      .catch((err) =>
+        setDragError(err instanceof Error ? err.message : String(err)),
+      );
+  };
+  const resetForm = () => {
+    setTitle("");
+    setStatus("draft");
+    setSelectedComponents([]);
+    setInlineComponentTitle("");
+    setInlineComponentDescription("");
+    setSelectedSlug(null);
+    setSections(newSections());
+    setActiveSectionKey("outcomes");
+    setMessage(null);
+  };
+  const openCapability = async (slug: string) => {
+    if (!activeProject?.path) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const detail = await window.aidd.readCapability({
+        projectPath: activeProject.path,
+        slug,
+      });
+      setSelectedSlug(detail.slug);
+      setTitle(detail.title);
+      setStatus((detail.status as AiddSetupStatus) || "draft");
+      setSelectedComponents(detail.components || []);
+      setSections(detail.sections?.length ? detail.sections : newSections());
+      setActiveSectionKey(detail.sections?.[0]?.key || "outcomes");
+      setView("edit");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const toggleComponent = (slug: string) =>
+    setSelectedComponents((current) =>
+      current.includes(slug)
+        ? current.filter((item) => item !== slug)
+        : [...current, slug],
+    );
+  const updateActiveSectionBody = (body: string) =>
+    setSections((current) =>
+      current.map((section) =>
+        section.key === activeSectionKey
+          ? {
+              ...section,
+              body,
+              status:
+                body.trim() && section.status === "not-started"
+                  ? "draft"
+                  : section.status,
+            }
+          : section,
+      ),
+    );
+  const updateActiveSectionStatus = (nextStatus: AiddSetupStatus) =>
+    setSections((current) =>
+      current.map((section) =>
+        section.key === activeSectionKey
+          ? { ...section, status: nextStatus }
+          : section,
+      ),
+    );
+  const createCapability = async () => {
+    if (!activeProject?.path) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await window.aidd.createCapability({
+        projectPath: activeProject.path,
+        title,
+        componentSlugs: selectedComponents,
+        inlineComponent: inlineComponentTitle.trim()
+          ? {
+              title: inlineComponentTitle,
+              description: inlineComponentDescription,
+            }
+          : undefined,
+        status,
+        sections,
+      });
+      setSetup(next);
+      resetForm();
+      setView("list");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const saveCapability = async () => {
+    if (!activeProject?.path || !selectedSlug) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await window.aidd.updateCapability({
+        projectPath: activeProject.path,
+        slug: selectedSlug,
+        title,
+        componentSlugs: selectedComponents,
+        status,
+        sections,
+      });
+      setSetup(next);
+      setMessage("Capability saved.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const createDeliveryPackage = async () => {
+    if (!activeProject?.path || !selectedSlug) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await window.aidd.createDeliveryPackageFromCapability({
+        projectPath: activeProject.path,
+        capabilitySlug: selectedSlug,
+      });
+      await load();
+      setMessage(`Created delivery package ${result.id}.`);
+      await window.aidd.notify?.({ title: 'Delivery package created', body: result.id });
+      onDeliveryPackageCreated?.(result.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  if (!activeProject)
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>No project selected</CardTitle>
+          </CardHeader>
+        </Card>
+      </div>
+    );
+
+  if (view === "list")
+    return (
+      <div className="flex h-full flex-col overflow-hidden">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b px-6">
+          <div>
+            <h1 className="text-xl font-semibold">Capabilities</h1>
+            <p className="text-sm text-muted-foreground">
+              Define what your system can do.
+            </p>
+          </div>
+          <Button
+            onClick={() => {
+              resetForm();
+              setView("new");
+            }}
+          >
+            <Plus className="h-4 w-4" /> New Capability
+          </Button>
+        </header>
+        <main className="min-h-0 flex-1 overflow-auto p-6">
+          {error && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {setup?.capabilities.map((capability) => (
+              <Card
+                key={capability.slug}
+                className="cursor-pointer hover:bg-accent"
+                onClick={() => openCapability(capability.slug)}
+              >
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <CardTitle className="text-base">
+                        {capability.title}
+                      </CardTitle>
+                      <CardDescription>
+                        {capability.components?.length
+                          ? `${capability.components.length} component(s) linked`
+                          : "No components linked yet"}
+                      </CardDescription>
+                    </div>
+                    <Badge variant="outline">
+                      <StatusPill status={capability.status} />
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {capability.components?.length ? (
+                    <div className="flex flex-wrap gap-2">
+                      {capability.components.map((component) => (
+                        <Badge key={component} variant="secondary">
+                          {component}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Open the editor to define sections and component links.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+            {setup && setup.capabilities.length === 0 && (
+              <Card className="md:col-span-2 xl:col-span-3">
+                <CardHeader>
+                  <CardTitle>No capabilities yet</CardTitle>
+                  <CardDescription>
+                    Create the first capability by describing what the system
+                    should make possible.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Button
+                    onClick={() => {
+                      resetForm();
+                      setView("new");
+                    }}
+                  >
+                    New Capability
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b px-6">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                resetForm();
+                setView("list");
+              }}
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <Input
+              className="max-w-lg text-base font-semibold"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Capability name"
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <StatusBadge status={status} label="Lifecycle" />
+          <StatusBadge status={activeSection?.status} label="Section" />
+          {view === "edit" && (
+            <Button
+              variant="outline"
+              onClick={createDeliveryPackage}
+              disabled={saving || !canCreateDeliveryPackage}
+            >
+              <PackagePlus className="h-4 w-4" /> Create Delivery Package
+            </Button>
+          )}
+          {view === "edit" ? (
+            <Button onClick={saveCapability} disabled={saving || !title.trim()}>
+              <Save className="h-4 w-4" /> Save
+            </Button>
+          ) : (
+            <Button
+              onClick={createCapability}
+              disabled={saving || !title.trim()}
+            >
+              <Plus className="h-4 w-4" /> Create
+            </Button>
+          )}
+        </div>
+      </header>
+      {error && (
+        <div className="shrink-0 px-6 pt-4">
+          <Alert variant="destructive">
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </div>
+      )}
+      {message && (
+        <div className="shrink-0 px-6 pt-4">
+          <Alert>
+            <AlertTitle>Saved</AlertTitle>
+            <AlertDescription>{message}</AlertDescription>
+          </Alert>
+        </div>
+      )}
+      <div className="flex shrink-0 gap-1.5 overflow-x-auto border-b bg-muted/30 px-6 py-2">
+        {sections.map((section, index) => {
+          const Icon = icons[index] ?? FileText;
+          return (
+            <button
+              key={section.key}
+              className={cn(
+                "relative flex h-16 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent",
+                activeSectionKey === section.key &&
+                  "border-ring bg-accent ring-1 ring-ring",
+              )}
+              onClick={() => setActiveSectionKey(section.key)}
+              title={`${section.title}: ${statusLabel(section.status)}`}
+            >
+              <StatusIcon
+                status={section.status}
+                className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
+              />
+              <Icon className="h-4 w-4 text-muted-foreground" />
+              <span className="line-clamp-2 px-1 text-center font-medium leading-tight">
+                {section.title}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <main className="grid min-h-0 flex-1 gap-4 overflow-hidden p-6 xl:grid-cols-[minmax(0,1fr)_88px]">
+        <div className="flex min-h-0 flex-col gap-4 overflow-hidden">
+          <Card className="flex min-h-0 flex-1 flex-col">
+            <CardHeader className="shrink-0">
+              <div>
+                <CardTitle>{activeSection?.title}</CardTitle>
+                <CardDescription>{activeSection?.prompt}</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="min-h-0 flex-1">
+              <AiddMarkdownEditor
+                value={activeSection?.body || ""}
+                onChange={updateActiveSectionBody}
+                minHeight={520}
+              />
+            </CardContent>
+          </Card>
+          <Card className="shrink-0">
+            <CardHeader>
+              <CardTitle>Status</CardTitle>
+              <CardDescription>
+                Delivery package creation requires complete foundation, active
+                capability, and active/complete sections.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 text-sm md:grid-cols-3">
+              <div className="space-y-1">
+                <span className="text-muted-foreground">Lifecycle</span>
+                <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-1.5 text-sm">
+                  <StatusIcon status={status} />
+                  <span>{statusLabel(status)}</span>
+                </div>
+                <Select
+                  className="w-full"
+                  value={status}
+                  onChange={(event) =>
+                    setStatus(event.target.value as AiddSetupStatus)
+                  }
+                >
+                  {statusOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {statusLabel(item)}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <span className="text-muted-foreground">Section status</span>
+                <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-1.5 text-sm">
+                  <StatusIcon status={activeSection?.status} />
+                  <span>{statusLabel(activeSection?.status)}</span>
+                </div>
+                <Select
+                  className="w-full"
+                  value={
+                    (activeSection?.status as AiddSetupStatus) || "not-started"
+                  }
+                  onChange={(event) =>
+                    updateActiveSectionStatus(
+                      event.target.value as AiddSetupStatus,
+                    )
+                  }
+                >
+                  {statusOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {statusLabel(item)}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex items-center justify-between gap-3 md:flex-col md:items-start md:justify-center">
+                <div>
+                  <span className="text-muted-foreground">
+                    Template progress
+                  </span>
+                  <div className="font-semibold">
+                    {progress.completed}/{progress.total}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Foundation</span>
+                  <Badge
+                    variant={foundationReady ? "secondary" : "destructive"}
+                  >
+                    {foundationReady ? "Ready" : "Blocked"}
+                  </Badge>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="shrink-0">
+            <CardHeader>
+              <CardTitle>Components</CardTitle>
+              <CardDescription>
+                Mark the system components this capability touches.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {setup?.components.map((component) => {
+                  const selected = selectedComponents.includes(component.slug);
+                  return (
+                    <Button
+                      key={component.slug}
+                      variant={selected ? "secondary" : "outline"}
+                      size="sm"
+                      onClick={() => toggleComponent(component.slug)}
+                      className={cn("gap-2", selected && "ring-1 ring-ring")}
+                      aria-pressed={selected}
+                    >
+                      {selected ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : (
+                        <Circle className="h-4 w-4 text-muted-foreground" />
+                      )}
+                      {component.title}
+                    </Button>
+                  );
+                })}
+                {setup?.components.length === 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    No components yet.
+                  </p>
+                )}
+              </div>
+              {view === "new" && (
+                <div className="space-y-2 rounded-md border p-3">
+                  <Label>Create new component inline</Label>
+                  <Input
+                    value={inlineComponentTitle}
+                    onChange={(e) => setInlineComponentTitle(e.target.value)}
+                    placeholder="Component name"
+                  />
+                  <Textarea
+                    value={inlineComponentDescription}
+                    onChange={(e) =>
+                      setInlineComponentDescription(e.target.value)
+                    }
+                    placeholder="Component description"
+                  />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+        <aside
+          className="flex min-h-0 flex-col gap-2"
+          aria-label="Current capability section file drag column"
+        >
+          <Card className="rounded-md">
+            <CardHeader className="px-2 py-2">
+              <CardTitle className="text-center text-xs">File</CardTitle>
+            </CardHeader>
+            <CardContent className="px-2 pb-2">
+              <div
+                draggable={Boolean(dragFilePath)}
+                onDragStart={startCapabilitySectionDrag}
+                title={
+                  dragFilePath
+                    ? "Drag this Markdown file into Explorer, ChatGPT, Claude, or another file upload target."
+                    : "Preparing current Markdown file..."
+                }
+                className={cn(
+                  "flex h-28 select-none flex-col items-center justify-center gap-2 rounded-md border bg-card p-2 text-center text-xs text-card-foreground shadow-sm",
+                  dragFilePath
+                    ? "cursor-grab hover:bg-accent active:cursor-grabbing"
+                    : "cursor-not-allowed opacity-60",
+                )}
+              >
+                <FileText className="pointer-events-none h-8 w-8" />
+                <span className="pointer-events-none line-clamp-2 break-all leading-tight">
+                  {activeSection?.fileName ?? "capability.md"}
+                </span>
+                <span className="pointer-events-none text-[10px] text-muted-foreground">
+                  Drag out
+                </span>
+              </div>
+              <Button
+                className="mt-2 w-full px-1 text-[11px]"
+                variant="outline"
+                size="sm"
+                onClick={openDragFileLocation}
+                disabled={!dragFilePath}
+                title="Open the generated file location"
+              >
+                <FolderOpen className="mr-1 h-3 w-3" />
+                Folder
+              </Button>
+              {dragError && (
+                <p className="mt-2 text-[10px] text-destructive">{dragError}</p>
+              )}
+            </CardContent>
+          </Card>
+        </aside>
+      </main>
+    </div>
+  );
 }

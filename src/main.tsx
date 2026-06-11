@@ -14,12 +14,10 @@ import { Components } from './components/Components';
 import { DeliveryPackages } from './components/DeliveryPackages';
 import { BundleEditor } from './components/BundleEditor';
 import { Reviews } from './components/Reviews';
-import { Verification } from './components/Verification';
 import { Settings } from './components/Settings';
 import { SourceCode } from './components/SourceCode';
-import { ProjectValidation } from './components/ProjectValidation';
 
-export type Screen = 'projects' | 'project-create' | 'home' | 'foundation' | 'validation' | 'capabilities' | 'components' | 'source-code' | 'delivery-packages' | 'bundle-editor' | 'reviews' | 'verification' | 'settings';
+export type Screen = 'projects' | 'project-create' | 'home' | 'foundation' | 'capabilities' | 'components' | 'source-code' | 'delivery-packages' | 'bundle-editor' | 'reviews' | 'settings';
 
 type ThemeMode = 'system' | 'light' | 'dark';
 
@@ -105,7 +103,7 @@ function App() {
     });
   }, []);
 
-  const selectedPackage = useMemo(() => packages.find((item) => item.id === selectedId) ?? packages[0], [packages, selectedId]);
+  const selectedPackage = useMemo(() => packages.find((item) => item.id === selectedId) ?? createBlankPackage(selectedId), [packages, selectedId]);
 
   const refreshProjects = async (active?: AiddTrackedProject | null) => {
     const trackedProjects = await window.aidd.listProjects();
@@ -116,6 +114,7 @@ function App() {
   const updatePackage = (updated: DeliveryBundle) => setPackages((current) => current.map((item) => item.id === updated.id ? updated : item));
   const selectPackage = (id: string, target: Screen = 'bundle-editor') => { setSelectedId(id); setScreen(target); };
   const createPackage = () => { const id = nextPackageId(packages); const item = createBlankPackage(id); setPackages((current) => [item, ...current]); setSelectedId(id); setScreen('bundle-editor'); };
+  const openCreatedDeliveryPackage = (id: string) => { setSelectedId(id); setScreen('bundle-editor'); };
   const transitionSelectedPackage = (status: BundleStatus) => updatePackage(applyStatus(selectedPackage, status));
   const submitSelectedForReview = () => { const readiness = checkReadiness(selectedPackage); if (!readiness.readyForReview) return; transitionSelectedPackage('needs-review'); setScreen('reviews'); };
 
@@ -147,16 +146,14 @@ function App() {
       <main className="min-w-0 flex-1 overflow-hidden">
         {screen === 'projects' && <Projects projects={projects} activeProject={activeProject} onCreateProject={() => setScreen('project-create')} onOpenProject={(project) => { setActiveProject(project); setScreen('home'); }} onOpenExistingProject={openExistingProject} onForgetProject={forgetProject} />}
         {screen === 'project-create' && <ProjectCreate onCreated={projectCreated} onCancel={() => setScreen('projects')} />}
-        {screen === 'home' && <Home packages={packages} selectedId={selectedId} onSelectPackage={selectPackage} onCreatePackage={createPackage} activeProject={activeProject} onOpenSetup={() => setScreen('foundation')} onOpenCapabilities={() => setScreen('capabilities')} onOpenComponents={() => setScreen('components')} />}
+        {screen === 'home' && <Home packages={packages} selectedId={selectedId} onSelectPackage={selectPackage} onCreatePackage={createPackage} activeProject={activeProject} onOpenSetup={() => setScreen('foundation')} onOpenCapabilities={() => setScreen('capabilities')} onOpenComponents={() => setScreen('components')} onOpenDelivery={() => setScreen('delivery-packages')} />}
         {screen === 'foundation' && <SetupWorkflow activeProject={activeProject} onOpenCapabilities={() => setScreen('capabilities')} onOpenComponents={() => setScreen('components')} />}
-        {screen === 'validation' && <ProjectValidation activeProject={activeProject} />}
-        {screen === 'capabilities' && <Capabilities activeProject={activeProject} />}
+        {screen === 'capabilities' && <Capabilities activeProject={activeProject} onDeliveryPackageCreated={openCreatedDeliveryPackage} />}
         {screen === 'components' && <Components activeProject={activeProject} />}
         {screen === 'source-code' && <SourceCode activeProject={activeProject} />}
-        {screen === 'delivery-packages' && <DeliveryPackages packages={packages} selectedId={selectedId} onSelectPackage={selectPackage} onCreatePackage={createPackage} />}
-        {screen === 'bundle-editor' && <BundleEditor bundle={selectedPackage} onChange={updatePackage} onSubmitForReview={submitSelectedForReview} />}
+        {screen === 'delivery-packages' && <DeliveryPackages packages={packages} selectedId={selectedId} onSelectPackage={selectPackage} onCreatePackage={createPackage} activeProject={activeProject} />}
+        {screen === 'bundle-editor' && <BundleEditor bundle={selectedPackage} onChange={updatePackage} onSubmitForReview={submitSelectedForReview} activeProject={activeProject} onBack={() => setScreen('delivery-packages')} />}
         {screen === 'reviews' && <Reviews bundles={packages} selectedId={selectedId} onSelectBundle={(id) => selectPackage(id, 'reviews')} bundle={selectedPackage} onChange={updatePackage} />}
-        {screen === 'verification' && <Verification bundle={selectedPackage} onChange={updatePackage} />}
         {screen === 'settings' && <Settings activeProject={activeProject} themeMode={themeMode} onThemeModeChange={setThemeMode} />}
       </main>
     </div>

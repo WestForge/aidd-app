@@ -95,6 +95,7 @@ export function WorkflowDocuments({ activeProject }: WorkflowDocumentsProps) {
         body
       });
       setDocuments(next);
+      void window.aidd.notify({ title: 'Saved', body: 'Workflow document saved.' });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

@@ -1,8 +1,7 @@
-import { CheckSquare, ChevronLeft, ChevronRight, Code2, FolderGit2, Home, ListChecks, PackageCheck, Settings, Sparkles, Puzzle, ClipboardCheck, type LucideIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Code2, FolderGit2, Home, ListChecks, PackageCheck, Settings, Sparkles, Puzzle, type LucideIcon } from 'lucide-react';
 import type { Screen } from '../main';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Separator } from './ui/separator';
 import { cn } from '../lib/utils';
 
 interface SidebarProps {
@@ -13,16 +12,17 @@ interface SidebarProps {
   onToggleCollapsed?: () => void;
 }
 
-const items: Array<{ id: Screen; label: string; icon: LucideIcon }> = [
+const primaryItems: Array<{ id: Screen; label: string; icon: LucideIcon }> = [
   { id: 'projects', label: 'Projects', icon: FolderGit2 },
   { id: 'home', label: 'Home', icon: Home },
   { id: 'foundation', label: 'Foundation', icon: ListChecks },
-  { id: 'validation', label: 'Validation', icon: ClipboardCheck },
   { id: 'capabilities', label: 'Capabilities', icon: Sparkles },
   { id: 'components', label: 'Components', icon: Puzzle },
   { id: 'source-code', label: 'Source Code', icon: Code2 },
-  { id: 'delivery-packages', label: 'Delivery', icon: PackageCheck },
-  { id: 'verification', label: 'Verification', icon: CheckSquare },
+  { id: 'delivery-packages', label: 'Delivery', icon: PackageCheck }
+];
+
+const utilityItems: Array<{ id: Screen; label: string; icon: LucideIcon }> = [
   { id: 'settings', label: 'Settings', icon: Settings }
 ];
 
@@ -46,27 +46,49 @@ export function Sidebar({ active, onChange, activeProject, collapsed = false, on
       )}
 
       <nav className="flex-1 space-y-1 overflow-y-auto p-2">
-        {items.map((item) => {
-          const Icon = item.icon;
-          const isActive = active === item.id || (active === 'project-create' && item.id === 'projects') || (active === 'bundle-editor' && item.id === 'delivery-packages');
-          return (
-            <Button
-              key={item.id}
-              variant={isActive ? 'secondary' : 'ghost'}
-              className={cn('w-full justify-start', collapsed && 'justify-center px-0')}
-              title={item.label}
-              onClick={() => onChange(item.id)}
-            >
-              <Icon className="h-4 w-4" />
-              {!collapsed && <span>{item.label}</span>}
-            </Button>
-          );
-        })}
+        {primaryItems.map((item) => (
+          <SidebarButton
+            key={item.id}
+            item={item}
+            active={active}
+            collapsed={collapsed}
+            onChange={onChange}
+          />
+        ))}
+      </nav>
+
+      <nav className="space-y-1 border-t p-2">
+        {utilityItems.map((item) => (
+          <SidebarButton
+            key={item.id}
+            item={item}
+            active={active}
+            collapsed={collapsed}
+            onChange={onChange}
+          />
+        ))}
       </nav>
 
       <div className="border-t p-3">
         {!collapsed ? <div className="space-y-2"><Badge variant="outline">v0.8.0</Badge><div className="text-xs text-muted-foreground">Template workflow 0.5.x+</div></div> : <Badge variant="outline" className="px-1">0.8</Badge>}
       </div>
     </aside>
+  );
+}
+
+function SidebarButton({ item, active, collapsed, onChange }: { item: { id: Screen; label: string; icon: LucideIcon }; active: Screen; collapsed: boolean; onChange: (screen: Screen) => void }) {
+  const Icon = item.icon;
+  const isActive = active === item.id || (active === 'project-create' && item.id === 'projects') || (active === 'bundle-editor' && item.id === 'delivery-packages');
+
+  return (
+    <Button
+      variant={isActive ? 'secondary' : 'ghost'}
+      className={cn('w-full justify-start', collapsed && 'justify-center px-0')}
+      title={item.label}
+      onClick={() => onChange(item.id)}
+    >
+      <Icon className="h-4 w-4" />
+      {!collapsed && <span>{item.label}</span>}
+    </Button>
   );
 }
