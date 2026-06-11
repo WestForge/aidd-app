@@ -226,8 +226,15 @@ export function SetupWorkflow({ activeProject, onOpenCapabilities, onOpenCompone
   }, [activeProject?.path, selectedDoc?.fileName, selectedDoc?.title, draftBody, draftStatus, step]);
 
   const startFoundationFileDrag = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!dragFilePath) {
+      event.preventDefault();
+      setDragError('The drag file is still being prepared. Try again in a moment.');
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData('text/plain', dragFilePath);
     event.preventDefault();
-    if (!dragFilePath) return;
     window.aidd.startNativeFileDrag(dragFilePath);
   };
 
@@ -394,9 +401,9 @@ export function SetupWorkflow({ activeProject, onOpenCapabilities, onOpenCompone
                       dragFilePath ? 'cursor-grab hover:bg-accent active:cursor-grabbing' : 'cursor-not-allowed opacity-60'
                     )}
                   >
-                    <FileText className="h-8 w-8" />
-                    <span className="line-clamp-2 break-all leading-tight">{selectedDoc?.fileName ?? 'foundation.md'}</span>
-                    <span className="text-[10px] text-muted-foreground">Drag out</span>
+                    <FileText className="pointer-events-none h-8 w-8" />
+                    <span className="pointer-events-none line-clamp-2 break-all leading-tight">{selectedDoc?.fileName ?? 'foundation.md'}</span>
+                    <span className="pointer-events-none text-[10px] text-muted-foreground">Drag out</span>
                   </div>
                   <Button className="mt-2 w-full px-1 text-[11px]" variant="outline" size="sm" onClick={openDragFileLocation} disabled={!dragFilePath} title="Open the generated file location">
                     <FolderOpen className="mr-1 h-3 w-3" />

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, dialog, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, dialog, shell } from 'electron';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import fs from 'node:fs';
@@ -1953,10 +1953,19 @@ ipcMain.handle('project:create', async (_event, input: CreateProjectInput) => {
 
 
 
-function dragIcon() {
-  return nativeImage.createFromDataURL(
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAhklEQVR4nO3XMQrAIBAEwYv//7R0sQkWgoGdTOGmxWUEWRgmAAAAAAAAwFdl7wR4XlUe9e1nR1W9H+CTeQnACZQBAJxAGQDAA4oAAPYpAwD4zgAA7HIGAOBvBgBgEAAAAwAAABgAAAAYAAAAGAAAAADAtm0AV6t9H6m6D+Bv4TlxAAAAAADgF9gBfHIDRSR3S2EAAAAASUVORK5CYII='
-  );
+const dragIconPngBase64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABOklEQVR4nO2aUQ6CMBBEV+PZ4MxwOf1qVBJid7rbqXTeP/XNQAsWzIQQQgghxJzcIgZZluUZMQ7Cvu9NGZoOZgY/ghZxR39wpPBmuA9UwGjhC4iXu4BRwxe8fq4CRg9f8HjCa8BVqC7gX85+odb3kS1S2LbNfcy6rgkm32gKsAXYqAC2ABsVwBZgowLYAmxUAFuAjQpgC7BRAWwBNiqALcBGBbAF2ExfQPieILL35x0rcq8w/ArI3siMHj9lCmSVkDFu2hoQLZtVauoiGCWdOa3S7wKt8tlrSpfbIBriUm+GvGF6hDfr/CBUG6pXeDPCk+CvcD3DmzkKaP0a65OzkJHha31p/wWOYXuf+YKrgMirwOwdOjq8xxMKNPLXIt6TBE2B6CshCsQLXgNGKwH1mf5bYSGEEEKIaXkB8t1QIHKJzAcAAAAASUVORK5CYII=';
+
+function dragIconPath() {
+  const iconPath = path.join(app.getPath('userData'), 'native-file-drag-icon.png');
+  const iconBuffer = Buffer.from(dragIconPngBase64, 'base64');
+
+  // Always rewrite the icon. Earlier builds could leave a corrupt cached PNG in
+  // AppData, and Electron will crash the main process if startDrag receives an
+  // invalid image path.
+  fs.writeFileSync(iconPath, iconBuffer);
+
+  return iconPath;
 }
 
 function safeDragFileName(fileName: string) {
@@ -2006,11 +2015,20 @@ ipcMain.handle('drag:prepareNativeTestFile', async () => prepareNativeDragTestFi
 // to Electron's documented ondragstart -> IPC -> event.sender.startDrag(...) flow.
 ipcMain.on('drag:startNativeFile', (event, filePath: string) => {
   const resolvedPath = path.resolve(filePath || '');
-  if (!resolvedPath || !fs.existsSync(resolvedPath)) return;
+  if (!resolvedPath || !fs.existsSync(resolvedPath)) {
+    console.warn('[native-file-drag] File does not exist:', filePath);
+    return;
+  }
+
+  const icon = dragIconPath();
+  if (!fs.existsSync(icon)) {
+    console.warn('[native-file-drag] Drag icon does not exist:', icon);
+    return;
+  }
 
   event.sender.startDrag({
     file: resolvedPath,
-    icon: dragIcon()
+    icon
   });
 });
 

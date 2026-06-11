@@ -62,7 +62,13 @@ export function DragTest() {
             <div
               draggable={Boolean(file?.filePath)}
               onDragStart={(event) => {
-                if (!file?.filePath) return;
+                if (!file?.filePath) {
+                  event.preventDefault();
+                  setMessage('The test file is still being prepared. Try again in a moment.');
+                  return;
+                }
+                event.dataTransfer.effectAllowed = 'copy';
+                event.dataTransfer.setData('text/plain', file.filePath);
                 event.preventDefault();
                 window.aidd.startFileDrag(file.filePath);
               }}
@@ -70,10 +76,10 @@ export function DragTest() {
               title={file?.filePath ?? 'Test file is not ready yet'}
             >
               <div className="relative flex h-16 w-16 items-center justify-center rounded-lg border bg-muted">
-                <FileText className="h-8 w-8" />
-                <GripVertical className="absolute -right-2 -top-2 h-5 w-5 rounded-full border bg-background p-0.5 text-muted-foreground" />
+                <FileText className="pointer-events-none h-8 w-8" />
+                <GripVertical className="pointer-events-none absolute -right-2 -top-2 h-5 w-5 rounded-full border bg-background p-0.5 text-muted-foreground" />
               </div>
-              <div>
+              <div className="pointer-events-none">
                 <div className="text-sm font-medium">{file?.fileName ?? 'Preparing...'}</div>
                 <div className="mt-1 text-xs text-muted-foreground">Drag this tile out</div>
               </div>
