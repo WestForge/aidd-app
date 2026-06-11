@@ -3,6 +3,10 @@ import { AlertTriangle, CheckCircle2, Circle, GitBranch, PackageCheck, Puzzle, S
 import type { DeliveryBundle } from '../domain/types';
 import { checkReadiness } from '../domain/readiness';
 import type { Screen } from '../main';
+import { Alert } from './ui/alert';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 
 interface HomeProps {
   packages: DeliveryBundle[];
@@ -100,139 +104,151 @@ export function Home({ packages, selectedId, onSelectPackage, onCreatePackage, a
   };
 
   return (
-    <main className="screen">
-      <header className="screenHeader">
-        <div>
-          <p className="eyebrow">Project Home</p>
-          <h1>{activeProject?.name ?? 'AIDD Project'}</h1>
-          <p className="muted">Track project readiness, define capabilities and components, then create delivery packages when Product Definition, Audience, and Standards are complete.</p>
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-5 p-8 text-foreground">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="max-w-3xl">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Project Home</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight">{activeProject?.name ?? 'AIDD Project'}</h1>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            Track project readiness, define capabilities and components, then create delivery packages when Product Definition, Audience, and Standards are complete.
+          </p>
         </div>
-        <div className="buttonGroup">
-          <button className="secondaryButton" onClick={onOpenSetup}>Open Foundation</button>
-          <button className="primaryButton" onClick={createDeliveryPackage} disabled={!canCreateDeliveryPackage} title={canCreateDeliveryPackage ? 'Create a delivery package' : 'Complete Foundation and Standards first'}>New Delivery Package</button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={onOpenSetup}>Open Foundation</Button>
+          <Button onClick={createDeliveryPackage} disabled={!canCreateDeliveryPackage} title={canCreateDeliveryPackage ? 'Create a delivery package' : 'Complete Foundation and Standards first'}>
+            New Delivery Package
+          </Button>
         </div>
       </header>
 
-      <section className="projectStatusHero readinessHero">
-        <div>
-          <p className="eyebrow">Project readiness</p>
-          <h2>{blockers.length === 0 ? 'Ready for delivery planning' : 'Foundation needs attention'}</h2>
-          <p className="muted">{blockers.length === 0 ? 'Foundation and Standards are complete. You can now create delivery packages from capabilities.' : 'Complete the blocker items before creating delivery packages.'}</p>
-          {statusError && <p className="dangerText">Could not read full project status: {statusError}</p>}
-        </div>
-        <div className="statusProgress">
-          <strong>{completeItems}/{visibleSetup.length}</strong>
-          <span>readiness checks complete</span>
-          <div className="progressTrack"><div style={{ width: `${readinessProgress}%` }} /></div>
-        </div>
-      </section>
-
-      <section className="panel homeReadinessPanel">
-        <div className="panelTitleRow">
+      <Card className="overflow-hidden border-primary/20 bg-gradient-to-br from-card to-primary/5">
+        <CardContent className="grid gap-5 p-5 lg:grid-cols-[1fr_220px] lg:items-center">
           <div>
-            <h2>Foundation checklist</h2>
-            <p className="muted">Only incomplete blockers are highlighted. Use the action button to jump straight to the screen that fixes the issue.</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Project readiness</p>
+            <h2 className="mt-2 text-2xl font-semibold">{blockers.length === 0 ? 'Ready for delivery planning' : 'Foundation needs attention'}</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {blockers.length === 0 ? 'Foundation and Standards are complete. You can now create delivery packages from capabilities.' : 'Complete the blocker items before creating delivery packages.'}
+            </p>
+            {statusError && <p className="mt-3 text-sm font-medium text-destructive">Could not read full project status: {statusError}</p>}
           </div>
-          <span className={`pill ${blockers.length === 0 ? 'active' : 'needs-attention'}`}>{blockers.length === 0 ? 'Ready' : `${blockers.length} blocker${blockers.length === 1 ? '' : 's'}`}</span>
-        </div>
+          <div className="rounded-lg border bg-background/70 p-4 text-center">
+            <strong className="block text-2xl">{completeItems}/{visibleSetup.length}</strong>
+            <span className="text-xs text-muted-foreground">readiness checks complete</span>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-primary" style={{ width: `${readinessProgress}%` }} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
-        <div className="homeIssueList">
+      <Card>
+        <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Foundation checklist</CardTitle>
+            <CardDescription>Only incomplete blockers are highlighted. Use the action button to jump straight to the screen that fixes the issue.</CardDescription>
+          </div>
+          <Badge variant={blockers.length === 0 ? 'success' : 'warning'}>{blockers.length === 0 ? 'Ready' : `${blockers.length} blocker${blockers.length === 1 ? '' : 's'}`}</Badge>
+        </CardHeader>
+        <CardContent className="space-y-2">
           {blockers.map((item) => (
-            <button key={item.id} className="homeIssueRow blocker" onClick={() => openSetupItem(item.id)}>
-              <AlertTriangle size={18} />
-              <div>
-                <strong>{item.label}</strong>
-                <span>{item.detail}</span>
+            <button key={item.id} className="flex w-full items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-left transition hover:bg-amber-500/15" onClick={() => openSetupItem(item.id)}>
+              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-300" />
+              <div className="min-w-0 flex-1">
+                <strong className="block text-sm">{item.label}</strong>
+                <span className="text-sm text-muted-foreground">{item.detail}</span>
               </div>
-              <em>{setupActionLabel(item.id)}</em>
+              <em className="text-xs font-semibold not-italic text-amber-700 dark:text-amber-200">{setupActionLabel(item.id)}</em>
             </button>
           ))}
 
           {blockers.length === 0 && visibleSetup.filter((item) => item.complete).map((item) => (
-            <div key={item.id} className="homeIssueRow complete">
-              <CheckCircle2 size={18} />
+            <div key={item.id} className="flex items-center gap-3 rounded-lg border bg-card p-3">
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-300" />
               <div>
-                <strong>{item.label}</strong>
-                <span>{item.detail}</span>
+                <strong className="block text-sm">{item.label}</strong>
+                <span className="text-sm text-muted-foreground">{item.detail}</span>
               </div>
             </div>
           ))}
 
           {blockers.length === 0 && nextSteps.map((item) => (
-            <button key={item.id} className="homeIssueRow next" onClick={() => openSetupItem(item.id)}>
-              <Circle size={18} />
-              <div>
-                <strong>{item.label}</strong>
-                <span>{item.detail}</span>
+            <button key={item.id} className="flex w-full items-center gap-3 rounded-lg border bg-card p-3 text-left transition hover:bg-accent" onClick={() => openSetupItem(item.id)}>
+              <Circle className="h-5 w-5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <strong className="block text-sm">{item.label}</strong>
+                <span className="text-sm text-muted-foreground">{item.detail}</span>
               </div>
-              <em>{setupActionLabel(item.id)}</em>
+              <em className="text-xs font-semibold not-italic text-primary">{setupActionLabel(item.id)}</em>
             </button>
           ))}
-        </div>
+        </CardContent>
+      </Card>
+
+      <section className="grid gap-4 lg:grid-cols-2">
+        <Card className="border-primary/25 bg-primary/5">
+          <CardHeader>
+            <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground"><Sparkles size={22} /></div>
+            <CardTitle>Define what your system can do</CardTitle>
+            <CardDescription>Create capabilities to describe outcomes, behaviours, or features your system needs to support.</CardDescription>
+          </CardHeader>
+          <CardContent><Button onClick={onOpenCapabilities}>New Capability</Button></CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-lg bg-secondary text-secondary-foreground"><Puzzle size={22} /></div>
+            <CardTitle>Map the parts of your system</CardTitle>
+            <CardDescription>Create components for apps, services, plugins, modules, libraries, workflows, integrations, or subsystems.</CardDescription>
+          </CardHeader>
+          <CardContent><Button variant="outline" onClick={onOpenComponents}>New Component</Button></CardContent>
+        </Card>
       </section>
 
-      <section className="homeActionGrid">
-        <article className="modelCard primaryModelCard">
-          <div className="modelIcon"><Sparkles size={22} /></div>
-          <div>
-            <h2>Define what your system can do</h2>
-            <p>Create capabilities to describe outcomes, behaviours, or features your system needs to support.</p>
-            <button className="primaryButton" onClick={onOpenCapabilities}>New Capability</button>
-          </div>
-        </article>
-        <article className="modelCard">
-          <div className="modelIcon"><Puzzle size={22} /></div>
-          <div>
-            <h2>Map the parts of your system</h2>
-            <p>Create components for apps, services, plugins, modules, libraries, workflows, integrations, or subsystems.</p>
-            <button className="secondaryButton" onClick={onOpenComponents}>New Component</button>
-          </div>
-        </article>
+      <section className="grid gap-3 md:grid-cols-4">
+        <Card><CardContent className="p-4"><strong className="block text-xl">{projectStatus.templateVersion}</strong><span className="text-xs text-muted-foreground">template version</span></CardContent></Card>
+        <Card><CardContent className="p-4"><strong className="block text-xl">{projectStatus.gitInitialized ? 'Enabled' : 'Missing'}</strong><span className="text-xs text-muted-foreground">Git versioning</span></CardContent></Card>
+        <Card><CardContent className="p-4"><strong className="block text-xl">{projectStatus.capabilityCount}</strong><span className="text-xs text-muted-foreground">capabilities</span></CardContent></Card>
+        <Card><CardContent className="p-4"><strong className="block text-xl">{projectStatus.componentCount}</strong><span className="text-xs text-muted-foreground">components</span></CardContent></Card>
       </section>
 
-      <section className="statsGrid">
-        <div className="statCard"><strong>{projectStatus.templateVersion}</strong><span>template version</span></div>
-        <div className="statCard"><strong>{projectStatus.gitInitialized ? 'Enabled' : 'Missing'}</strong><span>Git versioning</span></div>
-        <div className="statCard"><strong>{projectStatus.capabilityCount}</strong><span>capabilities</span></div>
-        <div className="statCard"><strong>{projectStatus.componentCount}</strong><span>components</span></div>
+      <section className="grid gap-3 md:grid-cols-4">
+        <Card><CardContent className="flex items-start gap-3 p-4"><Sparkles className="h-5 w-5 text-primary" /><div><strong className="block text-sm">Describe</strong><span className="text-xs text-muted-foreground">Capabilities and components</span></div></CardContent></Card>
+        <Card><CardContent className="flex items-start gap-3 p-4"><ShieldCheck className="h-5 w-5 text-primary" /><div><strong className="block text-sm">Review</strong><span className="text-xs text-muted-foreground">Human gates and AI review</span></div></CardContent></Card>
+        <Card><CardContent className="flex items-start gap-3 p-4"><PackageCheck className="h-5 w-5 text-primary" /><div><strong className="block text-sm">Package</strong><span className="text-xs text-muted-foreground">Delivery packages for AI execution</span></div></CardContent></Card>
+        <Card><CardContent className="flex items-start gap-3 p-4"><GitBranch className="h-5 w-5 text-primary" /><div><strong className="block text-sm">Verify</strong><span className="text-xs text-muted-foreground">Review AI output and accept changes</span></div></CardContent></Card>
       </section>
 
-      <section className="workflowStrip">
-        <div><Sparkles size={18} /><strong>Describe</strong><span>Capabilities and components</span></div>
-        <div><ShieldCheck size={18} /><strong>Review</strong><span>Human gates and decision records</span></div>
-        <div><PackageCheck size={18} /><strong>Package</strong><span>Delivery packages for AI execution</span></div>
-        <div><GitBranch size={18} /><strong>Verify</strong><span>Review AI output and accept changes</span></div>
+      <section className="grid gap-3 md:grid-cols-4">
+        <Card><CardContent className="p-4"><strong className="block text-xl">{packages.length}</strong><span className="text-xs text-muted-foreground">delivery packages</span></CardContent></Card>
+        <Card><CardContent className="p-4"><strong className="block text-xl">{needsReview}</strong><span className="text-xs text-muted-foreground">need review</span></CardContent></Card>
+        <Card><CardContent className="p-4"><strong className="block text-xl">{approved}</strong><span className="text-xs text-muted-foreground">approved for AI</span></CardContent></Card>
+        <Card><CardContent className="p-4"><strong className="block text-xl">{needsVerification}</strong><span className="text-xs text-muted-foreground">need verification</span></CardContent></Card>
       </section>
 
-      <section className="statsGrid">
-        <div className="statCard"><strong>{packages.length}</strong><span>delivery packages</span></div>
-        <div className="statCard"><strong>{needsReview}</strong><span>need review</span></div>
-        <div className="statCard"><strong>{approved}</strong><span>approved for AI</span></div>
-        <div className="statCard"><strong>{needsVerification}</strong><span>need verification</span></div>
-      </section>
+      {blocked > 0 && <Alert variant="warning">{blocked} delivery package{blocked === 1 ? '' : 's'} need readiness work before review.</Alert>}
 
-      {blocked > 0 && <div className="warningBanner">{blocked} delivery package{blocked === 1 ? '' : 's'} need readiness work before review.</div>}
-
-      <section className="panel">
-        <h2>Active delivery packages</h2>
-        <div className="bundleList">
+      <Card>
+        <CardHeader>
+          <CardTitle>Active delivery packages</CardTitle>
+          <CardDescription>Open an existing delivery package to review readiness and progress.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
           {packages.map((item) => {
             const readiness = checkReadiness(item);
             return (
-              <button key={item.id} className={item.id === selectedId ? 'bundleRow selected' : 'bundleRow'} onClick={() => onSelectPackage(item.id)}>
+              <button key={item.id} className={`flex w-full items-center justify-between gap-4 rounded-lg border p-3 text-left transition hover:bg-accent ${item.id === selectedId ? 'border-primary bg-primary/5' : 'bg-card'}`} onClick={() => onSelectPackage(item.id)}>
                 <div>
-                  <strong>{item.id} · {item.title}</strong>
-                  <span>{item.workstream} / {item.capability}</span>
+                  <strong className="block text-sm">{item.id} · {item.title}</strong>
+                  <span className="text-xs text-muted-foreground">{item.workstream} / {item.capability}</span>
                 </div>
-                <div className="rowMeta">
-                  <span className={`pill ${item.status}`}>{item.status.replace(/-/g, ' ')}</span>
-                  <span>{readiness.score}% ready</span>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline">{item.status.replace(/-/g, ' ')}</Badge>
+                  <span className="text-xs text-muted-foreground">{readiness.score}% ready</span>
                 </div>
               </button>
             );
           })}
-        </div>
-      </section>
+        </CardContent>
+      </Card>
     </main>
   );
 }

@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('aidd', {
+  notify: (input: unknown) => ipcRenderer.invoke('app:notify', input),
+  showItemInFolder: (filePath: string) => ipcRenderer.invoke('app:showItemInFolder', filePath),
   selectProjectFolder: () => ipcRenderer.invoke('project:selectFolder'),
   listProjects: () => ipcRenderer.invoke('project:list'),
   forgetProject: (projectId: string) => ipcRenderer.invoke('project:forget', projectId),
@@ -8,6 +10,7 @@ contextBridge.exposeInMainWorld('aidd', {
   validateProject: (projectPath: string) => ipcRenderer.invoke('project:validate', projectPath),
   repairProject: (projectPath: string) => ipcRenderer.invoke('project:repair', projectPath),
   readProjectSetup: (projectPath: string) => ipcRenderer.invoke('project:setup', projectPath),
+  prepareFoundationReviewPackage: (projectPath: string) => ipcRenderer.invoke('project:prepareFoundationReviewPackage', projectPath),
   readWorkflowDocuments: (projectPath: string) => ipcRenderer.invoke('project:workflowDocuments', projectPath),
   saveWorkflowDocument: (input: unknown) => ipcRenderer.invoke('project:saveWorkflowDocument', input),
   saveFoundationDocument: (input: unknown) => ipcRenderer.invoke('project:saveFoundationDocument', input),
@@ -19,6 +22,12 @@ contextBridge.exposeInMainWorld('aidd', {
   readCapability: (input: unknown) => ipcRenderer.invoke('project:readCapability', input),
   updateCapability: (input: unknown) => ipcRenderer.invoke('project:updateCapability', input),
   createDeliveryPackageFromCapability: (input: unknown) => ipcRenderer.invoke('project:createDeliveryPackageFromCapability', input),
+  readDeliveryPackages: (projectPath: string) => ipcRenderer.invoke('project:readDeliveryPackages', projectPath),
+  reorderDeliveryPackage: (input: unknown) => ipcRenderer.invoke('project:reorderDeliveryPackage', input),
+  readDeliveryPackage: (input: unknown) => ipcRenderer.invoke('project:readDeliveryPackage', input),
+  saveDeliveryPackage: (input: unknown) => ipcRenderer.invoke('project:saveDeliveryPackage', input),
+  createDeliveryPackagePhase: (input: unknown) => ipcRenderer.invoke('project:createDeliveryPackagePhase', input),
+  assembleDeliveryPackage: (input: unknown) => ipcRenderer.invoke('project:assembleDeliveryPackage', input),
   readSourceReference: (projectPath: string) => ipcRenderer.invoke('project:readSourceReference', projectPath),
   readSourceProjects: (projectPath: string) => ipcRenderer.invoke('project:readSourceProjects', projectPath),
   addSourceProject: (projectPath: string) => ipcRenderer.invoke('project:addSourceProject', projectPath),

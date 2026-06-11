@@ -7,6 +7,11 @@ interface AiddProjectCreateInput {
   initializeGit: boolean;
 }
 
+interface AiddNotifyInput {
+  title: string;
+  body?: string;
+}
+
 interface AiddTrackedProject {
   id: string;
   name: string;
@@ -128,6 +133,7 @@ interface AiddCreateComponentInput {
   description?: string;
   status?: AiddSetupStatus;
   sourceProjects?: string[];
+  capabilities?: string[];
 }
 
 interface AiddComponentDetail {
@@ -135,6 +141,7 @@ interface AiddComponentDetail {
   title: string;
   status: AiddSetupStatus | string;
   sourceProjects: string[];
+  capabilities: string[];
   description: string;
   filePath: string;
 }
@@ -151,6 +158,7 @@ interface AiddUpdateComponentInput {
   description?: string;
   status?: AiddSetupStatus;
   sourceProjects?: string[];
+  capabilities?: string[];
 }
 
 
@@ -221,6 +229,35 @@ interface AiddCreateCapabilityInput {
   sections?: AiddCapabilitySection[];
 }
 
+
+interface AiddDeliveryPackageSummary {
+  id: string;
+  title: string;
+  status: AiddSetupStatus | string;
+  sourceCapability?: string;
+  components: string[];
+  createdAt?: string;
+  packaged: boolean;
+  phaseCount: number;
+  priority?: number;
+}
+
+interface AiddDeliveryPackagePhase {
+  id: string;
+  title: string;
+  status: AiddSetupStatus | string;
+  fileName: string;
+  body: string;
+}
+
+interface AiddDeliveryPackageDetail extends AiddDeliveryPackageSummary {
+  packagePath: string;
+  snapshotBody: string;
+  strategyBody: string;
+  packagedBody: string;
+  phases: AiddDeliveryPackagePhase[];
+}
+
 interface AiddWorkflowDocument {
   id: string;
   title: string;
@@ -243,6 +280,8 @@ interface AiddSaveWorkflowDocumentInput {
 
 interface Window {
   aidd: {
+    notify: (input: AiddNotifyInput) => Promise<boolean>;
+    showItemInFolder: (filePath: string) => Promise<boolean>;
     selectProjectFolder: () => Promise<string | null>;
     listProjects: () => Promise<AiddTrackedProject[]>;
     forgetProject: (projectId: string) => Promise<AiddTrackedProject[]>;
@@ -250,6 +289,7 @@ interface Window {
     validateProject: (projectPath: string) => Promise<AiddProjectValidationReport>;
     repairProject: (projectPath: string) => Promise<AiddProjectRepairReport>;
     readProjectSetup: (projectPath: string) => Promise<AiddProjectSetupState>;
+    prepareFoundationReviewPackage: (projectPath: string) => Promise<{ filePath: string; fileName: string }>;
     readWorkflowDocuments: (projectPath: string) => Promise<AiddWorkflowDocument[]>;
     saveWorkflowDocument: (input: AiddSaveWorkflowDocumentInput) => Promise<AiddWorkflowDocument[]>;
     saveFoundationDocument: (input: AiddSaveFoundationInput) => Promise<AiddProjectSetupState>;
@@ -261,6 +301,12 @@ interface Window {
     readCapability: (input: AiddReadCapabilityInput) => Promise<AiddCapabilityDetail>;
     updateCapability: (input: AiddUpdateCapabilityInput) => Promise<AiddProjectSetupState>;
     createDeliveryPackageFromCapability: (input: { projectPath: string; capabilitySlug: string }) => Promise<{ id: string; path: string }>;
+    readDeliveryPackages: (projectPath: string) => Promise<AiddDeliveryPackageSummary[]>;
+    reorderDeliveryPackage: (input: { projectPath: string; id: string; direction: 'up' | 'down' }) => Promise<AiddDeliveryPackageSummary[]>;
+    readDeliveryPackage: (input: { projectPath: string; id: string }) => Promise<AiddDeliveryPackageDetail>;
+    saveDeliveryPackage: (input: { projectPath: string; id: string; status?: string; strategyBody?: string; phases?: AiddDeliveryPackagePhase[] }) => Promise<AiddDeliveryPackageDetail>;
+    createDeliveryPackagePhase: (input: { projectPath: string; packageId: string; title: string }) => Promise<AiddDeliveryPackageDetail>;
+    assembleDeliveryPackage: (input: { projectPath: string; packageId: string }) => Promise<AiddDeliveryPackageDetail>;
     readSourceReference: (projectPath: string) => Promise<AiddSourceReference | null>;
     readSourceProjects: (projectPath: string) => Promise<AiddSourceCodeProject[]>;
     addSourceProject: (projectPath: string) => Promise<AiddSourceCodeProject | null>;

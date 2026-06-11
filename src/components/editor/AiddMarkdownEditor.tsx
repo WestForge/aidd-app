@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Editor from '@toast-ui/editor';
 import '@toast-ui/editor/dist/toastui-editor.css';
 import '@toast-ui/editor/dist/theme/toastui-editor-dark.css';
+import { cn } from '../../lib/utils';
 
 type EditMode = 'wysiwyg' | 'markdown';
 
@@ -11,21 +12,33 @@ type AiddMarkdownEditorProps = {
   value: string;
   onChange: (markdown: string) => void;
   minHeight?: number;
+  height?: string;
+  fill?: boolean;
+  defaultMode?: EditMode;
+  className?: string;
   readOnly?: boolean;
 };
 
 function resolveEditorTheme() {
-  const mode = document.documentElement.dataset.themeMode ?? 'system';
-  if (mode === 'dark') return 'dark';
-  if (mode === 'light') return 'light';
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
 }
 
-export function AiddMarkdownEditor({ label, hint, value, onChange, minHeight = 260, readOnly = false }: AiddMarkdownEditorProps) {
+export function AiddMarkdownEditor({
+  label,
+  hint,
+  value,
+  onChange,
+  minHeight = 260,
+  height,
+  fill = false,
+  defaultMode = 'wysiwyg',
+  className,
+  readOnly = false
+}: AiddMarkdownEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const latestValueRef = useRef(value);
-  const [mode, setMode] = useState<EditMode>('wysiwyg');
+  const [mode, setMode] = useState<EditMode>(defaultMode);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => resolveEditorTheme());
 
   useEffect(() => {
@@ -42,13 +55,8 @@ export function AiddMarkdownEditor({ label, hint, value, onChange, minHeight = 2
   useEffect(() => {
     const updateTheme = () => setTheme(resolveEditorTheme());
     const observer = new MutationObserver(updateTheme);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme-mode'] });
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    media.addEventListener('change', updateTheme);
-    return () => {
-      observer.disconnect();
-      media.removeEventListener('change', updateTheme);
-    };
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -61,7 +69,7 @@ export function AiddMarkdownEditor({ label, hint, value, onChange, minHeight = 2
       initialValue: latestValueRef.current || '',
       initialEditType: mode,
       previewStyle: 'vertical',
-      height: `${minHeight}px`,
+      height: fill ? '100%' : height ?? `${minHeight}px`,
       theme,
       usageStatistics: false,
       autofocus: false,
@@ -87,36 +95,42 @@ export function AiddMarkdownEditor({ label, hint, value, onChange, minHeight = 2
 
     editorRef.current = editor;
 
-    if (readOnly) {
-      hostRef.current.classList.add('editor-readonly');
-    } else {
-      hostRef.current.classList.remove('editor-readonly');
-    }
-
     return () => {
       editor.destroy();
       editorRef.current = null;
     };
-  }, [mode, theme, minHeight, readOnly, onChange]);
+  }, [mode, theme, minHeight, height, fill, readOnly, onChange]);
 
   return (
-    <div className="aiddMarkdownEditor">
-      {(label || hint) && (
-        <div className="editorLabelRow">
-          <div>
-            {label && <label className="fieldLabel editorFieldLabel">{label}</label>}
-            {hint && <p className="fieldHint editorHint">{hint}</p>}
+    <div className={cn('flex min-h-0 flex-col gap-2', fill && 'h-full', className)}>
+      {(label || hint || !readOnly) && (
+        <div className="flex shrink-0 items-center justify-between gap-3">
+          <div className="min-w-0">
+            {label && <label className="text-sm font-medium text-foreground">{label}</label>}
+            {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
           </div>
           {!readOnly && (
-            <div className="editorModeToggle" aria-label="Markdown editor mode">
-              <button type="button" className={mode === 'wysiwyg' ? 'active' : ''} onClick={() => setMode('wysiwyg')}>Visual</button>
-              <button type="button" className={mode === 'markdown' ? 'active' : ''} onClick={() => setMode('markdown')}>Markdown</button>
+            <div className="inline-flex rounded-md border bg-muted p-0.5" aria-label="Markdown editor mode">
+              <button
+                type="button"
+                className={cn('rounded px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground', mode === 'wysiwyg' && 'bg-background text-foreground shadow-sm')}
+                onClick={() => setMode('wysiwyg')}
+              >
+                Visual
+              </button>
+              <button
+                type="button"
+                className={cn('rounded px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground', mode === 'markdown' && 'bg-background text-foreground shadow-sm')}
+                onClick={() => setMode('markdown')}
+              >
+                Markdown
+              </button>
             </div>
           )}
         </div>
       )}
-      <div className="editorShell">
-        <div ref={hostRef} />
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border bg-background">
+        <div ref={hostRef} className="h-full" />
       </div>
     </div>
   );
