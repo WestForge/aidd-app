@@ -278,6 +278,15 @@ interface AiddSaveWorkflowDocumentInput {
   body: string;
 }
 
+
+interface AiddPrepareFoundationDragFileInput {
+  projectPath: string;
+  fileName: string;
+  title?: string;
+  status?: AiddSetupStatus;
+  body: string;
+}
+
 interface Window {
   aidd: {
     notify: (input: AiddNotifyInput) => Promise<boolean>;
@@ -290,6 +299,10 @@ interface Window {
     repairProject: (projectPath: string) => Promise<AiddProjectRepairReport>;
     readProjectSetup: (projectPath: string) => Promise<AiddProjectSetupState>;
     prepareFoundationReviewPackage: (projectPath: string) => Promise<{ filePath: string; fileName: string }>;
+    prepareFoundationDragFile: (input: AiddPrepareFoundationDragFileInput) => Promise<string>;
+    prepareNativeDragTestFile: () => Promise<{ filePath: string; fileName: string }>;
+    startNativeFileDrag: (filePath: string) => void;
+    startFileDrag: (filePath: string) => void;
     readWorkflowDocuments: (projectPath: string) => Promise<AiddWorkflowDocument[]>;
     saveWorkflowDocument: (input: AiddSaveWorkflowDocumentInput) => Promise<AiddWorkflowDocument[]>;
     saveFoundationDocument: (input: AiddSaveFoundationInput) => Promise<AiddProjectSetupState>;

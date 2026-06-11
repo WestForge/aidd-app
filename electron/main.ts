@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, dialog, Notification, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, dialog, nativeImage, shell } from 'electron';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import fs from 'node:fs';
@@ -8,22 +8,6 @@ import matter from 'gray-matter';
 const isDev = process.env.NODE_ENV !== 'production';
 const TEMPLATE_ID = 'aidd-default';
 const TEMPLATE_VERSION = '0.8.0';
-
-const DRAG_FILE_ICON = nativeImage.createFromDataURL(
-  'data:image/svg+xml;base64,' + Buffer.from(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-      <rect x="12" y="6" width="40" height="52" rx="5" fill="#ffffff" stroke="#737373" stroke-width="2"/>
-      <path d="M40 6v14h12" fill="none" stroke="#737373" stroke-width="2"/>
-      <path d="M22 31h20M22 39h20M22 47h13" stroke="#737373" stroke-width="3" stroke-linecap="round"/>
-    </svg>
-  `).toString('base64')
-);
-
-
-interface AppNotifyInput {
-  title: string;
-  body?: string;
-}
 
 interface CreateProjectInput {
   name: string;
@@ -152,13 +136,20 @@ interface SaveFoundationInput {
   body: string;
 }
 
+interface PrepareFoundationDragFileInput {
+  projectPath: string;
+  fileName: string;
+  title?: string;
+  status?: SetupStepStatus;
+  body: string;
+}
+
 interface CreateComponentInput {
   projectPath: string;
   title: string;
   description?: string;
   status?: SetupStepStatus | 'active' | 'deprecated';
   sourceProjects?: string[];
-  capabilities?: string[];
 }
 
 interface ReadComponentInput {
@@ -173,7 +164,6 @@ interface UpdateComponentInput {
   description?: string;
   status?: SetupStepStatus | 'active' | 'deprecated';
   sourceProjects?: string[];
-  capabilities?: string[];
 }
 
 interface CapabilitySectionInput {
@@ -217,64 +207,6 @@ interface UpdateCapabilityInput {
 interface CreateDeliveryPackageFromCapabilityInput {
   projectPath: string;
   capabilitySlug: string;
-}
-
-interface DeliveryPackageSummary {
-  id: string;
-  title: string;
-  status: SetupStepStatus | string;
-  sourceCapability?: string;
-  components: string[];
-  createdAt?: string;
-  packaged: boolean;
-  phaseCount: number;
-  priority?: number;
-}
-
-interface DeliveryPackagePhase {
-  id: string;
-  title: string;
-  status: SetupStepStatus | string;
-  fileName: string;
-  body: string;
-}
-
-interface DeliveryPackageDetail extends DeliveryPackageSummary {
-  packagePath: string;
-  snapshotBody: string;
-  strategyBody: string;
-  packagedBody: string;
-  phases: DeliveryPackagePhase[];
-}
-
-interface ReadDeliveryPackageInput {
-  projectPath: string;
-  id: string;
-}
-
-interface SaveDeliveryPackageInput {
-  projectPath: string;
-  id: string;
-  status?: SetupStepStatus | string;
-  strategyBody?: string;
-  phases?: DeliveryPackagePhase[];
-}
-
-interface CreateDeliveryPackagePhaseInput {
-  projectPath: string;
-  packageId: string;
-  title: string;
-}
-
-interface AssembleDeliveryPackageInput {
-  projectPath: string;
-  packageId: string;
-}
-
-interface ReorderDeliveryPackageInput {
-  projectPath: string;
-  id: string;
-  direction: 'up' | 'down';
 }
 
 interface DefineStandardsInput {
@@ -442,7 +374,8 @@ async function readFoundationDocuments(projectPath: string): Promise<FoundationD
   const foundationDir = await exists(path.join(projectPath, 'foundation')) ? 'foundation' : 'common';
   const definitions = [
     ['product-definition', 'Product definition', '02-product-definition.md'],
-    ['audience-and-users', 'Audience & users', '03-audience-and-users.md']
+    ['audience-and-users', 'Audience & users', '03-audience-and-users.md'],
+    ['goals-and-success-metrics', 'Goals & Success Metrics', '04-goals-and-success-metrics.md']
   ] as const;
   const docs: FoundationDocument[] = [];
   for (const [id, fallbackTitle, fileName] of definitions) {
@@ -573,70 +506,6 @@ async function readProjectSetup(projectPath: string): Promise<ProjectSetupState>
   };
 }
 
-
-async function prepareFoundationReviewPackage(projectPath: string): Promise<{ filePath: string; fileName: string }> {
-  const setup = await readProjectSetup(projectPath);
-  const productDefinition = setup.foundation.find((doc) => doc.fileName === '02-product-definition.md');
-  const audience = setup.foundation.find((doc) => doc.fileName === '03-audience-and-users.md');
-  const parts = [
-    '# AIDD Foundation Review Package',
-    '',
-    '## Review Task',
-    '',
-    'Review this project foundation for clarity, completeness, delivery usefulness, and whether it gives enough context for future delivery packages.',
-    '',
-    'Do not implement code. Return issues, questions, recommended improvements, and a readiness decision.',
-    '',
-    '## Product Definition',
-    '',
-    productDefinition?.body?.trim() || 'No product definition has been provided yet.',
-    '',
-    '## Audience & Users',
-    '',
-    audience?.body?.trim() || 'No audience and users context has been provided yet.',
-    '',
-    '## Standards',
-    '',
-    setup.standards.body?.trim() || 'No standards have been defined yet.',
-    '',
-    '## Expected Review Output',
-    '',
-    '- Summary',
-    '- Blocking issues',
-    '- Non-blocking improvements',
-    '- Missing context',
-    '- Readiness decision: ready / needs refinement',
-    ''
-  ];
-  const filePath = path.join(projectPath, '.aidd', 'review-exports', 'foundation-review-package.md');
-  await fsp.mkdir(path.dirname(filePath), { recursive: true });
-  await fsp.writeFile(filePath, parts.join('\n'), 'utf8');
-  return { filePath, fileName: path.basename(filePath) };
-}
-
-
-async function prepareNativeDragTestFile(): Promise<{ filePath: string; fileName: string }> {
-  const dir = path.join(app.getPath('userData'), 'drag-test');
-  await fsp.mkdir(dir, { recursive: true });
-  const filePath = path.join(dir, 'aidd-native-drag-test.md');
-  const content = [
-    '# AIDD Native Drag Test',
-    '',
-    'This file was generated by AIDD to test Electron native file drag-out.',
-    '',
-    'Try dragging the file tile from AIDD into:',
-    '',
-    '- Windows Explorer',
-    '- Chrome file upload area',
-    '- ChatGPT file upload area',
-    '',
-    `Generated: ${new Date().toISOString()}`,
-    ''
-  ].join('\n');
-  await fsp.writeFile(filePath, content, 'utf8');
-  return { filePath, fileName: path.basename(filePath) };
-}
-
 async function fileHasUsefulContent(filePath: string) {
   if (!(await exists(filePath))) return false;
   const content = await fsp.readFile(filePath, 'utf8');
@@ -663,9 +532,9 @@ async function readProjectStatus(projectPath: string): Promise<ProjectStatus> {
   const manifest = await exists(manifestPath) ? await readJson<any>(manifestPath) : {};
   const foundationDir = await exists(path.join(projectPath, 'foundation')) ? 'foundation' : 'common';
   const foundationFiles = [
-    ['overview', 'Project overview', '01-project-overview.md', 'Explains what this project is and why it exists.'],
     ['product', 'Product definition', '02-product-definition.md', 'Defines the product intent future work inherits.'],
-    ['audience', 'Audience & users', '03-audience-and-users.md', 'Identifies who the product is for.']
+    ['audience', 'Audience & users', '03-audience-and-users.md', 'Identifies who the product is for.'],
+    ['goals', 'Goals & success metrics', '04-goals-and-success-metrics.md', 'Defines measurable outcomes used to judge delivery success.']
   ] as const;
   const foundation: ProjectStatusItem[] = [];
   const foundationStatuses: SetupStepStatus[] = [];
@@ -1078,6 +947,14 @@ async function repairProject(projectPath: string): Promise<ProjectRepairReport> 
   );
 
   await ensureMarkdown(
+    'foundation/04-goals-and-success-metrics.md',
+    'foundation',
+    'goals-and-success-metrics',
+    'Goals & Success Metrics',
+    '# Goals & Success Metrics\n\nDescribe the measurable goals, outcomes, or success signals this project should optimise for.'
+  );
+
+  await ensureMarkdown(
     'foundation/standards/index.md',
     'standards',
     'project-standards',
@@ -1186,38 +1063,33 @@ async function refreshCapabilitiesIndex(root: string) {
   await fsp.writeFile(path.join(root, 'capabilities', 'index.md'), lines.join('\n'), 'utf8');
 }
 
-
-function extractComponentBody(content: string, title?: string) {
-  const trimmed = content.trim();
-  if (!trimmed) return '';
-
-  const escapedTitle = title ? title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
-  const legacyWrapper = escapedTitle
-    ? new RegExp(`^\\s*#\\s+${escapedTitle}\\s*\\n+##\\s+Purpose\\s*\\n+`, 'i')
-    : /^\s*#\s+[^\n]+\n+##\s+Purpose\s*\n+/i;
-
-  if (legacyWrapper.test(trimmed)) {
-    return trimmed.replace(legacyWrapper, '').trim();
-  }
-
-  return trimmed;
-}
-
 function buildComponentPurposeMarkdown(input: { slug: string; title: string; description?: string; status?: string }) {
-  const body = input.description?.trim() || 'Describe what this component is responsible for.';
+  const body = input.description?.trim()
+    ? `# ${input.title}
 
-  return matter.stringify(`${body.trim()}
-`, {
-    aidd: {
-      type: 'component',
-      id: input.slug,
-      title: input.title,
-      status: input.status || 'draft',
-      required: true,
-      templateVersion: TEMPLATE_VERSION,
-      updatedAt: new Date().toISOString()
-    }
-  });
+## Purpose
+
+${input.description.trim()}
+`
+    : `# ${input.title}
+
+## Purpose
+
+Describe what this component is responsible for.
+`;
+
+  return `---
+aidd:
+  type: component
+  id: ${input.slug}
+  title: ${input.title}
+  status: ${input.status || 'draft'}
+  required: true
+  templateVersion: ${TEMPLATE_VERSION}
+  updatedAt: ${new Date().toISOString()}
+---
+
+${body}`;
 }
 
 function buildComponentTechnicalMarkdown(input: { slug: string; title: string }) {
@@ -1390,63 +1262,7 @@ Add behaviour examples later when the capability needs clearer acceptance scenar
 `;
 }
 
-
-function normaliseSlugList(values?: string[]) {
-  return Array.from(new Set((values || []).map((value) => slugify(String(value))).filter(Boolean)));
-}
-
-async function getCapabilitiesLinkedToComponent(root: string, componentSlug: string) {
-  const capabilitiesRoot = path.join(root, 'capabilities');
-  if (!(await exists(capabilitiesRoot))) return [];
-  const entries = await fsp.readdir(capabilitiesRoot, { withFileTypes: true });
-  const linked: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const manifestPath = path.join(capabilitiesRoot, entry.name, 'capability.json');
-    if (!(await exists(manifestPath))) continue;
-    try {
-      const manifest = await readJson<any>(manifestPath);
-      const components = normaliseSlugList(Array.isArray(manifest.components) ? manifest.components : manifest.modules);
-      if (components.includes(componentSlug)) linked.push(String(manifest.slug || entry.name));
-    } catch {
-      // Ignore malformed capability manifests during component editing.
-    }
-  }
-  return linked;
-}
-
-async function updateComponentCapabilityLinks(root: string, componentSlug: string, selectedCapabilitySlugs?: string[]) {
-  if (!selectedCapabilitySlugs) return;
-  const selected = new Set(normaliseSlugList(selectedCapabilitySlugs));
-  const capabilitiesRoot = path.join(root, 'capabilities');
-  if (!(await exists(capabilitiesRoot))) return;
-  const entries = await fsp.readdir(capabilitiesRoot, { withFileTypes: true });
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const capabilitySlug = entry.name;
-    const manifestPath = path.join(capabilitiesRoot, capabilitySlug, 'capability.json');
-    if (!(await exists(manifestPath))) continue;
-
-    const manifest = await readJson<any>(manifestPath);
-    const current = normaliseSlugList(Array.isArray(manifest.components) ? manifest.components : manifest.modules);
-    const next = selected.has(capabilitySlug)
-      ? Array.from(new Set([...current, componentSlug]))
-      : current.filter((slug) => slug !== componentSlug);
-
-    const changed = next.length !== current.length || next.some((slug, index) => slug !== current[index]);
-    if (!changed && !('modules' in manifest)) continue;
-
-    await writeJson(manifestPath, {
-      ...manifest,
-      components: next,
-      modules: undefined,
-      updatedAt: new Date().toISOString()
-    });
-  }
-}
-
-async function createComponent(root: string, title: string, description?: string, status: string = 'draft', sourceProjects: string[] = [], capabilitySlugs: string[] = []) {
+async function createComponent(root: string, title: string, description?: string, status: string = 'draft', sourceProjects: string[] = []) {
   const slug = slugify(title);
   const dir = path.join(root, 'components', slug);
   if (await exists(dir)) return slug;
@@ -1457,16 +1273,14 @@ async function createComponent(root: string, title: string, description?: string
     title,
     status,
     lifecycle: status,
-    sourceProjects: normaliseSlugList(sourceProjects),
+    sourceProjects: Array.from(new Set(sourceProjects)),
     createdAt: new Date().toISOString(),
-    supportsCapabilities: normaliseSlugList(capabilitySlugs),
+    supportsCapabilities: [],
     dependsOn: [],
     exposes: []
   });
   await fsp.writeFile(path.join(dir, 'index.md'), buildComponentPurposeMarkdown({ slug, title, description, status }), 'utf8');
   await fsp.writeFile(path.join(dir, 'technical-shape.md'), buildComponentTechnicalMarkdown({ slug, title }), 'utf8');
-  await updateComponentCapabilityLinks(root, slug, capabilitySlugs);
-  await refreshCapabilitiesIndex(root);
   await refreshComponentsIndex(root);
   return slug;
 }
@@ -1482,21 +1296,12 @@ async function readComponent(input: ReadComponentInput) {
   const raw = await exists(markdownPath) ? await fsp.readFile(markdownPath, 'utf8') : '';
   const parsed = matter(raw);
   const aidd = (parsed.data as any)?.aidd || {};
-  const manifestCapabilities = normaliseSlugList(
-    Array.isArray(manifest.supportsCapabilities)
-      ? manifest.supportsCapabilities
-      : Array.isArray(manifest.capabilities)
-        ? manifest.capabilities
-        : []
-  );
-  const linkedCapabilities = await getCapabilitiesLinkedToComponent(input.projectPath, slug);
   return {
     slug,
     title: String(manifest.title || aidd.title || slug),
     status: String(manifest.status || manifest.lifecycle || aidd.status || 'draft'),
     sourceProjects: Array.isArray(manifest.sourceProjects) ? manifest.sourceProjects : [],
-    capabilities: Array.from(new Set([...manifestCapabilities, ...linkedCapabilities])),
-    description: extractComponentBody(parsed.content, String(manifest.title || aidd.title || slug)),
+    description: parsed.content.replace(/^\s*\n/, ''),
     filePath: markdownPath
   };
 }
@@ -1515,9 +1320,6 @@ async function updateComponent(input: UpdateComponentInput) {
     status,
     lifecycle: status,
     sourceProjects: Array.from(new Set(input.sourceProjects || manifest.sourceProjects || [])),
-    supportsCapabilities: input.capabilities
-      ? normaliseSlugList(input.capabilities)
-      : normaliseSlugList(Array.isArray(manifest.supportsCapabilities) ? manifest.supportsCapabilities : manifest.capabilities),
     updatedAt: new Date().toISOString()
   });
   await fsp.writeFile(markdownPath, buildComponentPurposeMarkdown({
@@ -1526,8 +1328,6 @@ async function updateComponent(input: UpdateComponentInput) {
     description: input.description,
     status
   }), 'utf8');
-  await updateComponentCapabilityLinks(input.projectPath, slug, input.capabilities);
-  await refreshCapabilitiesIndex(input.projectPath);
   await refreshComponentsIndex(input.projectPath);
   return readProjectSetup(input.projectPath);
 }
@@ -1538,7 +1338,7 @@ async function createCapability(root: string, input: CreateCapabilityInput) {
   const componentSlugs: string[] = Array.from(new Set<string>(input.componentSlugs || []));
 
   if (input.inlineComponent?.title?.trim()) {
-    const created = await createComponent(root, input.inlineComponent.title.trim(), input.inlineComponent.description, 'draft', [], [slug]);
+    const created = await createComponent(root, input.inlineComponent.title.trim(), input.inlineComponent.description);
     if (!componentSlugs.includes(created)) componentSlugs.push(created);
   }
 
@@ -1704,7 +1504,10 @@ async function assertProjectFoundationReady(projectPath: string) {
 
 async function buildProjectFoundationSnapshot(projectPath: string, foundation: FoundationDocument[], standardsPath: string) {
   const foundationSections = foundation.map((doc) => [
-    `### ${doc.title}`,
+    `## ${doc.title}`,
+    '',
+    `- Status: ${doc.status}`,
+    `- Source: foundation/${doc.fileName}`,
     '',
     doc.body.trim() || '_No content captured._'
   ].join('\n'));
@@ -1715,11 +1518,13 @@ async function buildProjectFoundationSnapshot(projectPath: string, foundation: F
   }
 
   return [
-    '## Project Foundation',
+    '## Project Foundation Snapshot',
+    '',
+    'This section is captured because every delivery package must inherit the approved project foundation and standards.',
     '',
     ...foundationSections,
     '',
-    '## Project Standards',
+    '## Project Standards Snapshot',
     '',
     standardsBody
   ].join('\n');
@@ -1735,57 +1540,30 @@ async function createDeliveryPackageFromCapability(input: CreateDeliveryPackageF
   const dir = path.join(input.projectPath, 'delivery', 'packages', id);
   if (await exists(dir)) throw new Error(`Delivery package already exists: ${id}`);
   await fsp.mkdir(dir, { recursive: true });
-  await fsp.mkdir(path.join(dir, 'phases'), { recursive: true });
-
-  const sourceProjects = await readSourceProjects(input.projectPath);
-  const sourceProjectById = new Map<string, SourceCodeProject>(
-    sourceProjects.map((project): [string, SourceCodeProject] => [project.id, project])
-  );
 
   const componentSnapshots: string[] = [];
   for (const componentSlug of capability.components || []) {
     const componentDir = path.join(input.projectPath, 'components', componentSlug);
     const manifestPath = path.join(componentDir, 'component.json');
     const indexPath = path.join(componentDir, 'index.md');
-    const technicalPath = path.join(componentDir, 'technical-shape.md');
     if (await exists(manifestPath)) {
       const manifest = await readJson<any>(manifestPath);
-      const content = await exists(indexPath) ? parseFrontmatter(await fsp.readFile(indexPath, 'utf8')).body.trim() : '';
-      const technicalShape = await exists(technicalPath) ? parseFrontmatter(await fsp.readFile(technicalPath, 'utf8')).body.trim() : '';
-      const mappedSources: string[] = Array.isArray(manifest.sourceProjects)
-        ? manifest.sourceProjects.filter((sourceId: unknown): sourceId is string => typeof sourceId === 'string')
-        : [];
-      const sourceLines = mappedSources
-        .map((sourceId: string): SourceCodeProject | undefined => sourceProjectById.get(sourceId))
-        .filter((sourceProject: SourceCodeProject | undefined): sourceProject is SourceCodeProject => Boolean(sourceProject))
-        .map((sourceProject: SourceCodeProject) => [
-          `#### Source Project: ${sourceProject.name}`,
-          '',
-          `- Directory: ${sourceProject.path}`,
-          `- Detected type: ${sourceProject.detectedType}`,
-          sourceProject.indicators?.length ? `- Indicators: ${sourceProject.indicators.join(', ')}` : '- Indicators: none detected'
-        ].join('\n'));
-
+      const content = await exists(indexPath) ? await fsp.readFile(indexPath, 'utf8') : '';
       componentSnapshots.push([
-        `### Component: ${manifest.title || componentSlug}`,
+        `## Component: ${manifest.title || componentSlug}`,
         '',
-        content || '_No component description captured._',
+        `- Slug: ${componentSlug}`,
+        `- Status: ${manifest.status || manifest.lifecycle || 'draft'}`,
         '',
-        technicalShape ? '#### Technical Shape' : '',
-        technicalShape ? '' : '',
-        technicalShape,
-        '',
-        sourceLines.length ? '#### Linked Source Code' : '#### Linked Source Code',
-        '',
-        sourceLines.length ? sourceLines.join('\n\n') : '_No source code projects are mapped to this component._'
-      ].filter((line) => line !== undefined && line !== null).join('\n'));
+        content.trim()
+      ].join('\n'));
     }
   }
 
   const snapshot = matter.stringify([
     `# Delivery Package Snapshot: ${capability.title}`,
     '',
-    'This file provides the delivery package context for refinement and implementation planning.',
+    'This snapshot freezes the approved project foundation, capability, and component context at the point the delivery package was created.',
     '',
     foundationSnapshot,
     '',
@@ -1795,11 +1573,14 @@ async function createDeliveryPackageFromCapability(input: CreateDeliveryPackageF
       ? (capability as any).sections.map((section: any) => [
           `### ${section.title}`,
           '',
+          `- Source: capabilities/${capability.slug}/${section.fileName}`,
+          `- Status: ${section.status || 'not-started'}`,
+          '',
           section.body?.trim() || '_No content captured._'
         ].join('\n')).join('\n\n')
       : capability.body.trim(),
     '',
-    '## Linked Components and Source Code',
+    '## Component Snapshots',
     '',
     componentSnapshots.length ? componentSnapshots.join('\n\n---\n\n') : 'No components were linked when this delivery package was created.',
     ''
@@ -1857,250 +1638,6 @@ async function createDeliveryPackageFromCapability(input: CreateDeliveryPackageF
   await fsp.writeFile(path.join(dir, 'snapshot.md'), snapshot, 'utf8');
   await fsp.writeFile(path.join(dir, 'implementation-strategy.md'), strategy, 'utf8');
   return { id, path: dir };
-}
-
-function deliveryPackageDir(projectPath: string, id: string) {
-  return path.join(projectPath, 'delivery', 'packages', id);
-}
-
-function deliveryPackageOrderPath(projectPath: string) {
-  return path.join(projectPath, 'delivery', 'packages', 'order.json');
-}
-
-async function readDeliveryPackageOrder(projectPath: string): Promise<string[]> {
-  const orderPath = deliveryPackageOrderPath(projectPath);
-  if (!(await exists(orderPath))) return [];
-  try {
-    const parsed = await readJson<any>(orderPath);
-    const value = Array.isArray(parsed) ? parsed : parsed?.order;
-    return Array.isArray(value) ? value.filter((item: unknown): item is string => typeof item === 'string') : [];
-  } catch {
-    return [];
-  }
-}
-
-async function writeDeliveryPackageOrder(projectPath: string, ids: string[]) {
-  const orderPath = deliveryPackageOrderPath(projectPath);
-  await fsp.mkdir(path.dirname(orderPath), { recursive: true });
-  await writeJson(orderPath, { order: ids, updatedAt: new Date().toISOString() });
-}
-
-async function orderedDeliveryPackageIds(projectPath: string) {
-  const ids = await listDeliveryPackageIds(projectPath);
-  const order = await readDeliveryPackageOrder(projectPath);
-  const known = order.filter((id) => ids.includes(id));
-  const missing = ids.filter((id) => !known.includes(id));
-  return [...known, ...missing];
-}
-
-async function listDeliveryPackageIds(projectPath: string) {
-  const dir = path.join(projectPath, 'delivery', 'packages');
-  if (!(await exists(dir))) return [] as string[];
-  const entries = await fsp.readdir(dir, { withFileTypes: true });
-  const ids: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
-    if (await exists(path.join(dir, entry.name, 'package.json'))) ids.push(entry.name);
-  }
-  return ids.sort((a, b) => a.localeCompare(b));
-}
-
-function normalisePhaseTitle(fileName: string, parsed: ReturnType<typeof parseFrontmatter>) {
-  return parsed.title || fileName.replace(/^[0-9]+-/, '').replace(/\.md$/i, '').replace(/-/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-async function readPackagePhases(packagePath: string): Promise<DeliveryPackagePhase[]> {
-  const phasesDir = path.join(packagePath, 'phases');
-  if (!(await exists(phasesDir))) return [];
-  const entries = await fsp.readdir(phasesDir, { withFileTypes: true });
-  const phases: DeliveryPackagePhase[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
-    const content = await fsp.readFile(path.join(phasesDir, entry.name), 'utf8');
-    const parsed = parseFrontmatter(content);
-    phases.push({
-      id: parsed.id || entry.name.replace(/\.md$/i, ''),
-      title: normalisePhaseTitle(entry.name, parsed),
-      status: parsed.status || 'draft',
-      fileName: entry.name,
-      body: parsed.body
-    });
-  }
-  return phases.sort((a, b) => a.fileName.localeCompare(b.fileName));
-}
-
-async function readDeliveryPackageSummaries(projectPath: string): Promise<DeliveryPackageSummary[]> {
-  const ids = await orderedDeliveryPackageIds(projectPath);
-  const summaries: DeliveryPackageSummary[] = [];
-  for (const [index, id] of ids.entries()) {
-    const packagePath = deliveryPackageDir(projectPath, id);
-    const manifest = await readJson<any>(path.join(packagePath, 'package.json'));
-    const phases = await readPackagePhases(packagePath);
-    summaries.push({
-      id: manifest.id || id,
-      title: manifest.title || id,
-      status: manifest.status || 'draft',
-      sourceCapability: manifest.sourceCapability,
-      components: Array.isArray(manifest.components) ? manifest.components.filter((item: unknown): item is string => typeof item === 'string') : [],
-      createdAt: manifest.createdAt,
-      packaged: await exists(path.join(packagePath, 'processing-package.md')),
-      phaseCount: phases.length,
-      priority: index + 1
-    });
-  }
-  return summaries;
-}
-
-async function readDeliveryPackageDetail(input: ReadDeliveryPackageInput): Promise<DeliveryPackageDetail> {
-  const packagePath = deliveryPackageDir(input.projectPath, input.id);
-  const manifestPath = path.join(packagePath, 'package.json');
-  if (!(await exists(manifestPath))) throw new Error(`Delivery package not found: ${input.id}`);
-  const manifest = await readJson<any>(manifestPath);
-  const readBody = async (fileName: string) => {
-    const filePath = path.join(packagePath, fileName);
-    if (!(await exists(filePath))) return '';
-    return parseFrontmatter(await fsp.readFile(filePath, 'utf8')).body;
-  };
-  const phases = await readPackagePhases(packagePath);
-  const order = await orderedDeliveryPackageIds(input.projectPath);
-  const priority = order.indexOf(input.id) >= 0 ? order.indexOf(input.id) + 1 : undefined;
-  return {
-    id: manifest.id || input.id,
-    title: manifest.title || input.id,
-    status: manifest.status || 'draft',
-    sourceCapability: manifest.sourceCapability,
-    components: Array.isArray(manifest.components) ? manifest.components.filter((item: unknown): item is string => typeof item === 'string') : [],
-    createdAt: manifest.createdAt,
-    packaged: await exists(path.join(packagePath, 'processing-package.md')),
-    phaseCount: phases.length,
-    priority,
-    packagePath,
-    snapshotBody: await readBody('snapshot.md'),
-    strategyBody: await readBody('implementation-strategy.md'),
-    packagedBody: await readBody('processing-package.md'),
-    phases
-  };
-}
-
-function buildDeliveryPhaseMarkdown(packageId: string, phase: DeliveryPackagePhase) {
-  return matter.stringify(phase.body.trim() || `# ${phase.title}\n\nDescribe the delivery phase.`, {
-    aidd: { type: 'delivery-package-phase', templateVersion: TEMPLATE_VERSION },
-    id: phase.id,
-    title: phase.title,
-    deliveryPackage: packageId,
-    status: phase.status || 'draft',
-    updatedAt: new Date().toISOString()
-  });
-}
-
-async function createDeliveryPackagePhase(input: CreateDeliveryPackagePhaseInput): Promise<DeliveryPackageDetail> {
-  if (!input.title.trim()) throw new Error('Phase title is required.');
-  const packagePath = deliveryPackageDir(input.projectPath, input.packageId);
-  if (!(await exists(path.join(packagePath, 'package.json')))) throw new Error(`Delivery package not found: ${input.packageId}`);
-  const phasesDir = path.join(packagePath, 'phases');
-  await fsp.mkdir(phasesDir, { recursive: true });
-  const existing = await readPackagePhases(packagePath);
-  const number = String(existing.length + 1).padStart(2, '0');
-  const slug = slugify(input.title.trim());
-  const fileName = `${number}-${slug}.md`;
-  const phase: DeliveryPackagePhase = {
-    id: `${input.packageId}-phase-${number}`,
-    title: input.title.trim(),
-    status: 'draft',
-    fileName,
-    body: `# ${input.title.trim()}\n\n## Goal\n\nDefine the goal for this phase.\n\n## Scope\n\nDefine what this phase will change.\n\n## Source Review\n\nIdentify source files, patterns, and constraints before implementation.\n\n## Tests / Verification\n\nDefine how this phase will be checked.`
-  };
-  await fsp.writeFile(path.join(phasesDir, fileName), buildDeliveryPhaseMarkdown(input.packageId, phase), 'utf8');
-  return readDeliveryPackageDetail({ projectPath: input.projectPath, id: input.packageId });
-}
-
-
-async function reorderDeliveryPackage(input: ReorderDeliveryPackageInput): Promise<DeliveryPackageSummary[]> {
-  const ids = await orderedDeliveryPackageIds(input.projectPath);
-  const index = ids.indexOf(input.id);
-  if (index < 0) return readDeliveryPackageSummaries(input.projectPath);
-  const target = input.direction === 'up' ? index - 1 : index + 1;
-  if (target < 0 || target >= ids.length) return readDeliveryPackageSummaries(input.projectPath);
-  const next = [...ids];
-  const [item] = next.splice(index, 1);
-  next.splice(target, 0, item);
-  await writeDeliveryPackageOrder(input.projectPath, next);
-  return readDeliveryPackageSummaries(input.projectPath);
-}
-
-async function saveDeliveryPackage(input: SaveDeliveryPackageInput): Promise<DeliveryPackageDetail> {
-  const packagePath = deliveryPackageDir(input.projectPath, input.id);
-  const manifestPath = path.join(packagePath, 'package.json');
-  if (!(await exists(manifestPath))) throw new Error(`Delivery package not found: ${input.id}`);
-  const manifest = await readJson<any>(manifestPath);
-  const status = input.status || manifest.status || 'draft';
-  await writeJson(manifestPath, { ...manifest, status, updatedAt: new Date().toISOString() });
-
-  if (typeof input.strategyBody === 'string') {
-    await fsp.writeFile(path.join(packagePath, 'implementation-strategy.md'), matter.stringify(input.strategyBody.trim(), {
-      aidd: { type: 'implementation-strategy', templateVersion: TEMPLATE_VERSION },
-      id: `${input.id}-strategy`,
-      deliveryPackage: input.id,
-      status,
-      updatedAt: new Date().toISOString()
-    }), 'utf8');
-  }
-
-  if (Array.isArray(input.phases)) {
-    const phasesDir = path.join(packagePath, 'phases');
-    await fsp.mkdir(phasesDir, { recursive: true });
-    for (const phase of input.phases) {
-      if (!phase.fileName) continue;
-      await fsp.writeFile(path.join(phasesDir, phase.fileName), buildDeliveryPhaseMarkdown(input.id, phase), 'utf8');
-    }
-  }
-
-  return readDeliveryPackageDetail({ projectPath: input.projectPath, id: input.id });
-}
-
-async function assembleDeliveryPackage(input: AssembleDeliveryPackageInput): Promise<DeliveryPackageDetail> {
-  const detail = await readDeliveryPackageDetail({ projectPath: input.projectPath, id: input.packageId });
-  const phaseContent = detail.phases.length
-    ? detail.phases.map((phase, index) => [
-        `## Phase ${index + 1}: ${phase.title}`,
-        '',
-        `- Status: ${String(phase.status).replace(/-/g, ' ')}`,
-        `- Source: phases/${phase.fileName}`,
-        '',
-        phase.body.trim() || '_No phase content captured._'
-      ].join('\n')).join('\n\n---\n\n')
-    : '_No delivery phases have been defined._';
-
-  const packaged = matter.stringify([
-    `# Processing Package: ${detail.title}`,
-    '',
-    'This file combines the frozen delivery package snapshot, implementation strategy, and delivery phases for refinement or AI processing.',
-    '',
-    '# Snapshot',
-    '',
-    detail.snapshotBody.trim() || '_No snapshot content._',
-    '',
-    '# Implementation Strategy',
-    '',
-    detail.strategyBody.trim() || '_No implementation strategy content._',
-    '',
-    '# Delivery Phases',
-    '',
-    phaseContent,
-    ''
-  ].join('\n'), {
-    aidd: { type: 'delivery-processing-package', templateVersion: TEMPLATE_VERSION },
-    id: `${detail.id}-processing-package`,
-    deliveryPackage: detail.id,
-    status: 'ready-for-processing',
-    generatedAt: new Date().toISOString()
-  });
-
-  await fsp.writeFile(path.join(detail.packagePath, 'processing-package.md'), packaged, 'utf8');
-  const manifestPath = path.join(detail.packagePath, 'package.json');
-  const manifest = await readJson<any>(manifestPath);
-  await writeJson(manifestPath, { ...manifest, status: 'ready-for-processing', packagedAt: new Date().toISOString() });
-  return readDeliveryPackageDetail({ projectPath: input.projectPath, id: input.packageId });
 }
 
 function detectSourceType(entries: string[]) {
@@ -2318,39 +1855,6 @@ async function collectFiles(root: string, current = root): Promise<string[]> {
   return out;
 }
 
-
-ipcMain.handle('app:prepareNativeDragTestFile', async () => prepareNativeDragTestFile());
-
-ipcMain.handle('app:notify', async (_event, input: AppNotifyInput) => {
-  const title = input?.title?.trim() || 'AIDD';
-  const body = input?.body?.trim() || undefined;
-
-  if (!Notification.isSupported()) {
-    return false;
-  }
-
-  new Notification({ title, body }).show();
-  return true;
-});
-
-
-ipcMain.on('app:startFileDrag', (event, filePath: string) => {
-  if (!filePath || typeof filePath !== 'string') return;
-  const absoluteFilePath = path.resolve(filePath);
-  if (!fs.existsSync(absoluteFilePath)) return;
-  event.sender.startDrag({ file: absoluteFilePath, icon: DRAG_FILE_ICON });
-});
-
-
-ipcMain.handle('app:showItemInFolder', async (_event, filePath: string) => {
-  if (!filePath || typeof filePath !== 'string') return false;
-  if (!fs.existsSync(filePath)) return false;
-  shell.showItemInFolder(filePath);
-  return true;
-});
-
-ipcMain.handle('project:prepareFoundationReviewPackage', async (_event, projectPath: string) => prepareFoundationReviewPackage(projectPath));
-
 ipcMain.handle('project:selectFolder', async () => {
   const result = await dialog.showOpenDialog({ title: 'Select project location', properties: ['openDirectory', 'createDirectory'] });
   if (result.canceled || result.filePaths.length === 0) return null;
@@ -2407,11 +1911,18 @@ ipcMain.handle('project:create', async (_event, input: CreateProjectInput) => {
     StormUI: name
   });
 
-  await fsp.writeFile(path.join(projectPath, 'foundation', '01-project-overview.md'), buildFoundationMarkdown({
-    id: 'project-overview',
-    title: 'Project Overview',
+  await fsp.rm(path.join(projectPath, 'foundation', '01-project-overview.md'), { force: true }).catch(() => undefined);
+  await fsp.writeFile(path.join(projectPath, 'foundation', '02-product-definition.md'), buildFoundationMarkdown({
+    id: 'product-definition',
+    title: 'Product Definition',
     status: input.description.trim() ? 'draft' : 'not-started',
-    body: `# Project Overview\n\n${input.description.trim() || 'TODO: Define project overview.'}`
+    body: `# Product Definition\n\n${input.description.trim() || 'Describe what this system is and what product context every delivery package should inherit.'}`
+  }), 'utf8');
+  await fsp.writeFile(path.join(projectPath, 'foundation', '04-goals-and-success-metrics.md'), buildFoundationMarkdown({
+    id: 'goals-and-success-metrics',
+    title: 'Goals & Success Metrics',
+    status: 'not-started',
+    body: '# Goals & Success Metrics\n\nDescribe the measurable goals, outcomes, or success signals this project should optimise for.'
   }), 'utf8');
   await writeJson(path.join(projectPath, 'aidd.template.json'), {
     templateId: TEMPLATE_ID,
@@ -2440,6 +1951,75 @@ ipcMain.handle('project:create', async (_event, input: CreateProjectInput) => {
   return tracked;
 });
 
+
+
+function dragIcon() {
+  return nativeImage.createFromDataURL(
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAhklEQVR4nO3XMQrAIBAEwYv//7R0sQkWgoGdTOGmxWUEWRgmAAAAAAAAwFdl7wR4XlUe9e1nR1W9H+CTeQnACZQBAJxAGQDAA4oAAPYpAwD4zgAA7HIGAOBvBgBgEAAAAwAAABgAAAAYAAAAGAAAAADAtm0AV6t9H6m6D+Bv4TlxAAAAAADgF9gBfHIDRSR3S2EAAAAASUVORK5CYII='
+  );
+}
+
+function safeDragFileName(fileName: string) {
+  const parsed = path.parse(fileName || 'foundation.md');
+  const baseName = slugify(parsed.name || 'foundation');
+  const ext = parsed.ext && parsed.ext.toLowerCase() === '.md' ? '.md' : '.md';
+  return `${baseName}${ext}`;
+}
+
+async function prepareFoundationDragFile(input: PrepareFoundationDragFileInput) {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.fileName) throw new Error('Foundation file name is required.');
+
+  const projectPath = path.resolve(input.projectPath);
+  const dragDir = path.join(projectPath, '.aidd', 'drag-files', 'foundation');
+  await fsp.mkdir(dragDir, { recursive: true });
+
+  const safeName = safeDragFileName(input.fileName);
+  const outputPath = path.join(dragDir, safeName);
+  const title = input.title?.trim() || path.parse(safeName).name;
+  const status = input.status || 'draft';
+  const body = input.body?.trim() || '';
+
+  await fsp.writeFile(outputPath, buildFoundationMarkdown({
+    id: path.parse(safeName).name,
+    title,
+    status,
+    required: true,
+    body
+  }), 'utf8');
+
+  return outputPath;
+}
+
+async function prepareNativeDragTestFile() {
+  const dragDir = path.join(app.getPath('userData'), 'native-file-drag-test');
+  await fsp.mkdir(dragDir, { recursive: true });
+  const filePath = path.join(dragDir, 'drag-and-drop.md');
+  await fsp.writeFile(filePath, `# Native file drag test\n\nCreated by AIDD at ${new Date().toISOString()}\n`, 'utf8');
+  return { filePath, fileName: path.basename(filePath) };
+}
+
+ipcMain.handle('drag:prepareFoundationFile', async (_event, input: PrepareFoundationDragFileInput) => prepareFoundationDragFile(input));
+ipcMain.handle('drag:prepareNativeTestFile', async () => prepareNativeDragTestFile());
+
+// Use ipcMain.on + ipcRenderer.send for native drag-out. This keeps the call as close as possible
+// to Electron's documented ondragstart -> IPC -> event.sender.startDrag(...) flow.
+ipcMain.on('drag:startNativeFile', (event, filePath: string) => {
+  const resolvedPath = path.resolve(filePath || '');
+  if (!resolvedPath || !fs.existsSync(resolvedPath)) return;
+
+  event.sender.startDrag({
+    file: resolvedPath,
+    icon: dragIcon()
+  });
+});
+
+ipcMain.handle('app:showItemInFolder', async (_event, filePath: string) => {
+  const resolvedPath = path.resolve(filePath || '');
+  if (!resolvedPath || !fs.existsSync(resolvedPath)) throw new Error(`File does not exist: ${filePath}`);
+  shell.showItemInFolder(resolvedPath);
+  return true;
+});
 
 ipcMain.handle('project:setup', async (_event, projectPath: string) => readProjectSetup(projectPath));
 
@@ -2471,7 +2051,7 @@ ipcMain.handle('project:defineStandards', async (_event, input: DefineStandardsI
 
 ipcMain.handle('project:createComponent', async (_event, input: CreateComponentInput) => {
   if (!input.title.trim()) throw new Error('Component title is required.');
-  await createComponent(input.projectPath, input.title.trim(), input.description, input.status || 'draft', input.sourceProjects || [], input.capabilities || []);
+  await createComponent(input.projectPath, input.title.trim(), input.description, input.status || 'draft', input.sourceProjects || []);
   return readProjectSetup(input.projectPath);
 });
 
@@ -2504,30 +2084,6 @@ ipcMain.handle('project:updateCapability', async (_event, input: UpdateCapabilit
 ipcMain.handle('project:createDeliveryPackageFromCapability', async (_event, input: CreateDeliveryPackageFromCapabilityInput) => {
   if (!input.projectPath || !input.capabilitySlug) throw new Error('Project path and capability slug are required.');
   return createDeliveryPackageFromCapability(input);
-});
-
-
-ipcMain.handle('project:readDeliveryPackages', async (_event, projectPath: string) => readDeliveryPackageSummaries(projectPath));
-ipcMain.handle('project:reorderDeliveryPackage', async (_event, input: ReorderDeliveryPackageInput) => reorderDeliveryPackage(input));
-
-ipcMain.handle('project:readDeliveryPackage', async (_event, input: ReadDeliveryPackageInput) => {
-  if (!input.projectPath || !input.id) throw new Error('Project path and delivery package id are required.');
-  return readDeliveryPackageDetail(input);
-});
-
-ipcMain.handle('project:saveDeliveryPackage', async (_event, input: SaveDeliveryPackageInput) => {
-  if (!input.projectPath || !input.id) throw new Error('Project path and delivery package id are required.');
-  return saveDeliveryPackage(input);
-});
-
-ipcMain.handle('project:createDeliveryPackagePhase', async (_event, input: CreateDeliveryPackagePhaseInput) => {
-  if (!input.projectPath || !input.packageId) throw new Error('Project path and delivery package id are required.');
-  return createDeliveryPackagePhase(input);
-});
-
-ipcMain.handle('project:assembleDeliveryPackage', async (_event, input: AssembleDeliveryPackageInput) => {
-  if (!input.projectPath || !input.packageId) throw new Error('Project path and delivery package id are required.');
-  return assembleDeliveryPackage(input);
 });
 
 ipcMain.handle('project:readDecisions', async (_event, projectPath: string) => readDecisions(projectPath));
