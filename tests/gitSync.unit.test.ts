@@ -11,7 +11,7 @@ async function run() {
   const userDataPath = path.join(tempRoot, 'user-data');
   const projectPath = path.join(tempRoot, 'workspace', 'example-project');
   const provider = 'github' as const;
-  const token = 'ghp_testtoken_12345678901234567890';
+  const token = 'fake-test-token';
 
   await fsp.mkdir(projectPath, { recursive: true });
 
@@ -50,20 +50,30 @@ async function run() {
 
   assert.deepEqual(
     await testGitRemoteConnection({ projectPath, provider, repoUrl: 'git@github.com:org/repo.git', branch: 'main' }, store),
-    { ok: false, code: 'INVALID_REPO_URL', message: 'Enter a valid HTTPS repository URL for the selected provider.' },
+    { ok: false, code: 'INVALID_REPO_URL', message: 'Enter a valid HTTPS repository URL.' },
     'SSH URLs should be rejected in Phase 01'
   );
 
   assert.deepEqual(
-    await testGitRemoteConnection({ projectPath, provider, repoUrl: 'https://github.com/org/repo.git', branch: 'main' }, store, async () => ['main', 'develop']),
-    { ok: true, code: 'OK', message: 'Connected to GitHub and found branch main.' },
+    await testGitRemoteConnection({ projectPath, provider, repoUrl: 'https://github.com/org/repo.git', branch: 'main' }, store, async () => ['refs/heads/main', 'refs/heads/develop']),
+    { ok: true, code: 'OK', message: 'Connected and found branch main.' },
     'saved token should be used when no new token is supplied'
   );
 
   assert.deepEqual(
-    await testGitRemoteConnection({ projectPath, provider, repoUrl: 'https://github.com/org/repo.git', branch: 'release' }, store, async () => ['main']),
-    { ok: false, code: 'BRANCH_NOT_FOUND', message: 'Connected, but branch release was not found.' },
-    'missing branch should be reported safely'
+    await testGitRemoteConnection({ projectPath, provider, repoUrl: 'https://github.com/org/repo.git', branch: 'main' }, store, async () => []),
+    {
+      ok: true,
+      code: 'EMPTY_REPOSITORY',
+      message: 'Connected. The repository is empty, so branch main has not been created yet. AIDD can create it during the first project sync.'
+    },
+    'blank repositories should be accepted as a warning state'
+  );
+
+  assert.deepEqual(
+    await testGitRemoteConnection({ projectPath, provider, repoUrl: 'https://github.com/org/repo.git', branch: 'release' }, store, async () => ['refs/heads/main']),
+    { ok: true, code: 'BRANCH_NOT_FOUND', message: 'Connected. Branch release was not found. AIDD can create it during the first project sync.' },
+    'missing branch should be a warning state'
   );
 
   const authFailure = await testGitRemoteConnection(
@@ -88,6 +98,8 @@ async function run() {
     { ok: false, code: 'MISSING_TOKEN', message: 'Enter or save an access token before testing the connection.' },
     'missing token should be reported before any network call'
   );
+
+  await fsp.rm(tempRoot, { recursive: true, force: true });
 
   console.log('Git Sync Phase 01 unit tests passed.');
 }

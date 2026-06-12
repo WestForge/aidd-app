@@ -4,7 +4,9 @@ interface AiddProjectCreateInput {
   name: string;
   description: string;
   parentLocation: string;
-  initializeGit: boolean;
+  authorName?: string;
+  authorEmail?: string;
+  initializeGit?: boolean;
 }
 
 interface AiddNotifyInput {
@@ -14,22 +16,28 @@ interface AiddNotifyInput {
 
 type AiddGitProvider = 'github' | 'gitlab';
 
+interface AiddGitIdentity {
+  authorName: string;
+  authorEmail: string;
+  source: 'saved' | 'git-global' | 'none';
+}
+
+interface AiddSaveGitIdentityInput {
+  authorName: string;
+  authorEmail: string;
+}
+
 interface AiddGitSyncSettings {
   provider: AiddGitProvider;
   repoUrl: string;
-  branch: string;
-  authorName: string;
-  authorEmail: string;
+  branch: 'main';
   hasToken: boolean;
 }
 
 interface AiddSaveGitSyncSettingsInput {
   projectPath: string;
   provider: AiddGitProvider;
-  repoUrl: string;
-  branch: string;
-  authorName: string;
-  authorEmail: string;
+  repoUrl?: string;
   token?: string;
 }
 
@@ -37,7 +45,6 @@ interface AiddGitSyncTestInput {
   projectPath: string;
   provider: AiddGitProvider;
   repoUrl: string;
-  branch: string;
   token?: string;
 }
 
@@ -55,6 +62,48 @@ interface AiddGitSyncTestResult {
     | 'NETWORK_ERROR'
     | 'UNKNOWN_ERROR';
   message: string;
+}
+
+type AiddGitProjectConnectionState =
+  | 'missing_identity'
+  | 'local_not_ready'
+  | 'local_ready'
+  | 'remote_not_configured'
+  | 'not_connected'
+  | 'connected'
+  | 'remote_mismatch'
+  | 'needs_attention'
+  | 'error';
+
+interface AiddGitProjectConnectionStatus {
+  connected: boolean;
+  state: AiddGitProjectConnectionState;
+  provider?: AiddGitProvider;
+  repoUrl?: string;
+  branch: 'main';
+  remoteUrl?: string;
+  hasLocalRepository: boolean;
+  hasToken?: boolean;
+  authorName?: string;
+  authorEmail?: string;
+  lastConnectedAt?: string;
+  message: string;
+}
+
+interface AiddGitProjectConnectionResult {
+  ok: boolean;
+  code:
+    | 'OK'
+    | 'LOCAL_READY'
+    | 'MISSING_PROJECT'
+    | 'MISSING_IDENTITY'
+    | 'INVALID_REPO_URL'
+    | 'REMOTE_NOT_CONFIGURED'
+    | 'REMOTE_MISMATCH'
+    | 'LOCAL_REPO_ERROR'
+    | 'UNKNOWN_ERROR';
+  message: string;
+  status: AiddGitProjectConnectionStatus;
 }
 
 interface AiddTrackedProject {
@@ -452,11 +501,17 @@ interface Window {
     selectSourceDirectory: (projectPath: string) => Promise<AiddSourceReference | null>;
     createProject: (input: AiddProjectCreateInput) => Promise<AiddTrackedProject>;
     openExistingProject: () => Promise<AiddTrackedProject | null>;
+    gitIdentity: {
+      read: () => Promise<AiddGitIdentity | null>;
+      save: (input: AiddSaveGitIdentityInput) => Promise<AiddGitIdentity>;
+    };
     gitSync: {
       readSettings: (projectPath: string) => Promise<AiddGitSyncSettings | null>;
       saveSettings: (input: AiddSaveGitSyncSettingsInput) => Promise<AiddGitSyncSettings>;
       testConnection: (input: AiddGitSyncTestInput) => Promise<AiddGitSyncTestResult>;
       clearToken: (projectPath: string) => Promise<AiddGitSyncSettings | null>;
+      getProjectConnectionStatus: (projectPath: string) => Promise<AiddGitProjectConnectionStatus>;
+      connectProject: (projectPath: string) => Promise<AiddGitProjectConnectionResult>;
     };
     readText: (filePath: string) => Promise<string>;
     writeText: (filePath: string, content: string) => Promise<boolean>;

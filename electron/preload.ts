@@ -43,11 +43,17 @@ contextBridge.exposeInMainWorld('aidd', {
   selectSourceDirectory: (projectPath: string) => ipcRenderer.invoke('project:selectSourceDirectory', projectPath),
   createProject: (input: unknown) => ipcRenderer.invoke('project:create', input),
   openExistingProject: () => ipcRenderer.invoke('project:openExisting'),
+  gitIdentity: {
+    read: () => ipcRenderer.invoke('gitIdentity:read'),
+    save: (input: unknown) => ipcRenderer.invoke('gitIdentity:save', input)
+  },
   gitSync: {
     readSettings: (projectPath: string) => ipcRenderer.invoke('gitSync:readSettings', projectPath),
     saveSettings: (input: unknown) => ipcRenderer.invoke('gitSync:saveSettings', input),
     testConnection: (input: unknown) => ipcRenderer.invoke('gitSync:testConnection', input),
-    clearToken: (projectPath: string) => ipcRenderer.invoke('gitSync:clearToken', projectPath)
+    clearToken: (projectPath: string) => ipcRenderer.invoke('gitSync:clearToken', projectPath),
+    getProjectConnectionStatus: (projectPath: string) => ipcRenderer.invoke('gitSync:getProjectConnectionStatus', projectPath),
+    connectProject: (projectPath: string) => ipcRenderer.invoke('gitSync:connectProject', projectPath)
   },
   readText: (filePath: string) => ipcRenderer.invoke('fs:readText', filePath),
   writeText: (filePath: string, content: string) => ipcRenderer.invoke('fs:writeText', filePath, content)

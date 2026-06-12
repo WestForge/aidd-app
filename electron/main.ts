@@ -7,11 +7,14 @@ import matter from 'gray-matter';
 import { createKeytarCredentialStore } from './services/gitCredentialStore';
 import { readGitSyncSettings, saveGitSyncSettings } from './services/gitSyncSettingsStore';
 import { testGitRemoteConnection } from './services/gitRemoteTester';
-import type { AiddSaveGitSyncSettingsInput, AiddGitSyncTestInput } from './services/gitSyncTypes';
+import { connectProjectToRepository, getProjectConnectionStatus } from './services/gitProjectConnector';
+import { readGitIdentity, requireGitIdentity, saveGitIdentity } from './services/gitIdentityStore';
+import type { AiddSaveGitIdentityInput, AiddSaveGitSyncSettingsInput, AiddGitSyncTestInput } from './services/gitSyncTypes';
 
 const isDev = process.env.NODE_ENV !== 'production';
 const TEMPLATE_ID = 'aidd-default';
 const TEMPLATE_VERSION = '0.8.0';
+const AIDD_DEFAULT_BRANCH = 'main';
 
 
 interface NotifyInput {
@@ -31,7 +34,9 @@ interface CreateProjectInput {
   name: string;
   description: string;
   parentLocation: string;
-  initializeGit: boolean;
+  authorName?: string;
+  authorEmail?: string;
+  initializeGit?: boolean;
 }
 
 interface TrackedProject {
@@ -1226,8 +1231,14 @@ async function repairProject(projectPath: string): Promise<ProjectRepairReport> 
 
   if (!(await exists(path.join(projectPath, '.git')))) {
     try {
-      await initialiseGit(projectPath, path.basename(projectPath));
-      changes.push('Initialised local Git repository');
+      const identity = await readGitIdentity(app.getPath('userData'));
+
+      if (!identity) {
+        warnings.push('Could not initialise Git automatically because AIDD author identity has not been set.');
+      } else {
+        await initialiseGit(projectPath, path.basename(projectPath), identity);
+        changes.push('Initialised local Git repository');
+      }
     } catch (error) {
       warnings.push(`Could not initialise Git automatically: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -2588,19 +2599,52 @@ async function createDecisionRecord(input: DecisionInput) {
   return readDecisions(input.projectPath);
 }
 
-async function initialiseGit(projectPath: string, projectName: string) {
-  await git.init({ fs, dir: projectPath, defaultBranch: 'main' });
+
+async function ensureProjectGitIgnore(projectPath: string) {
+  const gitignorePath = path.join(projectPath, '.gitignore');
+  const requiredEntries = ['.aidd-app/', 'node_modules/', 'dist/'];
+
+  let existing = '';
+  if (await exists(gitignorePath)) {
+    existing = await fsp.readFile(gitignorePath, 'utf8');
+  }
+
+  const existingLines = new Set(
+    existing
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+  );
+
+  const missing = requiredEntries.filter((entry) => !existingLines.has(entry));
+
+  if (missing.length === 0) {
+    return;
+  }
+
+  const prefix = existing.trim().length > 0 ? `${existing.trimEnd()}\n\n` : '';
+  await fsp.writeFile(gitignorePath, `${prefix}${missing.join('\n')}\n`, 'utf8');
+}
+
+async function initialiseGit(projectPath: string, projectName: string, identity: { authorName: string; authorEmail: string }) {
+  await ensureProjectGitIgnore(projectPath);
+  await git.init({ fs, dir: projectPath, defaultBranch: AIDD_DEFAULT_BRANCH });
+  await git.setConfig({ fs, dir: projectPath, path: 'user.name', value: identity.authorName });
+  await git.setConfig({ fs, dir: projectPath, path: 'user.email', value: identity.authorEmail });
+
   const files = await collectFiles(projectPath);
   for (const filepath of files) await git.add({ fs, dir: projectPath, filepath });
+
   await git.commit({
     fs,
     dir: projectPath,
     message: 'Initial AIDD project',
-    author: { name: 'AIDD App', email: 'aidd@example.local' }
+    author: { name: identity.authorName, email: identity.authorEmail }
   });
+
   await writeJson(path.join(projectPath, '.aidd-app', 'git.json'), {
     initialized: true,
-    defaultBranch: 'main',
+    defaultBranch: AIDD_DEFAULT_BRANCH,
     projectName,
     createdAt: new Date().toISOString()
   });
@@ -2669,6 +2713,11 @@ ipcMain.handle('project:create', async (_event, input: CreateProjectInput) => {
   const projectPath = path.join(input.parentLocation, slugify(name));
   if (await exists(projectPath)) throw new Error(`Project folder already exists: ${projectPath}`);
 
+  const identity = await requireGitIdentity(app.getPath('userData'), {
+    authorName: input.authorName,
+    authorEmail: input.authorEmail
+  });
+
   await copyDir(templatePath(), projectPath);
   await replaceInTree(projectPath, {
     __PACKAGE_NAME__: packageName(name),
@@ -2697,7 +2746,7 @@ ipcMain.handle('project:create', async (_event, input: CreateProjectInput) => {
   });
 
 
-  if (input.initializeGit) await initialiseGit(projectPath, name);
+  await initialiseGit(projectPath, name, identity);
 
   const tracked: TrackedProject = {
     id: `${Date.now()}`,
@@ -2938,6 +2987,15 @@ ipcMain.handle('project:selectSourceDirectory', async (_event, projectPath: stri
 
 const gitCredentialStore = createKeytarCredentialStore();
 
+
+ipcMain.handle('gitIdentity:read', async () => {
+  return readGitIdentity(app.getPath('userData'));
+});
+
+ipcMain.handle('gitIdentity:save', async (_event, input: AiddSaveGitIdentityInput) => {
+  return saveGitIdentity(app.getPath('userData'), input);
+});
+
 ipcMain.handle('gitSync:readSettings', async (_event, projectPath: string) => {
   if (!projectPath) return null;
   const settings = await readGitSyncSettings(app.getPath('userData'), projectPath);
@@ -2954,9 +3012,7 @@ ipcMain.handle('gitSync:saveSettings', async (_event, input: AiddSaveGitSyncSett
   const saved = await saveGitSyncSettings(app.getPath('userData'), input.projectPath, {
     provider: input.provider,
     repoUrl: input.repoUrl || '',
-    branch: input.branch || 'main',
-    authorName: input.authorName || '',
-    authorEmail: input.authorEmail || ''
+    branch: AIDD_DEFAULT_BRANCH
   });
 
   if (input.token?.trim()) {
@@ -2964,12 +3020,12 @@ ipcMain.handle('gitSync:saveSettings', async (_event, input: AiddSaveGitSyncSett
   }
 
   const settings = await readGitSyncSettings(app.getPath('userData'), input.projectPath, await gitCredentialStore.hasToken(input.projectPath, saved.provider));
-  if (!settings) throw new Error('Git Sync settings could not be saved.');
+  if (!settings) throw new Error('Repository sync settings could not be saved.');
   return settings;
 });
 
 ipcMain.handle('gitSync:testConnection', async (_event, input: AiddGitSyncTestInput) => {
-  return testGitRemoteConnection(input, gitCredentialStore);
+  return testGitRemoteConnection({ ...input, branch: AIDD_DEFAULT_BRANCH }, gitCredentialStore);
 });
 
 ipcMain.handle('gitSync:clearToken', async (_event, projectPath: string) => {
@@ -2981,6 +3037,22 @@ ipcMain.handle('gitSync:clearToken', async (_event, projectPath: string) => {
     ...settings,
     hasToken: false
   };
+});
+
+ipcMain.handle('gitSync:getProjectConnectionStatus', async (_event, projectPath: string) => {
+  return getProjectConnectionStatus({
+    userDataPath: app.getPath('userData'),
+    projectPath,
+    credentialStore: gitCredentialStore
+  });
+});
+
+ipcMain.handle('gitSync:connectProject', async (_event, projectPath: string) => {
+  return connectProjectToRepository({
+    userDataPath: app.getPath('userData'),
+    projectPath,
+    credentialStore: gitCredentialStore
+  });
 });
 
 ipcMain.handle('fs:readText', async (_event, filePath: string) => fsp.readFile(filePath, 'utf8'));

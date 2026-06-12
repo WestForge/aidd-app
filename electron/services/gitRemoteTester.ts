@@ -1,6 +1,8 @@
 import git from 'isomorphic-git';
 import http from 'isomorphic-git/http/node';
+import type { GitCredentialStore } from './gitCredentialStore';
 import type { GitProvider } from './gitSyncTypes';
+import { mapGitError, validateHttpsRepoUrl } from './gitSyncValidation';
 
 export type GitRemoteConnectionCode =
   | 'OK'
@@ -28,27 +30,15 @@ export interface GitRemoteConnectionResult {
   message: string;
 }
 
-type TokenSource =
-  | string
-  | null
-  | undefined
-  | {
-      getToken?: (projectPath: string, provider: GitProvider) => Promise<string | null> | string | null;
-      readToken?: (projectPath: string, provider: GitProvider) => Promise<string | null> | string | null;
-      get?: (projectPath: string, provider: GitProvider) => Promise<string | null> | string | null;
-    };
+type TokenSource = string | null | undefined | GitCredentialStore;
+
+export type GitRemoteRefLister = (
+  input: GitRemoteConnectionInput,
+  token: string
+) => Promise<Array<string | { ref: string }>> | Array<string | { ref: string }>;
 
 function isGitProvider(value: unknown): value is GitProvider {
   return value === 'github' || value === 'gitlab';
-}
-
-function isHttpsRepositoryUrl(repoUrl: string): boolean {
-  try {
-    const parsed = new URL(repoUrl);
-    return parsed.protocol === 'https:' && Boolean(parsed.hostname) && parsed.pathname.length > 1 && !parsed.username && !parsed.password;
-  } catch {
-    return false;
-  }
 }
 
 function createAuth(provider: GitProvider, token: string) {
@@ -77,80 +67,8 @@ async function resolveToken(input: GitRemoteConnectionInput, tokenSource?: Token
     return null;
   }
 
-  if (typeof tokenSource.getToken === 'function') {
-    const token = await tokenSource.getToken(projectPath, input.provider);
-    if (typeof token === 'string' && token.trim().length > 0) {
-      return token.trim();
-    }
-  }
-
-  if (typeof tokenSource.readToken === 'function') {
-    const token = await tokenSource.readToken(projectPath, input.provider);
-    if (typeof token === 'string' && token.trim().length > 0) {
-      return token.trim();
-    }
-  }
-
-  if (typeof tokenSource.get === 'function') {
-    const token = await tokenSource.get(projectPath, input.provider);
-    if (typeof token === 'string' && token.trim().length > 0) {
-      return token.trim();
-    }
-  }
-
-  return null;
-}
-
-function safeErrorCode(error: unknown): GitRemoteConnectionCode {
-  const err = error as {
-    code?: string;
-    name?: string;
-    message?: string;
-    statusCode?: number;
-    data?: { statusCode?: number };
-  };
-
-  const statusCode = err.statusCode ?? err.data?.statusCode;
-
-  if (statusCode === 401 || statusCode === 403) {
-    return 'AUTH_FAILED';
-  }
-
-  if (
-    err.code === 'ENOTFOUND' ||
-    err.code === 'ECONNREFUSED' ||
-    err.code === 'ECONNRESET' ||
-    err.code === 'ETIMEDOUT'
-  ) {
-    return 'NETWORK_ERROR';
-  }
-
-  const message = (err.message || '').toLowerCase();
-
-  if (
-    message.includes('authentication') ||
-    message.includes('authorization') ||
-    message.includes('unauthorized') ||
-    message.includes('forbidden') ||
-    message.includes('401') ||
-    message.includes('403')
-  ) {
-    return 'AUTH_FAILED';
-  }
-
-  if (
-    message.includes('network') ||
-    message.includes('timeout') ||
-    message.includes('certificate') ||
-    message.includes('getaddrinfo') ||
-    message.includes('enotfound') ||
-    message.includes('econnrefused') ||
-    message.includes('econnreset')
-  ) {
-    return 'NETWORK_ERROR';
-  }
-
-  return 'UNKNOWN_ERROR';
+  const token = await tokenSource.getToken(projectPath, input.provider);
+  return typeof token === 'string' && token.trim().length > 0 ? token.trim() : null;
 }
 
 function safeMessage(code: GitRemoteConnectionCode, branch?: string): string {
@@ -162,7 +80,7 @@ function safeMessage(code: GitRemoteConnectionCode, branch?: string): string {
     case 'INVALID_REPO_URL':
       return 'Enter a valid HTTPS repository URL.';
     case 'MISSING_TOKEN':
-      return 'Enter an access token before testing the connection.';
+      return 'Enter or save an access token before testing the connection.';
     case 'AUTH_FAILED':
       return 'The token was rejected. Check repository access and token permissions.';
     case 'EMPTY_REPOSITORY':
@@ -176,6 +94,25 @@ function safeMessage(code: GitRemoteConnectionCode, branch?: string): string {
   }
 }
 
+function normaliseRef(ref: string | { ref: string }) {
+  return typeof ref === 'string' ? ref : ref.ref;
+}
+
+async function listRemoteRefs(input: GitRemoteConnectionInput, token: string, refLister?: GitRemoteRefLister) {
+  if (refLister) {
+    return (await refLister(input, token)).map(normaliseRef);
+  }
+
+  const refs = await git.listServerRefs({
+    http,
+    url: input.repoUrl.trim(),
+    prefix: 'refs/heads/',
+    onAuth: createAuth(input.provider, token),
+  });
+
+  return refs.map((ref) => ref.ref);
+}
+
 /**
  * Non-destructive remote connection test.
  *
@@ -184,7 +121,8 @@ function safeMessage(code: GitRemoteConnectionCode, branch?: string): string {
  */
 export async function testGitRemoteConnection(
   input: GitRemoteConnectionInput,
-  tokenSource?: TokenSource
+  tokenSource?: TokenSource,
+  refLister?: GitRemoteRefLister
 ): Promise<GitRemoteConnectionResult> {
   const provider = input.provider;
   const repoUrl = input.repoUrl.trim();
@@ -198,7 +136,7 @@ export async function testGitRemoteConnection(
     };
   }
 
-  if (!isHttpsRepositoryUrl(repoUrl)) {
+  if (!validateHttpsRepoUrl(repoUrl, provider)) {
     return {
       ok: false,
       code: 'INVALID_REPO_URL',
@@ -206,7 +144,7 @@ export async function testGitRemoteConnection(
     };
   }
 
-  const token = await resolveToken(input, tokenSource);
+  const token = await resolveToken({ ...input, repoUrl, branch }, tokenSource);
 
   if (!token) {
     return {
@@ -217,12 +155,7 @@ export async function testGitRemoteConnection(
   }
 
   try {
-    const refs = await git.listServerRefs({
-      http,
-      url: repoUrl,
-      prefix: 'refs/heads/',
-      onAuth: createAuth(provider, token),
-    });
+    const refs = await listRemoteRefs({ ...input, repoUrl, branch }, token, refLister);
 
     if (refs.length === 0) {
       return {
@@ -233,7 +166,7 @@ export async function testGitRemoteConnection(
     }
 
     const branchRef = `refs/heads/${branch}`;
-    const branchFound = refs.some((ref) => ref.ref === branchRef || ref.ref === branch);
+    const branchFound = refs.some((ref) => ref === branchRef || ref === branch);
 
     if (!branchFound) {
       return {
@@ -249,12 +182,12 @@ export async function testGitRemoteConnection(
       message: safeMessage('OK', branch),
     };
   } catch (error) {
-    const code = safeErrorCode(error);
+    const mapped = mapGitError(error);
 
     return {
       ok: false,
-      code,
-      message: safeMessage(code, branch),
+      code: mapped.code,
+      message: mapped.message,
     };
   }
 }

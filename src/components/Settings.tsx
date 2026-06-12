@@ -7,30 +7,35 @@ import { Select } from './ui/select';
 import { Label } from './ui/label';
 
 type ThemeMode = 'system' | 'light' | 'dark';
+type GitSyncMessageTone = 'success' | 'warning' | 'error' | null;
 
 type GitSyncFormState = {
   provider: AiddGitProvider;
   repoUrl: string;
-  branch: string;
-  authorName: string;
-  authorEmail: string;
   token: string;
   hasToken: boolean;
 };
 
-type GitSyncMessageTone = 'success' | 'warning' | 'error' | null;
+type IdentityFormState = {
+  authorName: string;
+  authorEmail: string;
+  source: AiddGitIdentity['source'];
+};
 
 const emptyGitSyncForm: GitSyncFormState = {
   provider: 'github',
   repoUrl: '',
-  branch: 'main',
-  authorName: '',
-  authorEmail: '',
   token: '',
   hasToken: false
 };
 
-function gitSyncToneForResult(result: AiddGitSyncTestResult): Exclude<GitSyncMessageTone, null> {
+const emptyIdentityForm: IdentityFormState = {
+  authorName: '',
+  authorEmail: '',
+  source: 'none'
+};
+
+function toneForConnectionResult(result: AiddGitSyncTestResult): Exclude<GitSyncMessageTone, null> {
   if (result.code === 'EMPTY_REPOSITORY' || result.code === 'BRANCH_NOT_FOUND') {
     return 'warning';
   }
@@ -39,10 +44,40 @@ function gitSyncToneForResult(result: AiddGitSyncTestResult): Exclude<GitSyncMes
 }
 
 export function Settings({ activeProject, themeMode, onThemeModeChange }: { activeProject?: AiddTrackedProject | null; themeMode: ThemeMode; onThemeModeChange: (mode: ThemeMode) => void }) {
+  const [identity, setIdentity] = useState<IdentityFormState>(emptyIdentityForm);
+  const [identityBusy, setIdentityBusy] = useState(false);
+  const [identityMessage, setIdentityMessage] = useState('');
+  const [identityOk, setIdentityOk] = useState<boolean | null>(null);
+
   const [gitSync, setGitSync] = useState<GitSyncFormState>(emptyGitSyncForm);
   const [gitSyncBusy, setGitSyncBusy] = useState(false);
   const [gitSyncMessage, setGitSyncMessage] = useState<string>('');
   const [gitSyncTone, setGitSyncTone] = useState<GitSyncMessageTone>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadIdentity() {
+      const loaded = await window.aidd.gitIdentity.read();
+      if (cancelled) return;
+
+      if (loaded) {
+        setIdentity(loaded);
+      } else {
+        setIdentity(emptyIdentityForm);
+      }
+    }
+
+    loadIdentity().catch((error) => {
+      if (cancelled) return;
+      setIdentityMessage(error instanceof Error ? error.message : 'Could not load AIDD identity.');
+      setIdentityOk(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,14 +100,19 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
         return;
       }
 
-      setGitSync({ ...settings, token: '' });
+      setGitSync({
+        provider: settings.provider,
+        repoUrl: settings.repoUrl,
+        token: '',
+        hasToken: settings.hasToken
+      });
       setGitSyncMessage('');
       setGitSyncTone(null);
     }
 
     loadGitSyncSettings().catch((error) => {
       if (cancelled) return;
-      setGitSyncMessage(error instanceof Error ? error.message : 'Could not load Git Sync settings.');
+      setGitSyncMessage(error instanceof Error ? error.message : 'Could not load repository sync settings.');
       setGitSyncTone('error');
     });
 
@@ -80,6 +120,28 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
       cancelled = true;
     };
   }, [activeProject?.path]);
+
+  async function saveIdentity() {
+    setIdentityBusy(true);
+    setIdentityMessage('');
+    setIdentityOk(null);
+
+    try {
+      const saved = await window.aidd.gitIdentity.save({
+        authorName: identity.authorName,
+        authorEmail: identity.authorEmail
+      });
+
+      setIdentity(saved);
+      setIdentityMessage('AIDD author identity saved.');
+      setIdentityOk(true);
+    } catch (error) {
+      setIdentityMessage(error instanceof Error ? error.message : 'Could not save AIDD author identity.');
+      setIdentityOk(false);
+    } finally {
+      setIdentityBusy(false);
+    }
+  }
 
   async function saveGitSyncSettings() {
     if (!activeProject?.path) return;
@@ -92,17 +154,19 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
         projectPath: activeProject.path,
         provider: gitSync.provider,
         repoUrl: gitSync.repoUrl,
-        branch: gitSync.branch,
-        authorName: gitSync.authorName,
-        authorEmail: gitSync.authorEmail,
         token: gitSync.token || undefined
       });
 
-      setGitSync({ ...saved, token: '' });
-      setGitSyncMessage('Git Sync settings saved.');
+      setGitSync({
+        provider: saved.provider,
+        repoUrl: saved.repoUrl,
+        token: '',
+        hasToken: saved.hasToken
+      });
+      setGitSyncMessage(saved.repoUrl ? 'Repository sync settings saved.' : 'Remote repository cleared. Local Git remains enabled.');
       setGitSyncTone('success');
     } catch (error) {
-      setGitSyncMessage(error instanceof Error ? error.message : 'Could not save Git Sync settings.');
+      setGitSyncMessage(error instanceof Error ? error.message : 'Could not save repository sync settings.');
       setGitSyncTone('error');
     } finally {
       setGitSyncBusy(false);
@@ -111,6 +175,13 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
 
   async function testGitSyncConnection() {
     if (!activeProject?.path) return;
+
+    if (!gitSync.repoUrl.trim()) {
+      setGitSyncMessage('Enter a repository URL before testing the remote connection.');
+      setGitSyncTone('warning');
+      return;
+    }
+
     setGitSyncBusy(true);
     setGitSyncMessage('');
     setGitSyncTone(null);
@@ -120,14 +191,13 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
         projectPath: activeProject.path,
         provider: gitSync.provider,
         repoUrl: gitSync.repoUrl,
-        branch: gitSync.branch,
         token: gitSync.token || undefined
       });
 
       setGitSyncMessage(result.message);
-      setGitSyncTone(gitSyncToneForResult(result));
+      setGitSyncTone(toneForConnectionResult(result));
     } catch (error) {
-      setGitSyncMessage(error instanceof Error ? error.message : 'Could not test Git Sync connection.');
+      setGitSyncMessage(error instanceof Error ? error.message : 'Could not test repository connection.');
       setGitSyncTone('error');
     } finally {
       setGitSyncBusy(false);
@@ -142,7 +212,7 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
 
     try {
       const settings = await window.aidd.gitSync.clearToken(activeProject.path);
-      setGitSync(settings ? { ...settings, token: '' } : { ...gitSync, token: '', hasToken: false });
+      setGitSync(settings ? { provider: settings.provider, repoUrl: settings.repoUrl, token: '', hasToken: false } : { ...gitSync, token: '', hasToken: false });
       setGitSyncMessage('Saved token cleared.');
       setGitSyncTone('success');
     } catch (error) {
@@ -154,6 +224,7 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
   }
 
   const gitSyncDisabled = !activeProject?.path || gitSyncBusy;
+  const identityMessageClass = identityOk === false ? 'rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive' : 'rounded-md border px-3 py-2 text-sm';
   const gitSyncMessageClass =
     gitSyncTone === 'error'
       ? 'rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive'
@@ -198,16 +269,61 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
 
           <Card>
             <CardHeader>
+              <CardTitle>AIDD author identity</CardTitle>
+              <CardDescription>
+                Used for local Git history across AIDD projects. AIDD writes this into each project locally instead of changing your machine-wide Git config.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label htmlFor="identity-author-name">Author name</Label>
+                  <Input
+                    id="identity-author-name"
+                    value={identity.authorName}
+                    disabled={identityBusy}
+                    onChange={(event) => setIdentity((current) => ({ ...current, authorName: event.target.value }))}
+                    placeholder="Francis West"
+                  />
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="identity-author-email">Author email</Label>
+                  <Input
+                    id="identity-author-email"
+                    value={identity.authorEmail}
+                    disabled={identityBusy}
+                    onChange={(event) => setIdentity((current) => ({ ...current, authorEmail: event.target.value }))}
+                    placeholder="francis@example.com"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-muted-foreground">
+                  {identity.source === 'git-global' ? 'Prefilled from your global Git config.' : identity.source === 'saved' ? 'Saved in AIDD app settings.' : 'Set this before creating or repairing project Git setup.'}
+                </p>
+                <Button type="button" disabled={identityBusy || !identity.authorName.trim() || !identity.authorEmail.trim()} onClick={saveIdentity}>
+                  {identityBusy ? 'Saving...' : 'Save identity'}
+                </Button>
+              </div>
+
+              {identityMessage ? <div className={identityMessageClass}>{identityMessage}</div> : null}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <CardTitle>Git Sync</CardTitle>
-                  <CardDescription>Connect this project to GitHub or GitLab without exposing Git workflow details.</CardDescription>
+                  <CardTitle>Repository sync</CardTitle>
+                  <CardDescription>Optional remote repository settings. Local Git works without a remote.</CardDescription>
                 </div>
                 {gitSync.hasToken ? <Badge variant="secondary">Token saved</Badge> : <Badge variant="outline">No token</Badge>}
               </div>
             </CardHeader>
             <CardContent className="grid gap-4">
-              {!activeProject?.path ? <p className="text-sm text-muted-foreground">Select an active project before configuring Git Sync.</p> : null}
+              {!activeProject?.path ? <p className="text-sm text-muted-foreground">Select an active project before configuring repository sync.</p> : null}
 
               <div className="grid gap-2 md:grid-cols-2">
                 <div className="grid gap-2">
@@ -224,14 +340,8 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
                 </div>
 
                 <div className="grid gap-2">
-                  <Label htmlFor="git-branch">Default branch</Label>
-                  <Input
-                    id="git-branch"
-                    value={gitSync.branch}
-                    disabled={gitSyncDisabled}
-                    onChange={(event) => setGitSync((current) => ({ ...current, branch: event.target.value }))}
-                    placeholder="main"
-                  />
+                  <Label>Branch</Label>
+                  <div className="rounded-md border px-3 py-2 text-sm text-muted-foreground">main — managed by AIDD</div>
                 </div>
               </div>
 
@@ -242,32 +352,9 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
                   value={gitSync.repoUrl}
                   disabled={gitSyncDisabled}
                   onChange={(event) => setGitSync((current) => ({ ...current, repoUrl: event.target.value }))}
-                  placeholder="https://github.com/org/repo.git"
+                  placeholder="Optional, for example https://gitlab.example.com/group/repo.git"
                 />
-              </div>
-
-              <div className="grid gap-2 md:grid-cols-2">
-                <div className="grid gap-2">
-                  <Label htmlFor="git-author-name">Author name</Label>
-                  <Input
-                    id="git-author-name"
-                    value={gitSync.authorName}
-                    disabled={gitSyncDisabled}
-                    onChange={(event) => setGitSync((current) => ({ ...current, authorName: event.target.value }))}
-                    placeholder="Francis"
-                  />
-                </div>
-
-                <div className="grid gap-2">
-                  <Label htmlFor="git-author-email">Author email</Label>
-                  <Input
-                    id="git-author-email"
-                    value={gitSync.authorEmail}
-                    disabled={gitSyncDisabled}
-                    onChange={(event) => setGitSync((current) => ({ ...current, authorEmail: event.target.value }))}
-                    placeholder="francis@example.com"
-                  />
-                </div>
+                <p className="text-xs text-muted-foreground">Leave blank to use local Git only. HTTPS URLs are supported in this phase.</p>
               </div>
 
               <div className="grid gap-2">
@@ -284,15 +371,13 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
                 <p className="text-xs text-muted-foreground">The token is stored using OS credential storage and is never written to the project workspace.</p>
               </div>
 
-              {gitSyncMessage ? (
-                <div className={gitSyncMessageClass}>
-                  {gitSyncMessage}
-                </div>
-              ) : null}
+              {gitSyncMessage ? <div className={gitSyncMessageClass}>{gitSyncMessage}</div> : null}
 
               <div className="flex flex-wrap gap-2">
-                <Button type="button" disabled={gitSyncDisabled} onClick={testGitSyncConnection}>Test connection</Button>
-                <Button type="button" variant="secondary" disabled={gitSyncDisabled} onClick={saveGitSyncSettings}>Save settings</Button>
+                <Button type="button" disabled={gitSyncDisabled} onClick={saveGitSyncSettings}>
+                  {gitSyncBusy ? 'Working...' : 'Save repository settings'}
+                </Button>
+                <Button type="button" variant="outline" disabled={gitSyncDisabled || !gitSync.repoUrl.trim()} onClick={testGitSyncConnection}>Test connection</Button>
                 <Button type="button" variant="outline" disabled={gitSyncDisabled || !gitSync.hasToken} onClick={clearGitSyncToken}>Clear token</Button>
               </div>
             </CardContent>

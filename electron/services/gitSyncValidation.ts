@@ -30,6 +30,10 @@ export function normaliseRepoUrl(repoUrl: string) {
   return repoUrl.trim();
 }
 
+export function normaliseRemoteUrlForCompare(repoUrl: string) {
+  return normaliseRepoUrl(repoUrl).replace(/\/+$/, '');
+}
+
 export function sanitiseGitErrorMessage(message: unknown) {
   const text = typeof message === 'string' ? message : 'The Git operation failed.';
   return text
@@ -41,16 +45,17 @@ export function sanitiseGitErrorMessage(message: unknown) {
 }
 
 export function mapGitError(error: unknown): { code: 'AUTH_FAILED' | 'NETWORK_ERROR' | 'UNKNOWN_ERROR'; message: string } {
-  const err = error as { code?: string; statusCode?: number; message?: string };
-  const raw = `${err?.code || ''} ${err?.statusCode || ''} ${err?.message || ''}`.toLowerCase();
+  const err = error as { code?: string; statusCode?: number; message?: string; data?: { statusCode?: number } };
+  const statusCode = err?.statusCode ?? err?.data?.statusCode;
+  const raw = `${err?.code || ''} ${statusCode || ''} ${err?.message || ''}`.toLowerCase();
 
-  if (err?.statusCode === 401 || err?.statusCode === 403 || raw.includes('auth') || raw.includes('unauthorized') || raw.includes('forbidden')) {
-    return { code: 'AUTH_FAILED', message: 'The token was rejected. Check repo access and token permissions.' };
+  if (statusCode === 401 || statusCode === 403 || raw.includes('auth') || raw.includes('unauthorized') || raw.includes('forbidden')) {
+    return { code: 'AUTH_FAILED', message: 'The token was rejected. Check repository access and token permissions.' };
   }
 
-  if (raw.includes('network') || raw.includes('enotfound') || raw.includes('econn') || raw.includes('timeout')) {
+  if (raw.includes('network') || raw.includes('enotfound') || raw.includes('econn') || raw.includes('timeout') || raw.includes('certificate')) {
     return { code: 'NETWORK_ERROR', message: 'The repository could not be reached. Check your network connection and repository URL.' };
   }
 
-  return { code: 'UNKNOWN_ERROR', message: sanitiseGitErrorMessage(err?.message || 'The Git connection test failed.') };
+  return { code: 'UNKNOWN_ERROR', message: sanitiseGitErrorMessage(err?.message || 'The Git operation failed.') };
 }

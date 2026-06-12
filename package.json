@@ -13,8 +13,10 @@
     "lint": "echo \"No linter configured yet.\"",
     "package": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
-    "test": "npm run test:git-sync",
-    "test:git-sync": "tsx tests/gitSync.unit.test.ts"
+    "test": "npm run test:git-sync && npm run test:git-project-connection",
+    "test:git-sync": "tsx tests/gitSync.unit.test.ts",
+    "test:git-project-connection": "tsx tests/gitProjectConnector.unit.test.ts",
+    "test:git-project-create-local": "tsx tests/gitProjectConnector.create-local-repo.test.ts"
   },
   "dependencies": {
     "@isomorphic-git/lightning-fs": "^4.6.0",
