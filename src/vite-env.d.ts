@@ -231,6 +231,16 @@ interface AiddProjectRepairReport {
   validation: AiddProjectValidationReport;
 }
 
+interface AiddProjectTemplateUpgradeReport {
+  generatedAt: string;
+  changed: boolean;
+  preUpgradeCommit?: string;
+  upgradeCommit?: string;
+  changes: string[];
+  warnings: string[];
+  validation: AiddProjectValidationReport;
+}
+
 
 interface AiddHomeWorkDeliveryItem {
   id: string;
@@ -330,6 +340,15 @@ interface AiddDefineStandardsInput {
   status: AiddSetupStatus;
 }
 
+interface AiddComponentSection {
+  key: string;
+  fileName: string;
+  title: string;
+  body: string;
+  status?: AiddSetupStatus | string;
+  prompt?: string;
+}
+
 interface AiddCreateComponentInput {
   projectPath: string;
   title: string;
@@ -337,6 +356,7 @@ interface AiddCreateComponentInput {
   status?: AiddSetupStatus;
   sourceProjects?: string[];
   capabilities?: string[];
+  sections?: AiddComponentSection[];
 }
 
 interface AiddComponentDetail {
@@ -345,6 +365,7 @@ interface AiddComponentDetail {
   status: AiddSetupStatus | string;
   sourceProjects: string[];
   capabilities: string[];
+  sections: AiddComponentSection[];
   description: string;
   filePath: string;
 }
@@ -362,6 +383,7 @@ interface AiddUpdateComponentInput {
   status?: AiddSetupStatus;
   sourceProjects?: string[];
   capabilities?: string[];
+  sections?: AiddComponentSection[];
 }
 
 
@@ -540,6 +562,7 @@ interface Window {
     readHomeWork: (projectPath: string) => Promise<AiddHomeWork>;
     validateProject: (projectPath: string) => Promise<AiddProjectValidationReport>;
     repairProject: (projectPath: string) => Promise<AiddProjectRepairReport>;
+    upgradeProjectTemplates: (projectPath: string) => Promise<AiddProjectTemplateUpgradeReport>;
     readProjectSetup: (projectPath: string) => Promise<AiddProjectSetupState>;
     prepareFoundationReviewPackage: (projectPath: string) => Promise<{ filePath: string; fileName: string }>;
     prepareFoundationDragFile: (input: AiddPrepareFoundationDragFileInput) => Promise<string>;

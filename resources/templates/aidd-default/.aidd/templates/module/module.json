@@ -1,9 +1,0 @@
-{
-  "slug": "__MODULE_SLUG__",
-  "title": "__MODULE_TITLE__",
-  "status": "template",
-  "createdAt": null,
-  "owns": [],
-  "dependsOn": [],
-  "exposes": []
-}

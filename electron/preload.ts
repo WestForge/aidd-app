@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('aidd', {
   readHomeWork: (projectPath: string) => ipcRenderer.invoke('project:homeWork', projectPath),
   validateProject: (projectPath: string) => ipcRenderer.invoke('project:validate', projectPath),
   repairProject: (projectPath: string) => ipcRenderer.invoke('project:repair', projectPath),
+  upgradeProjectTemplates: (projectPath: string) => ipcRenderer.invoke('project:upgradeTemplates', projectPath),
   readProjectSetup: (projectPath: string) => ipcRenderer.invoke('project:setup', projectPath),
   prepareFoundationReviewPackage: (projectPath: string) => ipcRenderer.invoke('project:prepareFoundationReviewPackage', projectPath),
   prepareFoundationDragFile: (input: unknown) => ipcRenderer.invoke('drag:prepareFoundationFile', input),

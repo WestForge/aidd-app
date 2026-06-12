@@ -1,9 +1,31 @@
 {
   "slug": "__COMPONENT_SLUG__",
   "title": "__COMPONENT_TITLE__",
+  "kind": "component",
   "status": "template",
   "createdAt": null,
+  "deprecatedAt": null,
+  "archivedAt": null,
+  "reason": null,
+  "sourceProjects": [],
   "owns": [],
   "dependsOn": [],
-  "exposes": []
+  "exposes": [],
+  "dataOwned": [],
+  "capabilitiesSupported": [],
+  "supportsCapabilities": [],
+  "template": {
+    "type": "component",
+    "sectionFiles": [
+      "01-purpose.md",
+      "02-boundaries.md",
+      "03-interfaces.md",
+      "04-data-and-state.md",
+      "05-dependencies.md",
+      "06-architecture.md",
+      "07-standards.md",
+      "08-risks.md"
+    ],
+    "templateVersion": "0.8.0"
+  }
 }

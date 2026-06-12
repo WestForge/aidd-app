@@ -5,7 +5,7 @@ aidd:
   title: Audience and Users
   status: not-started
   required: true
-  templateVersion: 0.6.0
+  templateVersion: 0.8.0
   purpose: Identify the people who use, build, review, or operate this product.
 ---
 

@@ -5,9 +5,25 @@ aidd:
   title: Risks
   status: not-started
   required: true
-  templateVersion: 0.6.0
+  templateVersion: 0.8.0
 ---
 
 # __COMPONENT_TITLE__ Risks
 
-TODO
+## Risks
+
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+|  |  |  |
+
+## Unknowns
+
+- TODO
+
+## Boundary / Coupling Risks
+
+- TODO
+
+## Operational Risks
+
+- TODO

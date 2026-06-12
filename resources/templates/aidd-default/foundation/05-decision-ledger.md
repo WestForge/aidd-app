@@ -5,7 +5,7 @@ aidd:
   title: Decision Ledger
   status: not-started
   required: true
-  templateVersion: 0.6.0
+  templateVersion: 0.8.0
   purpose: Track accepted, superseded, and pending decisions for the project.
 ---
 

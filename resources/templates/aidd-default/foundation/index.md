@@ -4,7 +4,7 @@ aidd:
   id: project-foundation
   title: Project Foundation
   status: not-started
-  templateVersion: 0.6.0
+  templateVersion: 0.8.0
 ---
 
 # Project Foundation

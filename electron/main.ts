@@ -140,6 +140,16 @@ interface ProjectValidationReport {
   nextActions: string[];
 }
 
+interface ProjectTemplateUpgradeReport {
+  generatedAt: string;
+  changed: boolean;
+  preUpgradeCommit?: string;
+  upgradeCommit?: string;
+  changes: string[];
+  warnings: string[];
+  validation: ProjectValidationReport;
+}
+
 
 type SetupStepStatus = 'not-started' | 'draft' | 'in-review' | 'active' | 'deprecated' | 'complete' | 'skipped';
 
@@ -216,12 +226,22 @@ interface PrepareMarkdownDragFileInput {
   metadata?: Record<string, unknown>;
 }
 
+interface ComponentSectionInput {
+  key: string;
+  fileName: string;
+  title: string;
+  body: string;
+  status?: SetupStepStatus;
+}
+
 interface CreateComponentInput {
   projectPath: string;
   title: string;
   description?: string;
   status?: SetupStepStatus | 'active' | 'deprecated';
   sourceProjects?: string[];
+  capabilities?: string[];
+  sections?: ComponentSectionInput[];
 }
 
 interface ReadComponentInput {
@@ -236,6 +256,8 @@ interface UpdateComponentInput {
   description?: string;
   status?: SetupStepStatus | 'active' | 'deprecated';
   sourceProjects?: string[];
+  capabilities?: string[];
+  sections?: ComponentSectionInput[];
 }
 
 interface CapabilitySectionInput {
@@ -883,8 +905,361 @@ function bodyLooksUseful(body: string) {
   return cleaned.length >= 40;
 }
 
+function normaliseRelativePath(value: string) {
+  return value.split('\\').join('/');
+}
+
+function isSkippedHealthPath(relativePath: string) {
+  const normal = normaliseRelativePath(relativePath);
+  return (
+    normal.startsWith('.git/') ||
+    normal.startsWith('node_modules/') ||
+    normal.startsWith('.aidd-app/') ||
+    normal.startsWith('.aidd/drag-files/') ||
+    normal.startsWith('.aidd/template-archive/') ||
+    normal.startsWith('_archive/') ||
+    normal.startsWith('dist/') ||
+    normal.startsWith('build/') ||
+    normal.startsWith('out/')
+  );
+}
+
+async function collectRelativeFiles(root: string, current = root): Promise<string[]> {
+  if (!(await exists(current))) return [];
+  const out: string[] = [];
+  for (const entry of await fsp.readdir(current, { withFileTypes: true })) {
+    const full = path.join(current, entry.name);
+    const relative = normaliseRelativePath(path.relative(root, full));
+    if (entry.isDirectory()) {
+      if (isSkippedHealthPath(relative + '/')) continue;
+      out.push(...await collectRelativeFiles(root, full));
+      continue;
+    }
+    if (!isSkippedHealthPath(relative)) out.push(relative);
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
+async function collectProjectMarkdownFiles(projectPath: string) {
+  return (await collectRelativeFiles(projectPath)).filter((relativePath) => relativePath.endsWith('.md'));
+}
+
+async function validateTemplateFiles(projectPath: string, section: ProjectValidationSection) {
+  const expectedRoot = path.join(templatePath(), '.aidd', 'templates');
+  const actualRoot = path.join(projectPath, '.aidd', 'templates');
+
+  if (!(await exists(expectedRoot))) {
+    pushValidation(section, {
+      id: 'app-template-root-missing',
+      title: 'Bundled template files could not be found',
+      message: `The app template folder was not found at ${expectedRoot}`,
+      severity: 'error',
+      action: 'Reinstall or rebuild the app template resources.'
+    });
+    return;
+  }
+
+  if (!(await exists(actualRoot))) {
+    pushValidation(section, {
+      id: 'project-template-root-missing',
+      title: 'Project template folder missing',
+      message: 'The project does not contain .aidd/templates.',
+      severity: 'error',
+      path: '.aidd/templates',
+      action: 'Run the template upgrade to restore missing template files.'
+    });
+    return;
+  }
+
+  const expectedFiles = await collectRelativeFiles(expectedRoot);
+  const actualFiles = await collectRelativeFiles(actualRoot);
+  const expected = new Set(expectedFiles);
+  const actual = new Set(actualFiles);
+  let issueCount = 0;
+
+  for (const relativePath of expectedFiles) {
+    if (actual.has(relativePath)) continue;
+    issueCount++;
+    pushValidation(section, {
+      id: `template-missing-${relativePath}`,
+      title: 'Template file missing',
+      message: `${relativePath} exists in the app template but is missing from this project.`,
+      severity: 'error',
+      path: `.aidd/templates/${relativePath}`,
+      action: 'Run the template upgrade to restore missing template files.'
+    });
+  }
+
+  for (const relativePath of actualFiles) {
+    if (expected.has(relativePath)) continue;
+    issueCount++;
+    pushValidation(section, {
+      id: `template-extra-${relativePath}`,
+      title: 'Unexpected template file',
+      message: `${relativePath} is not part of the current app template.`,
+      severity: 'warning',
+      path: `.aidd/templates/${relativePath}`,
+      action: 'Run the template upgrade to archive template files that should not be there.'
+    });
+  }
+
+  for (const relativePath of actualFiles.filter((item) => item.endsWith('.md') && expected.has(item))) {
+    const raw = await fsp.readFile(path.join(actualRoot, relativePath), 'utf8');
+    const parsed = matter(raw);
+    const aidd = (parsed.data as any)?.aidd;
+    const version = aidd?.templateVersion;
+    if (!aidd || version === TEMPLATE_VERSION) continue;
+    issueCount++;
+    pushValidation(section, {
+      id: `template-version-${relativePath}`,
+      title: 'Template front matter is out of sync',
+      message: `${relativePath} uses templateVersion ${version || 'missing'}; app expects ${TEMPLATE_VERSION}.`,
+      severity: 'warning',
+      path: `.aidd/templates/${relativePath}`,
+      action: 'Run the template upgrade to update front matter versions.'
+    });
+  }
+
+  if (issueCount === 0) {
+    pushValidation(section, {
+      id: 'template-files-current',
+      title: 'Template files match the app template',
+      message: `.aidd/templates has all expected files, no unexpected files, and current front matter versions (${TEMPLATE_VERSION}).`,
+      severity: 'success',
+      path: '.aidd/templates'
+    });
+  }
+}
+
+async function validateProjectFrontmatterVersions(projectPath: string, section: ProjectValidationSection) {
+  const markdownFiles = await collectProjectMarkdownFiles(projectPath);
+  let issueCount = 0;
+
+  for (const relativePath of markdownFiles) {
+    const raw = await fsp.readFile(path.join(projectPath, relativePath), 'utf8');
+    const parsed = matter(raw);
+    const aidd = (parsed.data as any)?.aidd;
+    if (!aidd) continue;
+    const version = aidd.templateVersion;
+    if (version === TEMPLATE_VERSION) continue;
+    issueCount++;
+    pushValidation(section, {
+      id: `frontmatter-version-${relativePath}`,
+      title: 'AIDD front matter version is out of sync',
+      message: `${relativePath} uses templateVersion ${version || 'missing'}; app expects ${TEMPLATE_VERSION}.`,
+      severity: 'warning',
+      path: relativePath,
+      action: 'Run the template upgrade to update front matter versions.'
+    });
+  }
+
+  if (issueCount === 0) {
+    pushValidation(section, {
+      id: 'frontmatter-current',
+      title: 'Project document front matter is current',
+      message: `All AIDD Markdown files with front matter use templateVersion ${TEMPLATE_VERSION}.`,
+      severity: 'success'
+    });
+  }
+}
+
+function isGitMatrixRowChanged(row: Awaited<ReturnType<typeof git.statusMatrix>>[number]) {
+  const [, head, workdir, stage] = row;
+  return head !== workdir || workdir !== stage;
+}
+
+function shouldSkipGitCheckpointPath(filePath: string) {
+  const normal = normaliseRelativePath(filePath);
+  const fileName = path.posix.basename(normal);
+  if (fileName === '.DS_Store' || fileName === 'Thumbs.db') return true;
+  return (
+    normal.startsWith('.git/') ||
+    normal.startsWith('node_modules/') ||
+    normal.startsWith('.aidd/drag-files/') ||
+    normal.startsWith('.aidd-app/') ||
+    normal.startsWith('dist/') ||
+    normal.startsWith('build/') ||
+    normal.startsWith('out/')
+  );
+}
+
+async function listProjectGitChanges(projectPath: string) {
+  if (!(await exists(path.join(projectPath, '.git')))) return [];
+  const matrix = await git.statusMatrix({ fs, dir: projectPath });
+  return matrix.filter((row) => isGitMatrixRowChanged(row)).filter(([filePath]) => !shouldSkipGitCheckpointPath(filePath));
+}
+
+async function validateGitWorkingTree(projectPath: string, section: ProjectValidationSection) {
+  if (!(await exists(path.join(projectPath, '.git')))) return;
+  const changed = await listProjectGitChanges(projectPath);
+  if (changed.length === 0) {
+    pushValidation(section, {
+      id: 'git-working-tree-clean',
+      title: 'Git working tree is clean',
+      message: 'No uncommitted project changes were found.',
+      severity: 'success',
+      path: '.git'
+    });
+    return;
+  }
+
+  pushValidation(section, {
+    id: 'git-working-tree-dirty',
+    title: 'Uncommitted project changes found',
+    message: `${changed.length} file${changed.length === 1 ? '' : 's'} have outstanding changes. The template upgrade will commit these first before changing front matter.`,
+    severity: 'warning',
+    path: '.git',
+    action: 'Review or commit outstanding work, or let the template upgrade create a checkpoint commit first.'
+  });
+}
+
+async function getProjectGitAuthor(projectPath: string) {
+  const saved = await readGitIdentity(app.getPath('userData'));
+  if (saved) return { name: saved.authorName, email: saved.authorEmail };
+
+  const name = await git.getConfig({ fs, dir: projectPath, path: 'user.name' });
+  const email = await git.getConfig({ fs, dir: projectPath, path: 'user.email' });
+  if (typeof name === 'string' && typeof email === 'string' && name.trim() && email.trim()) {
+    return { name: name.trim(), email: email.trim() };
+  }
+
+  throw new Error('AIDD author identity is required before the template upgrade can create Git commits. Set it in Settings first.');
+}
+
+async function commitProjectChanges(projectPath: string, message: string, author: { name: string; email: string }) {
+  const changed = await listProjectGitChanges(projectPath);
+  if (changed.length === 0) return { created: false, changedFiles: [] as string[], oid: undefined as string | undefined };
+
+  for (const [filePath, _head, workdir] of changed) {
+    if (workdir === 0) await git.remove({ fs, dir: projectPath, filepath: filePath });
+    else await git.add({ fs, dir: projectPath, filepath: filePath });
+  }
+
+  const oid = await git.commit({ fs, dir: projectPath, message, author });
+  return { created: true, changedFiles: changed.map(([filePath]) => filePath), oid };
+}
+
+async function syncBundledTemplateFiles(projectPath: string, changes: string[], warnings: string[], stamp: string) {
+  const expectedRoot = path.join(templatePath(), '.aidd', 'templates');
+  const actualRoot = path.join(projectPath, '.aidd', 'templates');
+
+  if (!(await exists(expectedRoot))) {
+    warnings.push(`Bundled app template folder was not found: ${expectedRoot}`);
+    return;
+  }
+
+  await fsp.mkdir(actualRoot, { recursive: true });
+  const expectedFiles = await collectRelativeFiles(expectedRoot);
+  const actualFiles = await collectRelativeFiles(actualRoot);
+  const expected = new Set(expectedFiles);
+
+  for (const relativePath of expectedFiles) {
+    const target = path.join(actualRoot, relativePath);
+    if (await exists(target)) continue;
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.copyFile(path.join(expectedRoot, relativePath), target);
+    changes.push(`Restored missing template file .aidd/templates/${relativePath}`);
+  }
+
+  for (const relativePath of actualFiles) {
+    if (expected.has(relativePath)) continue;
+    const source = path.join(actualRoot, relativePath);
+    if (!(await exists(source))) continue;
+    const archivePath = path.join(projectPath, '.aidd', 'template-archive', stamp, relativePath);
+    await fsp.mkdir(path.dirname(archivePath), { recursive: true });
+    await fsp.rename(source, archivePath);
+    changes.push(`Archived unexpected template file .aidd/templates/${relativePath}`);
+  }
+}
+
+async function upgradeMarkdownFrontmatterVersions(projectPath: string, changes: string[], now: string) {
+  const markdownFiles = await collectProjectMarkdownFiles(projectPath);
+
+  for (const relativePath of markdownFiles) {
+    const filePath = path.join(projectPath, relativePath);
+    const raw = await fsp.readFile(filePath, 'utf8');
+    const parsed = matter(raw);
+    const data = (parsed.data || {}) as any;
+    if (!data.aidd) continue;
+    if (data.aidd.templateVersion === TEMPLATE_VERSION) continue;
+
+    data.aidd = {
+      ...data.aidd,
+      templateVersion: TEMPLATE_VERSION,
+      updatedAt: now
+    };
+    await fsp.writeFile(filePath, matter.stringify(parsed.content.replace(/^\s*\n/, ''), data), 'utf8');
+    changes.push(`Updated front matter version in ${relativePath}`);
+  }
+}
+
+async function upgradeTemplateManifest(projectPath: string, changes: string[], now: string) {
+  const manifestPath = path.join(projectPath, 'aidd.template.json');
+  const manifest = await exists(manifestPath) ? await readJson<any>(manifestPath) : {};
+  const next = {
+    ...manifest,
+    templateId: manifest.templateId || TEMPLATE_ID,
+    templateVersion: TEMPLATE_VERSION,
+    upgradedAt: now
+  };
+
+  if (JSON.stringify(manifest) === JSON.stringify(next)) return;
+  await writeJson(manifestPath, next);
+  changes.push('Updated aidd.template.json to the current template version');
+}
+
+async function upgradeProjectTemplates(projectPath: string): Promise<ProjectTemplateUpgradeReport> {
+  if (!projectPath || !(await exists(projectPath))) throw new Error(`Project path does not exist: ${projectPath}`);
+
+  const changes: string[] = [];
+  const warnings: string[] = [];
+  const now = new Date().toISOString();
+  const stamp = now.replace(/[:.]/g, '-');
+  const gitAvailable = await exists(path.join(projectPath, '.git'));
+  let author: { name: string; email: string } | null = null;
+  let preUpgradeCommit: string | undefined;
+  let upgradeCommit: string | undefined;
+
+  if (gitAvailable) {
+    author = await getProjectGitAuthor(projectPath);
+    const preCommit = await commitProjectChanges(projectPath, 'chore(project): checkpoint before AIDD template upgrade', author);
+    if (preCommit.created) {
+      preUpgradeCommit = preCommit.oid;
+      changes.push(`Committed ${preCommit.changedFiles.length} outstanding file${preCommit.changedFiles.length === 1 ? '' : 's'} before template upgrade.`);
+    }
+  } else {
+    warnings.push('No local Git repository was found, so the upgrade could not create before/after commits. Initialise Git before team use.');
+  }
+
+  await syncBundledTemplateFiles(projectPath, changes, warnings, stamp);
+  await upgradeMarkdownFrontmatterVersions(projectPath, changes, now);
+  await upgradeTemplateManifest(projectPath, changes, now);
+
+  if (gitAvailable && author) {
+    const postCommit = await commitProjectChanges(projectPath, 'chore(project): upgrade AIDD template front matter', author);
+    if (postCommit.created) {
+      upgradeCommit = postCommit.oid;
+      changes.push(`Committed ${postCommit.changedFiles.length} template upgrade file${postCommit.changedFiles.length === 1 ? '' : 's'}.`);
+    } else {
+      changes.push('No template upgrade file changes were needed after the pre-upgrade checkpoint.');
+    }
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    changed: changes.length > 0,
+    preUpgradeCommit,
+    upgradeCommit,
+    changes,
+    warnings,
+    validation: await validateProject(projectPath)
+  };
+}
+
 async function validateProject(projectPath: string): Promise<ProjectValidationReport> {
   const structure = validationSection('structure', 'Project structure');
+  const templateSection = validationSection('templates', 'Template files');
+  const frontmatterSection = validationSection('frontmatter', 'Template front matter');
   const foundationSection = validationSection('foundation', 'Foundation');
   const modelSection = validationSection('model', 'Capabilities and components');
   const sourceSection = validationSection('source-code', 'Source code references');
@@ -932,9 +1307,13 @@ async function validateProject(projectPath: string): Promise<ProjectValidationRe
 
   if (await exists(path.join(projectPath, '.git'))) {
     pushValidation(structure, { id: 'git-present', title: 'Git repository found', message: 'Local Git versioning is initialised.', severity: 'success', path: '.git' });
+    await validateGitWorkingTree(projectPath, structure);
   } else {
     pushValidation(structure, { id: 'git-missing', title: 'Git repository missing', message: 'This project is not currently versioned with Git.', severity: 'error', action: 'Initialise Git versioning before team use.' });
   }
+
+  await validateTemplateFiles(projectPath, templateSection);
+  await validateProjectFrontmatterVersions(projectPath, frontmatterSection);
 
   const foundation = await readFoundationDocuments(projectPath);
   for (const doc of foundation) {
@@ -1045,7 +1424,7 @@ async function validateProject(projectPath: string): Promise<ProjectValidationRe
     }
   }
 
-  const sections = [structure, foundationSection, modelSection, sourceSection, deliverySection];
+  const sections = [structure, templateSection, frontmatterSection, foundationSection, modelSection, sourceSection, deliverySection];
   const items = sections.flatMap((section) => section.items);
   const summary = {
     total: items.length,
@@ -1326,60 +1705,337 @@ async function refreshCapabilitiesIndex(root: string) {
   await fsp.writeFile(path.join(root, 'capabilities', 'index.md'), lines.join('\n'), 'utf8');
 }
 
-function buildComponentPurposeMarkdown(input: { slug: string; title: string; description?: string; status?: string }) {
-  const body = input.description?.trim()
-    ? `# ${input.title}
+const COMPONENT_TEMPLATE_SECTIONS = [
+  {
+    key: 'purpose',
+    fileName: '01-purpose.md',
+    title: 'Purpose',
+    prompt: 'Define why this component exists and which outcomes it supports.',
+    body: `## Purpose
+TODO: Define why this component exists.
 
-## Purpose
+## Responsibilities
 
-${input.description.trim()}
-`
-    : `# ${input.title}
+- TODO
 
-## Purpose
+## Outcomes Supported
 
-Describe what this component is responsible for.
-`;
+- TODO
 
-  return `---
-aidd:
-  type: component
-  id: ${input.slug}
-  title: ${input.title}
-  status: ${input.status || 'draft'}
-  required: true
-  templateVersion: ${TEMPLATE_VERSION}
-  updatedAt: ${new Date().toISOString()}
----
+## Capabilities Supported
 
-${body}`;
+List capabilities this component helps deliver. Do not copy capability behaviour into this file.
+
+- TODO`
+  },
+  {
+    key: 'boundaries',
+    fileName: '02-boundaries.md',
+    title: 'Boundaries',
+    prompt: 'Define ownership, consumers, exposed contracts, and forbidden coupling.',
+    body: `## Owns
+
+- TODO: List responsibilities, state, assets, or services this component owns.
+
+## Does Not Own
+
+- TODO: List responsibilities owned by other components or systems.
+
+## May Depend On
+
+- TODO: List allowed component or platform dependencies.
+
+## May Be Used By
+
+- TODO: List expected consumers.
+
+## Exposes
+
+- TODO: List public interfaces, events, data contracts, services, tools, or extension points.
+
+## Forbidden Coupling
+
+- TODO: List things implementations must not do across this boundary.
+
+## Boundary Change Rules
+
+Changing this component boundary requires a decision record when:
+
+- a new component dependency is introduced
+- ownership of runtime state moves between components
+- another component starts writing component-owned state
+- this component starts directly controlling another component's responsibilities
+- a capability requires behaviour that does not fit the existing boundary`
+  },
+  {
+    key: 'interfaces',
+    fileName: '03-interfaces.md',
+    title: 'Interfaces',
+    prompt: 'Capture public and consumed contracts owned by this component.',
+    body: `## Purpose
+
+Define the public and consumed technical contracts for this component.
+
+## Public Interfaces
+
+- TODO: APIs, services, events, extension points, asset contracts, messages, commands, or UI/tooling entry points exposed by this component.
+
+## Consumed Interfaces
+
+- TODO: Interfaces this component consumes from other components or platform systems.
+
+## Contract Rules
+
+- TODO: Versioning, compatibility, validation, error behaviour, and ownership rules.
+
+## Capability Relationship
+
+Capabilities may require new or changed interfaces, but the interface definition belongs here when this component owns it.`
+  },
+  {
+    key: 'data-and-state',
+    fileName: '04-data-and-state.md',
+    title: 'Data & State',
+    prompt: 'Define owned data, state, validation rules, and persistence boundaries.',
+    body: `## Purpose
+
+Define data, state, persistence, and invariants owned by this component.
+
+## Owned State
+
+- TODO: Runtime state this component owns.
+
+## Owned Data Assets / Documents
+
+- TODO: Assets, files, records, schemas, tables, or documents this component owns.
+
+## External Data Consumed
+
+- TODO: Data read from other components or services.
+
+## Data Not Owned
+
+- TODO: Data this component must not write or treat as authoritative.
+
+## Validation and Invariants
+
+- TODO: Required validation, consistency rules, failure modes, and integrity checks.
+
+## Persistence and Migration
+
+- TODO: Persistence rules, migration rules, compatibility concerns, or versioning constraints.
+
+## Capability Relationship
+
+Capabilities can say what data is needed for behaviour. Ownership, schema shape, persistence, and invariants belong in this component file.`
+  },
+  {
+    key: 'dependencies',
+    fileName: '05-dependencies.md',
+    title: 'Dependencies & Integrations',
+    prompt: 'Define allowed dependencies, integrations, and dependency direction rules.',
+    body: `## Purpose
+
+Define allowed dependencies and integration points for this component.
+
+## Allowed Dependencies
+
+- TODO
+
+## Forbidden Dependencies
+
+- TODO
+
+## Integrations
+
+- TODO: Services, APIs, files, tools, engine systems, or other components this component integrates with.
+
+## Required Dependency Direction
+
+\`\`\`text
+TODO: ComponentA -> ComponentB
+\`\`\`
+
+## Dependency Change Rule
+
+Any new dependency or integration that crosses component, runtime/editor, product/platform, or generic/project-specific boundaries requires a decision record before implementation.`
+  },
+  {
+    key: 'architecture',
+    fileName: '06-architecture.md',
+    title: 'Internal Design',
+    prompt: 'Describe the component internal shape, flows, and failure model.',
+    body: `## Purpose
+
+Define the internal technical design of this component without turning the capability into architecture.
+
+## Role in the System
+
+TODO: Explain this component's role and where it fits.
+
+## Main Areas
+
+### Area 1
+
+TODO
+
+### Area 2
+
+TODO
+
+## Internal Flow
+
+TODO: Describe important internal flows, lifecycle, ownership handoffs, or extension points.
+
+## Failure Model
+
+TODO: Describe expected failure handling, fallback behaviour, diagnostics, and recovery rules.
+
+## Design Change Rule
+
+Design changes that affect ownership, dependencies, state, or public interfaces require a component decision record and should be referenced by the delivery slice implementing the change.`
+  },
+  {
+    key: 'standards',
+    fileName: '07-standards.md',
+    title: 'Quality Requirements',
+    prompt: 'Define component-specific NFRs, quality attributes, testing expectations, and AI-agent rules.',
+    body: `## Component Quality Attributes
+
+- Performance:
+- Reliability:
+- Security:
+- Accessibility:
+- Observability:
+
+## Testing and Verification Expectations
+
+- TODO
+
+## Documentation Expectations
+
+- TODO
+
+## Inherited Standards
+
+Reference global standards from Foundation. Do not duplicate project-wide standards here unless this component has stricter requirements.
+
+## AI Agent Rules
+
+- Stay inside the delivery slice scope.
+- Respect component boundaries and dependency direction.
+- Do not move architecture, integrations, or data ownership into capability docs.
+- Report missing component dependencies or boundary conflicts instead of silently introducing coupling.`
+  },
+  {
+    key: 'risks',
+    fileName: '08-risks.md',
+    title: 'Risks',
+    prompt: 'Capture component risks, unknowns, coupling risks, and operational concerns.',
+    body: `## Risks
+
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+|  |  |  |
+
+## Unknowns
+
+- TODO
+
+## Boundary / Coupling Risks
+
+- TODO
+
+## Operational Risks
+
+- TODO`
+  }
+];
+
+function normaliseComponentSections(inputSections?: ComponentSectionInput[], fallback?: Partial<Record<string, string>>) {
+  const byKey = new Map<string, ComponentSectionInput>();
+  for (const section of inputSections || []) {
+    if (!section?.key) continue;
+    byKey.set(section.key, section);
+  }
+
+  return COMPONENT_TEMPLATE_SECTIONS.map((template) => {
+    const input = byKey.get(template.key);
+    const body = input?.body ?? fallback?.[template.key] ?? template.body ?? '';
+    return {
+      key: template.key,
+      fileName: template.fileName,
+      title: template.title,
+      body,
+      status: input?.status || (body.trim() ? 'draft' : 'not-started') as SetupStepStatus,
+      prompt: template.prompt
+    };
+  });
 }
 
-function buildComponentTechnicalMarkdown(input: { slug: string; title: string }) {
-  return `---
-aidd:
-  type: component
-  id: ${input.slug}-technical-shape
-  title: ${input.title} Technical Shape
-  status: not-started
-  required: false
-  templateVersion: ${TEMPLATE_VERSION}
-  updatedAt: ${new Date().toISOString()}
----
-
-# Technical Shape
-
-Describe the app, service, plugin, module, library, workflow, integration, tool, data store, or subsystem shape.
-`;
+function buildComponentSectionMarkdown(input: { slug: string; componentTitle: string; section: ReturnType<typeof normaliseComponentSections>[number]; status: string; sourceProjects: string[]; capabilities: string[] }) {
+  const body = input.section.body?.trim() || input.section.prompt;
+  return matter.stringify([
+    `# ${input.componentTitle} ${input.section.title}`,
+    '',
+    body,
+    ''
+  ].join('\n'), {
+    aidd: {
+      type: 'component-section',
+      id: `${input.slug}-${input.section.key}`,
+      title: `${input.componentTitle} ${input.section.title}`,
+      status: input.section.status || 'not-started',
+      required: true,
+      component: input.slug,
+      section: input.section.key,
+      sourceProjects: input.sourceProjects,
+      capabilitiesSupported: input.capabilities,
+      templateVersion: TEMPLATE_VERSION,
+      updatedAt: new Date().toISOString()
+    }
+  });
 }
 
+function buildComponentIndexMarkdown(input: { slug: string; title: string; status: string; sourceProjects: string[]; capabilities: string[]; sections: ReturnType<typeof normaliseComponentSections> }) {
+  return matter.stringify([
+    `# ${input.title}`,
+    '',
+    'This component is managed by AIDD as a set of template-backed section files.',
+    '',
+    '## Sections',
+    '',
+    ...input.sections.map((section) => `- [${section.title}](./${section.fileName})`),
+    '',
+    '## Source Projects',
+    '',
+    input.sourceProjects.length ? input.sourceProjects.map((project) => `- ${project}`).join('\n') : 'No source projects linked yet.',
+    '',
+    '## Capabilities Supported',
+    '',
+    input.capabilities.length ? input.capabilities.map((capability) => `- ${capability}`).join('\n') : 'No capabilities linked yet.',
+    ''
+  ].join('\n'), {
+    aidd: {
+      type: 'component',
+      id: input.slug,
+      title: input.title,
+      status: input.status || 'draft',
+      required: true,
+      sourceProjects: input.sourceProjects,
+      capabilitiesSupported: input.capabilities,
+      templateVersion: TEMPLATE_VERSION,
+      updatedAt: new Date().toISOString()
+    }
+  });
+}
 
 const CAPABILITY_TEMPLATE_SECTIONS = [
   {
     key: 'outcomes',
     fileName: '01-outcomes.md',
     title: 'Outcomes',
-    prompt: 'Describe what this capability should make possible.',
+    prompt: 'Describe what this capability should make possible for users or the business.',
     body: `## Purpose
 Describe the user or business outcome this capability must enable.
 
@@ -1397,7 +2053,7 @@ Describe the user or business outcome this capability must enable.
     key: 'scope',
     fileName: '02-scope.md',
     title: 'Scope',
-    prompt: 'Define what is in scope and out of scope.',
+    prompt: 'Define what is in scope and out of scope for this capability.',
     body: `## In Scope
 - 
 
@@ -1414,7 +2070,7 @@ Describe where this capability starts and stops, especially where another capabi
     key: 'user-journeys',
     fileName: '03-user-journeys.md',
     title: 'User Journeys',
-    prompt: 'Describe the journeys or workflows this capability supports.',
+    prompt: 'Describe the user journeys or workflows this capability supports.',
     body: `## Primary Journey
 1. The user starts by...
 2. The system responds by...
@@ -1430,7 +2086,7 @@ Describe where this capability starts and stops, especially where another capabi
     key: 'functional-requirements',
     fileName: '04-functional-requirements.md',
     title: 'Functional Requirements',
-    prompt: 'List the required behaviours and functions.',
+    prompt: 'List the required product behaviours and rules.',
     body: `## Required Behaviours
 - [ ] The system shall...
 - [ ] The user can...
@@ -1440,80 +2096,11 @@ Describe where this capability starts and stops, especially where another capabi
 - 
 
 ## Acceptance Notes
-Describe the minimum behaviour required before implementation can be accepted.`
-  },
-  {
-    key: 'non-functional-requirements',
-    fileName: '05-non-functional-requirements.md',
-    title: 'Non-Functional Requirements',
-    prompt: 'List quality attributes, constraints, performance, reliability, security, or accessibility needs.',
-    body: `## Quality Attributes
-- Performance:
-- Reliability:
-- Security:
-- Accessibility:
-- Observability:
-
-## Constraints
-- 
-
-## Service Expectations
-Describe any limits, response times, scale, offline behaviour, or compatibility needs.`
-  },
-  {
-    key: 'data-model',
-    fileName: '06-data-model.md',
-    title: 'Data Model',
-    prompt: 'Describe important data, records, state, and identifiers.',
-    body: `## Key Data
-| Name | Purpose | Owner / Source | Notes |
-| --- | --- | --- | --- |
-|  |  |  |  |
-
-## State
-Describe important state transitions, identifiers, and persistence rules.
-
-## Data Rules
-- `
-  },
-  {
-    key: 'integrations',
-    fileName: '07-integrations.md',
-    title: 'Integrations',
-    prompt: 'Describe systems, services, components, or workflows this capability integrates with.',
-    body: `## Internal Integrations
-- Components:
-- Capabilities:
-- Workflows:
-
-## External Integrations
-- Services:
-- Files / APIs:
-- Authentication / permissions:
-
-## Integration Rules
-- `
-  },
-  {
-    key: 'architecture',
-    fileName: '08-architecture.md',
-    title: 'Architecture',
-    prompt: 'Describe the expected architectural shape or constraints.',
-    body: `## Proposed Shape
-Describe the technical approach, affected layers, and important design decisions.
-
-## Components Involved
-- 
-
-## Constraints
-- 
-
-## Open Questions
-- `
+Describe the minimum product behaviour required before implementation can be accepted.`
   },
   {
     key: 'ux-ui',
-    fileName: '09-ux-ui.md',
+    fileName: '05-ux-ui.md',
     title: 'UX/UI',
     prompt: 'Describe user-facing screens, feedback, inspection tools, or UX expectations.',
     body: `## User Interface
@@ -1529,9 +2116,9 @@ Describe screens, panels, controls, messages, empty states, and error states.
   },
   {
     key: 'risks',
-    fileName: '10-risks.md',
+    fileName: '06-risks.md',
     title: 'Risks',
-    prompt: 'Capture risks, unknowns, edge cases, and failure modes.',
+    prompt: 'Capture product risks, unknowns, edge cases, and failure modes.',
     body: `## Risks
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
@@ -1545,7 +2132,7 @@ Describe screens, panels, controls, messages, empty states, and error states.
   },
   {
     key: 'validation',
-    fileName: '11-validation.md',
+    fileName: '07-validation.md',
     title: 'Validation',
     prompt: 'Describe how this capability should be verified.',
     body: `## Verification Approach
@@ -1557,12 +2144,38 @@ Describe how this capability will be checked before it is considered ready.
 - [ ] 
 
 ## Test Notes
-- Unit checks:
-- Integration checks:
-- Manual checks:
-- Regression risks:`
+- User checks:
+- Regression risks:
+- Evidence required:`
   }
 ];
+const COMPONENT_LEGACY_SECTION_FILES: Record<string, string[]> = {
+  dependencies: ['05-dependencies-and-integrations.md'],
+  architecture: ['06-internal-design.md'],
+  standards: ['07-quality-requirements.md']
+};
+
+const CAPABILITY_LEGACY_SECTION_FILES: Record<string, string[]> = {
+  'ux-ui': ['09-ux-ui.md'],
+  risks: ['10-risks.md'],
+  validation: ['11-validation.md']
+};
+
+async function readSectionFromFirstExistingFile(dir: string, fileNames: string[]) {
+  for (const fileName of fileNames) {
+    const filePath = path.join(dir, fileName);
+    if (!(await exists(filePath))) continue;
+    const raw = await fsp.readFile(filePath, 'utf8');
+    const parsed = matter(raw);
+    const sectionAidd = (parsed.data as any)?.aidd || {};
+    const body = sectionBodyFromMarkdown(raw);
+    return {
+      body,
+      status: sectionAidd.status || (body.trim() ? 'draft' : 'not-started') as SetupStepStatus
+    };
+  }
+  return null;
+}
 
 function normaliseCapabilitySections(inputSections?: CapabilitySectionInput[], fallback?: Partial<Record<string, string>>) {
   const byKey = new Map<string, CapabilitySectionInput>();
@@ -1701,25 +2314,48 @@ Add behaviour examples later when the capability needs clearer acceptance scenar
 `;
 }
 
-async function createComponent(root: string, title: string, description?: string, status: string = 'draft', sourceProjects: string[] = []) {
+async function readComponentCapabilities(root: string, slug: string) {
+  const caps = (await readEntities(root, 'capabilities', 'capability.json')).map((capability: any) => ({
+    ...capability,
+    components: Array.isArray(capability.components) ? capability.components : Array.isArray(capability.modules) ? capability.modules : []
+  }));
+  return caps.filter((capability: any) => capability.components.includes(slug)).map((capability: any) => String(capability.slug || capability.id)).filter(Boolean);
+}
+
+async function createComponent(root: string, title: string, description?: string, status: string = 'draft', sourceProjects: string[] = [], sectionsInput?: ComponentSectionInput[]) {
   const slug = slugify(title);
   const dir = path.join(root, 'components', slug);
   if (await exists(dir)) return slug;
+
+  const linkedCapabilities: string[] = [];
+  const sourceProjectIds = Array.from(new Set(sourceProjects));
+  const fallback: Partial<Record<string, string>> = { purpose: description || '' };
+  const sections = normaliseComponentSections(sectionsInput, fallback);
 
   await fsp.mkdir(dir, { recursive: true });
   await writeJson(path.join(dir, 'component.json'), {
     slug,
     title,
+    kind: 'component',
     status,
     lifecycle: status,
-    sourceProjects: Array.from(new Set(sourceProjects)),
+    sourceProjects: sourceProjectIds,
     createdAt: new Date().toISOString(),
-    supportsCapabilities: [],
+    supportsCapabilities: linkedCapabilities,
+    capabilitiesSupported: linkedCapabilities,
     dependsOn: [],
-    exposes: []
+    exposes: [],
+    dataOwned: [],
+    template: {
+      type: 'component',
+      sectionFiles: sections.map((section) => section.fileName),
+      templateVersion: TEMPLATE_VERSION
+    }
   });
-  await fsp.writeFile(path.join(dir, 'index.md'), buildComponentPurposeMarkdown({ slug, title, description, status }), 'utf8');
-  await fsp.writeFile(path.join(dir, 'technical-shape.md'), buildComponentTechnicalMarkdown({ slug, title }), 'utf8');
+  await fsp.writeFile(path.join(dir, 'index.md'), buildComponentIndexMarkdown({ slug, title, status, sourceProjects: sourceProjectIds, capabilities: linkedCapabilities, sections }), 'utf8');
+  for (const section of sections) {
+    await fsp.writeFile(path.join(dir, section.fileName), buildComponentSectionMarkdown({ slug, componentTitle: title, section, status, sourceProjects: sourceProjectIds, capabilities: linkedCapabilities }), 'utf8');
+  }
   await refreshComponentsIndex(root);
   return slug;
 }
@@ -1732,15 +2368,66 @@ async function readComponent(input: ReadComponentInput) {
   const markdownPath = path.join(dir, 'index.md');
   if (!(await exists(manifestPath))) throw new Error(`Component not found: ${slug}`);
   const manifest = await readJson<any>(manifestPath);
-  const raw = await exists(markdownPath) ? await fsp.readFile(markdownPath, 'utf8') : '';
-  const parsed = matter(raw);
-  const aidd = (parsed.data as any)?.aidd || {};
+  const rawIndex = await exists(markdownPath) ? await fsp.readFile(markdownPath, 'utf8') : '';
+  const parsedIndex = matter(rawIndex);
+  const aidd = (parsedIndex.data as any)?.aidd || {};
+  const title = String(manifest.title || aidd.title || slug);
+  const status = String(manifest.status || manifest.lifecycle || aidd.status || 'draft');
+  const sourceProjects = Array.isArray(manifest.sourceProjects)
+    ? manifest.sourceProjects
+    : Array.isArray(aidd.sourceProjects)
+      ? aidd.sourceProjects
+      : [];
+  const capabilities: string[] = Array.from(new Set<string>([
+    ...(Array.isArray(manifest.supportsCapabilities) ? manifest.supportsCapabilities.map(String) : []),
+    ...(Array.isArray(manifest.capabilitiesSupported) ? manifest.capabilitiesSupported.map(String) : []),
+    ...(Array.isArray(aidd.capabilitiesSupported) ? aidd.capabilitiesSupported.map(String) : []),
+    ...(await readComponentCapabilities(input.projectPath, slug))
+  ].filter(Boolean)));
+
+  const fallbackFromLegacyIndex: Partial<Record<string, string>> = {
+    purpose: sectionBodyFromMarkdown(rawIndex)
+  };
+
+  const sections = [];
+  for (const template of COMPONENT_TEMPLATE_SECTIONS) {
+    const filePath = path.join(dir, template.fileName);
+    let body = fallbackFromLegacyIndex[template.key] || '';
+    let sectionStatus: SetupStepStatus = body.trim() ? 'draft' : 'not-started';
+    if (await exists(filePath)) {
+      const raw = await fsp.readFile(filePath, 'utf8');
+      const parsed = matter(raw);
+      const sectionAidd = (parsed.data as any)?.aidd || {};
+      body = sectionBodyFromMarkdown(raw);
+      sectionStatus = sectionAidd.status || (body.trim() ? 'draft' : 'not-started');
+    } else {
+      const legacySection = await readSectionFromFirstExistingFile(dir, COMPONENT_LEGACY_SECTION_FILES[template.key] || []);
+      if (legacySection) {
+        body = legacySection.body;
+        sectionStatus = legacySection.status;
+      } else if (!body.trim()) {
+        body = template.body;
+        sectionStatus = 'draft';
+      }
+    }
+    sections.push({
+      key: template.key,
+      fileName: template.fileName,
+      title: template.title,
+      body,
+      status: sectionStatus,
+      prompt: template.prompt
+    });
+  }
+
   return {
     slug,
-    title: String(manifest.title || aidd.title || slug),
-    status: String(manifest.status || manifest.lifecycle || aidd.status || 'draft'),
-    sourceProjects: Array.isArray(manifest.sourceProjects) ? manifest.sourceProjects : [],
-    description: parsed.content.replace(/^\s*\n/, ''),
+    title,
+    status,
+    sourceProjects,
+    capabilities,
+    sections,
+    description: sections.find((section) => section.key === 'purpose')?.body || parsedIndex.content.replace(/^\s*\n/, ''),
     filePath: markdownPath
   };
 }
@@ -1752,21 +2439,48 @@ async function updateComponent(input: UpdateComponentInput) {
   const markdownPath = path.join(dir, 'index.md');
   if (!(await exists(manifestPath))) throw new Error(`Component not found: ${slug}`);
   const manifest = await readJson<any>(manifestPath);
+  const rawIndex = await exists(markdownPath) ? await fsp.readFile(markdownPath, 'utf8') : '';
+  const title = input.title.trim() || manifest.title || slug;
   const status = input.status || manifest.status || manifest.lifecycle || 'draft';
+  const sourceProjectSource = Array.isArray(input.sourceProjects)
+    ? input.sourceProjects
+    : Array.isArray(manifest.sourceProjects)
+      ? manifest.sourceProjects
+      : [];
+  const sourceProjects: string[] = Array.from(new Set<string>(sourceProjectSource.map(String)));
+  const capabilities: string[] = Array.from(new Set<string>([
+    ...(Array.isArray(input.capabilities) ? input.capabilities.map(String) : []),
+    ...(Array.isArray(manifest.supportsCapabilities) ? manifest.supportsCapabilities.map(String) : []),
+    ...(Array.isArray(manifest.capabilitiesSupported) ? manifest.capabilitiesSupported.map(String) : []),
+    ...(await readComponentCapabilities(input.projectPath, slug))
+  ].filter(Boolean)));
+  const fallback: Partial<Record<string, string>> = {
+    purpose: input.description || sectionBodyFromMarkdown(rawIndex)
+  };
+  const sections = normaliseComponentSections(input.sections, fallback);
+
   await writeJson(manifestPath, {
     ...manifest,
-    title: input.title.trim() || manifest.title || slug,
+    slug,
+    title,
+    kind: manifest.kind || 'component',
     status,
     lifecycle: status,
-    sourceProjects: Array.from(new Set(input.sourceProjects || manifest.sourceProjects || [])),
-    updatedAt: new Date().toISOString()
+    sourceProjects,
+    supportsCapabilities: capabilities,
+    capabilitiesSupported: capabilities,
+    updatedAt: new Date().toISOString(),
+    template: {
+      ...(manifest.template || {}),
+      type: 'component',
+      sectionFiles: sections.map((section) => section.fileName),
+      templateVersion: TEMPLATE_VERSION
+    }
   });
-  await fsp.writeFile(markdownPath, buildComponentPurposeMarkdown({
-    slug,
-    title: input.title.trim() || manifest.title || slug,
-    description: input.description,
-    status
-  }), 'utf8');
+  await fsp.writeFile(markdownPath, buildComponentIndexMarkdown({ slug, title, status, sourceProjects, capabilities, sections }), 'utf8');
+  for (const section of sections) {
+    await fsp.writeFile(path.join(dir, section.fileName), buildComponentSectionMarkdown({ slug, componentTitle: title, section, status, sourceProjects, capabilities }), 'utf8');
+  }
   await refreshComponentsIndex(input.projectPath);
   return readProjectSetup(input.projectPath);
 }
@@ -1789,10 +2503,6 @@ async function createCapability(root: string, input: CreateCapabilityInput) {
     scope: '',
     'user-journeys': '',
     'functional-requirements': '',
-    'non-functional-requirements': '',
-    'data-model': '',
-    integrations: '',
-    architecture: '',
     'ux-ui': '',
     risks: input.notes || '',
     validation: ''
@@ -1861,6 +2571,15 @@ async function readCapability(input: ReadCapabilityInput) {
       const sectionAidd = (parsed.data as any)?.aidd || {};
       body = sectionBodyFromMarkdown(raw);
       sectionStatus = sectionAidd.status || (body.trim() ? 'draft' : 'not-started');
+    } else {
+      const legacySection = await readSectionFromFirstExistingFile(dir, CAPABILITY_LEGACY_SECTION_FILES[template.key] || []);
+      if (legacySection) {
+        body = legacySection.body;
+        sectionStatus = legacySection.status;
+      } else if (!body.trim()) {
+        body = template.body;
+        sectionStatus = 'draft';
+      }
     }
     sections.push({
       key: template.key,
@@ -2687,6 +3406,8 @@ ipcMain.handle('project:validate', async (_event, projectPath: string) => valida
 
 ipcMain.handle('project:repair', async (_event, projectPath: string) => repairProject(projectPath));
 
+ipcMain.handle('project:upgradeTemplates', async (_event, projectPath: string) => upgradeProjectTemplates(projectPath));
+
 ipcMain.handle('project:openExisting', async () => {
   const result = await dialog.showOpenDialog({ title: 'Open AIDD project', properties: ['openDirectory'] });
   if (result.canceled || result.filePaths.length === 0) return null;
@@ -2928,7 +3649,7 @@ ipcMain.handle('project:defineStandards', async (_event, input: DefineStandardsI
 
 ipcMain.handle('project:createComponent', async (_event, input: CreateComponentInput) => {
   if (!input.title.trim()) throw new Error('Component title is required.');
-  await createComponent(input.projectPath, input.title.trim(), input.description, input.status || 'draft', input.sourceProjects || []);
+  await createComponent(input.projectPath, input.title.trim(), input.description, input.status || 'draft', input.sourceProjects || [], input.sections || []);
   await checkpointAndShareProjectAfterSave(input.projectPath);
   return readProjectSetup(input.projectPath);
 });

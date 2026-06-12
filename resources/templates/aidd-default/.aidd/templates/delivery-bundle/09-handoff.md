@@ -5,7 +5,7 @@ aidd:
   title: __BUNDLE_TITLE__ Handoff
   status: not-started
   required: true
-  templateVersion: 0.6.0
+  templateVersion: 0.8.0
 ---
 
 # __BUNDLE_TITLE__ Handoff

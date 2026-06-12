@@ -1,43 +1,1043 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Plus, Puzzle, Save } from 'lucide-react';
-import { AiddMarkdownEditor } from './editor/AiddMarkdownEditor';
-import { Button } from './ui/button';
-import { Badge } from './ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Input } from './ui/input';
-import { Select } from './ui/select';
-import { Label } from './ui/label';
-import { Alert, AlertDescription, AlertTitle } from './ui/alert';
+import { useEffect, useMemo, useState, type DragEvent } from "react";
+import {
+  Archive,
+  ArrowLeft,
+  CheckCircle2,
+  Circle,
+  CircleDashed,
+  Database,
+  Eye,
+  FileText,
+  GitBranch,
+  Layers,
+  Pencil,
+  PlayCircle,
+  Plug,
+  Plus,
+  Puzzle,
+  Save,
+  ShieldAlert,
+  SkipForward,
+  Sparkles,
+  Workflow,
+  Zap,
+} from "lucide-react";
+import { AiddMarkdownEditor } from "./editor/AiddMarkdownEditor";
+import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "./ui/card";
+import { Input } from "./ui/input";
+import { Select } from "./ui/select";
+import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
+import { cn } from "../lib/utils";
 
-const lifecycleOptions: AiddSetupStatus[] = ['not-started', 'draft', 'in-review', 'active', 'deprecated', 'complete', 'skipped'];
-type ComponentView = 'list' | 'new' | 'edit';
-function statusLabel(status?: string) { return (status ?? 'draft').replace(/-/g, ' '); }
+const statusOptions: AiddSetupStatus[] = [
+  "not-started",
+  "draft",
+  "in-review",
+  "active",
+  "deprecated",
+  "complete",
+  "skipped",
+];
 
-export function Components({ activeProject }: { activeProject?: AiddTrackedProject | null }) {
+type ComponentView = "list" | "new" | "edit";
+type ComponentSection = {
+  key: string;
+  fileName: string;
+  title: string;
+  body: string;
+  status?: AiddSetupStatus | string;
+  prompt?: string;
+};
+
+const icons = [
+  Sparkles,
+  Layers,
+  Plug,
+  Database,
+  GitBranch,
+  Workflow,
+  Zap,
+  ShieldAlert,
+];
+
+const componentTemplateSections: ComponentSection[] = [
+  {
+    key: "purpose",
+    fileName: "01-purpose.md",
+    title: "Purpose",
+    body: `## Purpose
+TODO: Define why this component exists.
+
+## Responsibilities
+
+- TODO
+
+## Outcomes Supported
+
+- TODO
+
+## Capabilities Supported
+
+List capabilities this component helps deliver. Do not copy capability behaviour into this file.
+
+- TODO`,
+    prompt: "Define why this component exists and which outcomes it supports.",
+  },
+  {
+    key: "boundaries",
+    fileName: "02-boundaries.md",
+    title: "Boundaries",
+    body: `## Owns
+
+- TODO: List responsibilities, state, assets, or services this component owns.
+
+## Does Not Own
+
+- TODO: List responsibilities owned by other components or systems.
+
+## May Depend On
+
+- TODO: List allowed component or platform dependencies.
+
+## May Be Used By
+
+- TODO: List expected consumers.
+
+## Exposes
+
+- TODO: List public interfaces, events, data contracts, services, tools, or extension points.
+
+## Forbidden Coupling
+
+- TODO: List things implementations must not do across this boundary.
+
+## Boundary Change Rules
+
+Changing this component boundary requires a decision record when:
+
+- a new component dependency is introduced
+- ownership of runtime state moves between components
+- another component starts writing component-owned state
+- this component starts directly controlling another component's responsibilities
+- a capability requires behaviour that does not fit the existing boundary`,
+    prompt: "Define ownership, consumers, exposed contracts, and forbidden coupling.",
+  },
+  {
+    key: "interfaces",
+    fileName: "03-interfaces.md",
+    title: "Interfaces",
+    body: `## Purpose
+
+Define the public and consumed technical contracts for this component.
+
+## Public Interfaces
+
+- TODO: APIs, services, events, extension points, asset contracts, messages, commands, or UI/tooling entry points exposed by this component.
+
+## Consumed Interfaces
+
+- TODO: Interfaces this component consumes from other components or platform systems.
+
+## Contract Rules
+
+- TODO: Versioning, compatibility, validation, error behaviour, and ownership rules.
+
+## Capability Relationship
+
+Capabilities may require new or changed interfaces, but the interface definition belongs here when this component owns it.`,
+    prompt: "Capture public and consumed contracts owned by this component.",
+  },
+  {
+    key: "data-and-state",
+    fileName: "04-data-and-state.md",
+    title: "Data & State",
+    body: `## Purpose
+
+Define data, state, persistence, and invariants owned by this component.
+
+## Owned State
+
+- TODO: Runtime state this component owns.
+
+## Owned Data Assets / Documents
+
+- TODO: Assets, files, records, schemas, tables, or documents this component owns.
+
+## External Data Consumed
+
+- TODO: Data read from other components or services.
+
+## Data Not Owned
+
+- TODO: Data this component must not write or treat as authoritative.
+
+## Validation and Invariants
+
+- TODO: Required validation, consistency rules, failure modes, and integrity checks.
+
+## Persistence and Migration
+
+- TODO: Persistence rules, migration rules, compatibility concerns, or versioning constraints.
+
+## Capability Relationship
+
+Capabilities can say what data is needed for behaviour. Ownership, schema shape, persistence, and invariants belong in this component file.`,
+    prompt: "Define owned data, state, validation rules, and persistence boundaries.",
+  },
+  {
+    key: "dependencies",
+    fileName: "05-dependencies.md",
+    title: "Dependencies",
+    body: `## Purpose
+
+Define allowed and forbidden dependencies for this component.
+
+## Allowed Dependencies
+
+- TODO
+
+## Forbidden Dependencies
+
+- TODO
+
+## Required Dependency Direction
+
+\`\`\`text
+TODO: ComponentA -> ComponentB
+\`\`\`
+
+## Dependency Change Rule
+
+Any new dependency that crosses component, runtime/editor, product/platform, or generic/project-specific boundaries requires a decision record before implementation.`,
+    prompt: "Define allowed dependencies and dependency direction rules.",
+  },
+  {
+    key: "architecture",
+    fileName: "06-architecture.md",
+    title: "Architecture",
+    body: `## Purpose
+
+Define the technical shape of this component.
+
+## Architectural Role
+
+TODO: Explain this component's role in the system.
+
+## Main Areas
+
+### Area 1
+
+TODO
+
+### Area 2
+
+TODO
+
+## Internal Flow
+
+TODO: Describe important internal flows, lifecycle, ownership handoffs, or extension points.
+
+## Failure Model
+
+TODO: Describe expected failure handling, fallback behaviour, diagnostics, and recovery rules.
+
+## Architecture Change Rule
+
+Architecture changes that affect ownership, dependencies, state, or public interfaces require a component decision record and should be referenced by the delivery slice implementing the change.`,
+    prompt: "Describe the component's technical shape, internal flows, and failure model.",
+  },
+  {
+    key: "standards",
+    fileName: "07-standards.md",
+    title: "Standards",
+    body: `## Implementation Standards
+
+- TODO
+
+## Naming Standards
+
+- TODO
+
+## Testing and Verification Standards
+
+- TODO
+
+## Documentation Standards
+
+- TODO
+
+## AI Agent Standards
+
+- Stay inside the delivery slice scope.
+- Respect component boundaries and dependency direction.
+- Do not move architecture or data ownership into capability docs.
+- Report missing component dependencies or boundary conflicts instead of silently introducing coupling.`,
+    prompt: "Define implementation, naming, testing, documentation, and AI-agent standards.",
+  },
+  {
+    key: "risks",
+    fileName: "08-risks.md",
+    title: "Risks",
+    body: `## Risks
+
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+|  |  |  |
+
+## Unknowns
+
+- TODO
+
+## Boundary / Coupling Risks
+
+- TODO
+
+## Operational Risks
+
+- TODO`,
+    prompt: "Capture component risks, unknowns, coupling risks, and operational concerns.",
+  },
+];
+
+function statusLabel(status?: string) {
+  return (status ?? "draft").replace(/-/g, " ");
+}
+
+const statusVisuals: Record<
+  AiddSetupStatus,
+  {
+    icon: typeof Circle;
+    className: string;
+    surfaceClassName: string;
+    badgeClassName: string;
+    barClassName: string;
+  }
+> = {
+  "not-started": {
+    icon: CircleDashed,
+    className: "text-muted-foreground",
+    surfaceClassName: "border-muted-foreground/30 bg-muted/20",
+    badgeClassName:
+      "border-muted-foreground/30 bg-muted/40 text-muted-foreground",
+    barClassName: "bg-muted-foreground/45",
+  },
+  draft: {
+    icon: Pencil,
+    className: "text-sky-400",
+    surfaceClassName: "border-sky-400/45 bg-sky-400/10",
+    badgeClassName: "border-sky-400/45 bg-sky-400/15 text-sky-100",
+    barClassName: "bg-sky-400",
+  },
+  "in-review": {
+    icon: Eye,
+    className: "text-amber-400",
+    surfaceClassName: "border-amber-400/50 bg-amber-400/10",
+    badgeClassName: "border-amber-400/50 bg-amber-400/15 text-amber-100",
+    barClassName: "bg-amber-400",
+  },
+  active: {
+    icon: PlayCircle,
+    className: "text-emerald-400",
+    surfaceClassName: "border-emerald-400/55 bg-emerald-400/10",
+    badgeClassName: "border-emerald-400/55 bg-emerald-400/15 text-emerald-100",
+    barClassName: "bg-emerald-400",
+  },
+  deprecated: {
+    icon: Archive,
+    className: "text-orange-400",
+    surfaceClassName: "border-orange-400/50 bg-orange-400/10",
+    badgeClassName: "border-orange-400/50 bg-orange-400/15 text-orange-100",
+    barClassName: "bg-orange-400",
+  },
+  complete: {
+    icon: CheckCircle2,
+    className: "text-green-400",
+    surfaceClassName: "border-green-400/55 bg-green-400/10",
+    badgeClassName: "border-green-400/55 bg-green-400/15 text-green-100",
+    barClassName: "bg-green-400",
+  },
+  skipped: {
+    icon: SkipForward,
+    className: "text-zinc-400",
+    surfaceClassName: "border-zinc-400/40 bg-zinc-400/10",
+    badgeClassName: "border-zinc-400/40 bg-zinc-400/15 text-zinc-100",
+    barClassName: "bg-zinc-400",
+  },
+};
+
+function getStatusVisual(status?: string) {
+  return (
+    statusVisuals[(status as AiddSetupStatus) || "draft"] ?? statusVisuals.draft
+  );
+}
+
+function StatusIcon({
+  status,
+  className,
+}: {
+  status?: string;
+  className?: string;
+}) {
+  const visual = getStatusVisual(status);
+  const Icon = visual.icon;
+  return (
+    <Icon className={cn("h-4 w-4 shrink-0", visual.className, className)} />
+  );
+}
+
+function StatusPill({ status }: { status?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 capitalize">
+      <StatusIcon status={status} />
+      {statusLabel(status)}
+    </span>
+  );
+}
+
+function StatusBadge({ status, label }: { status?: string; label?: string }) {
+  const visual = getStatusVisual(status);
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs font-medium capitalize",
+        visual.badgeClassName,
+      )}
+    >
+      <StatusIcon status={status} className="h-3.5 w-3.5" />
+      {label ? `${label}: ` : null}
+      {statusLabel(status)}
+    </span>
+  );
+}
+
+function newSections() {
+  return componentTemplateSections.map((section) => ({
+    ...section,
+    body: section.body,
+    status: "draft" as AiddSetupStatus,
+  }));
+}
+
+function sectionReady(section: ComponentSection) {
+  return section.status === "active" || section.status === "complete";
+}
+
+export function Components({
+  activeProject,
+}: {
+  activeProject?: AiddTrackedProject | null;
+}) {
   const [setup, setSetup] = useState<AiddProjectSetupState | null>(null);
   const [sourceProjects, setSourceProjects] = useState<AiddSourceCodeProject[]>([]);
-  const [view, setView] = useState<ComponentView>('list');
+  const [view, setView] = useState<ComponentView>("list");
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [status, setStatus] = useState<AiddSetupStatus>('draft');
+  const [title, setTitle] = useState("");
+  const [status, setStatus] = useState<AiddSetupStatus>("draft");
+  const [sections, setSections] = useState<ComponentSection[]>(newSections());
+  const [activeSectionKey, setActiveSectionKey] = useState("purpose");
   const [selectedSourceProjects, setSelectedSourceProjects] = useState<string[]>([]);
+  const [linkedCapabilities, setLinkedCapabilities] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const load = async () => { if (!activeProject?.path) return; const [nextSetup, nextSourceProjects] = await Promise.all([window.aidd.readProjectSetup(activeProject.path), window.aidd.readSourceProjects(activeProject.path)]); setSetup(nextSetup); setSourceProjects(nextSourceProjects); };
-  useEffect(() => { load().catch((err) => setError(String(err))); }, [activeProject?.path]);
-  const statusCounts = useMemo(() => { const counts = new Map<string, number>(); for (const component of setup?.components ?? []) counts.set(component.status ?? 'draft', (counts.get(component.status ?? 'draft') ?? 0) + 1); return counts; }, [setup?.components]);
-  const resetForm = () => { setEditingSlug(null); setTitle(''); setDescription(''); setStatus('draft'); setSelectedSourceProjects([]); };
-  const backToList = () => { resetForm(); setView('list'); };
-  const openEdit = async (slug: string) => { if (!activeProject?.path) return; setError(null); try { const component = await window.aidd.readComponent({ projectPath: activeProject.path, slug }); setEditingSlug(component.slug); setTitle(component.title); setDescription(component.description || ''); setStatus((component.status as AiddSetupStatus) || 'draft'); setSelectedSourceProjects(component.sourceProjects || []); setView('edit'); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } };
-  const createComponent = async () => { if (!activeProject?.path) return; setSaving(true); setError(null); try { const next = await window.aidd.createComponent({ projectPath: activeProject.path, title, description, status, sourceProjects: selectedSourceProjects }); setSetup(next); void window.aidd.notify({ title: 'Saved', body: 'Component created.' }); backToList(); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } finally { setSaving(false); } };
-  const updateComponent = async () => { if (!activeProject?.path || !editingSlug) return; setSaving(true); setError(null); try { const next = await window.aidd.updateComponent({ projectPath: activeProject.path, slug: editingSlug, title, description, status, sourceProjects: selectedSourceProjects }); setSetup(next); void window.aidd.notify({ title: 'Saved', body: 'Component saved.' }); backToList(); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } finally { setSaving(false); } };
-  const toggleSourceProject = (projectId: string) => setSelectedSourceProjects((current) => current.includes(projectId) ? current.filter((item) => item !== projectId) : [...current, projectId]);
-  if (!activeProject) return <div className="flex h-full items-center justify-center p-6"><Card><CardHeader><CardTitle>No project selected</CardTitle></CardHeader></Card></div>;
+  const [sectionDragFiles, setSectionDragFiles] = useState<Record<string, string>>({});
+  const [dragError, setDragError] = useState<string | null>(null);
 
-  if (view === 'list') return <div className="flex h-full flex-col overflow-hidden"><header className="flex h-16 shrink-0 items-center justify-between border-b px-6"><div><h1 className="text-xl font-semibold">Components</h1><p className="text-sm text-muted-foreground">Map apps, services, modules, libraries and workflows.</p></div><Button onClick={() => { resetForm(); setView('new'); }}><Plus className="h-4 w-4" /> New Component</Button></header><main className="min-h-0 flex-1 overflow-auto p-6">{error && <Alert variant="destructive" className="mb-4"><AlertTitle>Error</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}<div className="mb-6 grid gap-3 md:grid-cols-4"><Metric label="Total" value={setup?.components.length ?? 0} /><Metric label="Draft" value={statusCounts.get('draft') ?? 0} /><Metric label="Active" value={statusCounts.get('active') ?? 0} /><Metric label="Deprecated" value={statusCounts.get('deprecated') ?? 0} /></div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{setup?.components.map((component) => { const linkedCapabilities = setup.capabilities.filter((capability) => capability.components?.includes(component.slug)); return <Card key={component.slug} className="cursor-pointer hover:bg-accent" onClick={() => openEdit(component.slug)}><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle className="text-base">{component.title}</CardTitle><CardDescription>{linkedCapabilities.length ? `${linkedCapabilities.length} linked capability/capabilities` : 'No capabilities linked yet'}</CardDescription></div><Badge variant="outline">{statusLabel(component.status)}</Badge></div></CardHeader><CardContent className="space-y-2">{linkedCapabilities.map((capability) => <Badge key={capability.slug} variant="secondary">{capability.title}</Badge>)}{linkedCapabilities.length === 0 && <p className="text-sm text-muted-foreground">Open to map source projects and lifecycle.</p>}</CardContent></Card>; })}{setup && setup.components.length === 0 && <Card className="md:col-span-2 xl:col-span-3"><CardHeader><Puzzle className="h-6 w-6" /><CardTitle>No components yet</CardTitle><CardDescription>Create components to represent the parts that make capabilities possible.</CardDescription></CardHeader><CardContent><Button onClick={() => { resetForm(); setView('new'); }}>New Component</Button></CardContent></Card>}</div></main></div>;
+  const load = async () => {
+    if (!activeProject?.path) return;
+    const [nextSetup, nextSourceProjects] = await Promise.all([
+      window.aidd.readProjectSetup(activeProject.path),
+      window.aidd.readSourceProjects(activeProject.path),
+    ]);
+    setSetup(nextSetup);
+    setSourceProjects(nextSourceProjects);
+  };
 
-  const editorAction = view === 'edit' ? updateComponent : createComponent;
-  return <div className="flex h-full flex-col overflow-hidden"><header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b px-6"><div className="flex min-w-0 flex-1 items-center gap-2"><Button variant="ghost" size="icon" onClick={backToList}><ArrowLeft className="h-4 w-4" /></Button><Input className="max-w-lg text-base font-semibold" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Component name" /></div><Button onClick={editorAction} disabled={saving || !title.trim()}>{view === 'edit' ? <Save className="h-4 w-4" /> : <Plus className="h-4 w-4" />}{saving ? 'Saving...' : view === 'edit' ? 'Save' : 'Create'}</Button></header>{error && <div className="shrink-0 px-6 pt-4"><Alert variant="destructive"><AlertTitle>Error</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>}<main className="grid min-h-0 flex-1 gap-4 overflow-hidden p-6 xl:grid-cols-[1fr_320px]"><Card className="flex min-h-0 flex-col"><CardHeader><CardTitle>Component description</CardTitle><CardDescription>Describe what this component is responsible for. The body is saved exactly as edited.</CardDescription></CardHeader><CardContent className="min-h-0 flex-1"><AiddMarkdownEditor value={description} onChange={setDescription} minHeight={520} /></CardContent></Card><aside className="space-y-4 overflow-auto"><Card><CardHeader><CardTitle>Lifecycle</CardTitle></CardHeader><CardContent className="space-y-3"><Label>Status</Label><Select value={status} onChange={(event) => setStatus(event.target.value as AiddSetupStatus)}>{lifecycleOptions.map((item) => <option key={item} value={item}>{statusLabel(item)}</option>)}</Select>{status === 'deprecated' && <Alert><AlertTitle>Deprecated</AlertTitle><AlertDescription>Avoid linking this component to new work unless migration/removal is intentional.</AlertDescription></Alert>}</CardContent></Card><Card><CardHeader><CardTitle>Source projects</CardTitle><CardDescription>Map this component to implementation directories.</CardDescription></CardHeader><CardContent className="space-y-2">{sourceProjects.length ? sourceProjects.map((project) => <label key={project.id} className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm hover:bg-accent"><input className="mt-1" type="checkbox" checked={selectedSourceProjects.includes(project.id)} onChange={() => toggleSourceProject(project.id)} /><span><strong>{project.name}</strong><span className="block text-muted-foreground">{project.detectedType} · {project.path}</span></span></label>) : <p className="text-sm text-muted-foreground">No source projects yet. Add them from Source Code.</p>}</CardContent></Card></aside></main></div>;
+  useEffect(() => {
+    load().catch((err) => setError(String(err)));
+  }, [activeProject?.path]);
+
+  const statusCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const component of setup?.components ?? []) {
+      counts.set(
+        component.status ?? "draft",
+        (counts.get(component.status ?? "draft") ?? 0) + 1,
+      );
+    }
+    return counts;
+  }, [setup?.components]);
+
+  const activeSection =
+    sections.find((section) => section.key === activeSectionKey) ?? sections[0];
+  const progress = {
+    completed: sections.filter(sectionReady).length,
+    total: sections.length,
+  };
+
+  const resetForm = () => {
+    setEditingSlug(null);
+    setTitle("");
+    setStatus("draft");
+    setSections(newSections());
+    setActiveSectionKey("purpose");
+    setSelectedSourceProjects([]);
+    setLinkedCapabilities([]);
+    setMessage(null);
+    setDragError(null);
+    setSectionDragFiles({});
+  };
+
+  const backToList = () => {
+    resetForm();
+    setView("list");
+  };
+
+  const openEdit = async (slug: string) => {
+    if (!activeProject?.path) return;
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const component = await window.aidd.readComponent({
+        projectPath: activeProject.path,
+        slug,
+      });
+      setEditingSlug(component.slug);
+      setTitle(component.title);
+      setStatus((component.status as AiddSetupStatus) || "draft");
+      setSelectedSourceProjects(component.sourceProjects || []);
+      setLinkedCapabilities(component.capabilities || []);
+      setSections(component.sections?.length ? component.sections : newSections());
+      setActiveSectionKey(component.sections?.[0]?.key || "purpose");
+      setView("edit");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateActiveSectionBody = (body: string) =>
+    setSections((current) =>
+      current.map((section) =>
+        section.key === activeSectionKey
+          ? {
+              ...section,
+              body,
+              status:
+                body.trim() && section.status === "not-started"
+                  ? "draft"
+                  : section.status,
+            }
+          : section,
+      ),
+    );
+
+  const updateActiveSectionStatus = (nextStatus: AiddSetupStatus) =>
+    setSections((current) =>
+      current.map((section) =>
+        section.key === activeSectionKey
+          ? { ...section, status: nextStatus }
+          : section,
+      ),
+    );
+
+  const createComponent = async () => {
+    if (!activeProject?.path) return;
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const next = await window.aidd.createComponent({
+        projectPath: activeProject.path,
+        title,
+        status,
+        sourceProjects: selectedSourceProjects,
+        sections,
+      });
+      setSetup(next);
+      void window.aidd.notify({ title: "Saved", body: "Component created." });
+      backToList();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateComponent = async () => {
+    if (!activeProject?.path || !editingSlug) return;
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const next = await window.aidd.updateComponent({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+        title,
+        status,
+        sourceProjects: selectedSourceProjects,
+        sections,
+      });
+      setSetup(next);
+      setMessage("Component saved.");
+      void window.aidd.notify({ title: "Saved", body: "Component saved." });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleSourceProject = (projectId: string) =>
+    setSelectedSourceProjects((current) =>
+      current.includes(projectId)
+        ? current.filter((item) => item !== projectId)
+        : [...current, projectId],
+    );
+
+  const prepareComponentSectionDragFile = async (section: ComponentSection) => {
+    if (!activeProject?.path) return null;
+
+    const componentName = title.trim() || "New component";
+    const filePath = await window.aidd.prepareMarkdownDragFile({
+      projectPath: activeProject.path,
+      directory: editingSlug ? `components/${editingSlug}` : "components/draft",
+      fileName: section.fileName,
+      title: `${componentName} - ${section.title}`,
+      status: section.status || "draft",
+      body: section.body || "",
+      metadata: {
+        component: editingSlug || "draft",
+        section: section.key,
+      },
+    });
+
+    setSectionDragFiles((current) => ({ ...current, [section.key]: filePath }));
+    setDragError(null);
+    return filePath;
+  };
+
+  useEffect(() => {
+    if (!activeProject?.path || view === "list") {
+      setSectionDragFiles({});
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      Promise.all(sections.map((section) => prepareComponentSectionDragFile(section))).catch(
+        (err) => {
+          setSectionDragFiles({});
+          setDragError(err instanceof Error ? err.message : String(err));
+        },
+      );
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [activeProject?.path, editingSlug, title, sections, view]);
+
+  const startComponentSectionDrag = (
+    event: DragEvent<HTMLButtonElement>,
+    section: ComponentSection,
+  ) => {
+    const filePath = sectionDragFiles[section.key];
+
+    if (!filePath) {
+      event.preventDefault();
+      setDragError(
+        `${section.title} is still being prepared for drag-out. Try again in a moment.`,
+      );
+      prepareComponentSectionDragFile(section).catch((err) =>
+        setDragError(err instanceof Error ? err.message : String(err)),
+      );
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("text/plain", filePath);
+    event.preventDefault();
+    window.aidd.startNativeFileDrag(filePath);
+  };
+
+  if (!activeProject)
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>No project selected</CardTitle>
+          </CardHeader>
+        </Card>
+      </div>
+    );
+
+  if (view === "list")
+    return (
+      <div className="flex h-full flex-col overflow-hidden">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b px-6">
+          <div>
+            <h1 className="text-xl font-semibold">Components</h1>
+            <p className="text-sm text-muted-foreground">
+              Define the parts that own architecture, state, interfaces, and standards.
+            </p>
+          </div>
+          <Button
+            onClick={() => {
+              resetForm();
+              setView("new");
+            }}
+          >
+            <Plus className="h-4 w-4" /> New Component
+          </Button>
+        </header>
+        <main className="min-h-0 flex-1 overflow-auto p-6">
+          {error && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          <div className="mb-6 grid gap-3 md:grid-cols-4">
+            <Metric label="Total" value={setup?.components.length ?? 0} />
+            <Metric label="Draft" value={statusCounts.get("draft") ?? 0} />
+            <Metric label="Active" value={statusCounts.get("active") ?? 0} />
+            <Metric label="Deprecated" value={statusCounts.get("deprecated") ?? 0} />
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {setup?.components.map((component) => {
+              const capabilities = setup.capabilities.filter((capability) =>
+                capability.components?.includes(component.slug),
+              );
+              return (
+                <Card
+                  key={component.slug}
+                  className="cursor-pointer hover:bg-accent"
+                  onClick={() => openEdit(component.slug)}
+                >
+                  <CardHeader>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <CardTitle className="text-base">{component.title}</CardTitle>
+                        <CardDescription>
+                          {capabilities.length
+                            ? `${capabilities.length} linked capability/capabilities`
+                            : "No capabilities linked yet"}
+                        </CardDescription>
+                      </div>
+                      <Badge variant="outline">
+                        <StatusPill status={component.status} />
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {component.sourceProjects?.length ? (
+                      <div className="flex flex-wrap gap-2">
+                        {component.sourceProjects.map((sourceProject) => (
+                          <Badge key={sourceProject} variant="outline">
+                            {sourceProject}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : null}
+                    {capabilities.length ? (
+                      <div className="flex flex-wrap gap-2">
+                        {capabilities.map((capability) => (
+                          <Badge key={capability.slug} variant="secondary">
+                            {capability.title}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        Open the editor to define section files and source mappings.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+            {setup && setup.components.length === 0 && (
+              <Card className="md:col-span-2 xl:col-span-3">
+                <CardHeader>
+                  <Puzzle className="h-6 w-6" />
+                  <CardTitle>No components yet</CardTitle>
+                  <CardDescription>
+                    Create components to represent the parts that make capabilities possible.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Button
+                    onClick={() => {
+                      resetForm();
+                      setView("new");
+                    }}
+                  >
+                    New Component
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b px-6">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon" onClick={backToList}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <Input
+              className="max-w-lg text-base font-semibold"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Component name"
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <StatusBadge status={status} label="Lifecycle" />
+          <StatusBadge status={activeSection?.status} label="Section" />
+          <Button
+            onClick={view === "edit" ? updateComponent : createComponent}
+            disabled={saving || !title.trim()}
+          >
+            <Save className="h-4 w-4" />
+            {saving ? "Saving..." : view === "edit" ? "Save" : "Save component"}
+          </Button>
+        </div>
+      </header>
+      {error && (
+        <div className="shrink-0 px-6 pt-4">
+          <Alert variant="destructive">
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </div>
+      )}
+      {message && (
+        <div className="shrink-0 px-6 pt-4">
+          <Alert>
+            <AlertTitle>Saved</AlertTitle>
+            <AlertDescription>{message}</AlertDescription>
+          </Alert>
+        </div>
+      )}
+      <div className="flex shrink-0 gap-1.5 overflow-x-auto border-b bg-muted/30 px-6 py-2">
+        {sections.map((section, index) => {
+          const Icon = icons[index] ?? FileText;
+          return (
+            <button
+              key={section.key}
+              draggable={Boolean(sectionDragFiles[section.key])}
+              className={cn(
+                "relative flex h-16 w-32 shrink-0 cursor-grab flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent active:cursor-grabbing",
+                activeSectionKey === section.key &&
+                  "border-ring bg-accent ring-1 ring-ring",
+                !sectionDragFiles[section.key] && "cursor-default opacity-80",
+              )}
+              onClick={() => setActiveSectionKey(section.key)}
+              onDragStart={(event) => startComponentSectionDrag(event, section)}
+              onFocus={() => prepareComponentSectionDragFile(section).catch(() => undefined)}
+              onMouseEnter={() => prepareComponentSectionDragFile(section).catch(() => undefined)}
+              title={`${section.title}: ${statusLabel(section.status)}. Drag this file out.`}
+            >
+              <StatusIcon
+                status={section.status}
+                className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
+              />
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <FileText className="h-3.5 w-3.5" />
+                <Icon className="h-4 w-4" />
+              </div>
+              <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
+                {section.title}
+              </span>
+              <span className="line-clamp-1 text-[10px] text-muted-foreground">
+                {section.fileName}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {dragError && (
+        <div className="shrink-0 px-6 pt-2 text-xs text-destructive">
+          {dragError}
+        </div>
+      )}
+      <main className="min-h-0 flex-1 overflow-auto p-6">
+        <div className="flex min-w-0 flex-col gap-4">
+          <Card className="flex min-h-[460px] flex-col overflow-hidden">
+            <CardHeader className="shrink-0">
+              <div>
+                <CardTitle>{activeSection?.title}</CardTitle>
+                <CardDescription>{activeSection?.prompt}</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="min-h-0 flex-1 overflow-hidden p-4">
+              <AiddMarkdownEditor
+                value={activeSection?.body || ""}
+                onChange={updateActiveSectionBody}
+                minHeight={360}
+                height="420px"
+              />
+            </CardContent>
+          </Card>
+          <Card className="shrink-0">
+            <CardHeader>
+              <CardTitle>Status</CardTitle>
+              <CardDescription>
+                Components own technical detail. Capabilities should reference components
+                instead of copying architecture, data, or dependency rules.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 text-sm md:grid-cols-3">
+              <div className="space-y-1">
+                <span className="text-muted-foreground">Lifecycle</span>
+                <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-1.5 text-sm">
+                  <StatusIcon status={status} />
+                  <span>{statusLabel(status)}</span>
+                </div>
+                <Select
+                  className="w-full"
+                  value={status}
+                  onChange={(event) =>
+                    setStatus(event.target.value as AiddSetupStatus)
+                  }
+                >
+                  {statusOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {statusLabel(item)}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <span className="text-muted-foreground">Section status</span>
+                <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-1.5 text-sm">
+                  <StatusIcon status={activeSection?.status} />
+                  <span>{statusLabel(activeSection?.status)}</span>
+                </div>
+                <Select
+                  className="w-full"
+                  value={(activeSection?.status as AiddSetupStatus) || "not-started"}
+                  onChange={(event) =>
+                    updateActiveSectionStatus(event.target.value as AiddSetupStatus)
+                  }
+                >
+                  {statusOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {statusLabel(item)}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex items-center justify-between gap-3 md:flex-col md:items-start md:justify-center">
+                <div>
+                  <span className="text-muted-foreground">Template progress</span>
+                  <div className="font-semibold">
+                    {progress.completed}/{progress.total}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Source maps</span>
+                  <Badge variant={selectedSourceProjects.length ? "secondary" : "outline"}>
+                    {selectedSourceProjects.length || "None"}
+                  </Badge>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="shrink-0">
+            <CardHeader>
+              <CardTitle>Source projects</CardTitle>
+              <CardDescription>
+                Map this component to implementation directories without putting source-code
+                details in capability documents.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {sourceProjects.length ? (
+                sourceProjects.map((project) => (
+                  <label
+                    key={project.id}
+                    className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm hover:bg-accent"
+                  >
+                    <input
+                      className="mt-1"
+                      type="checkbox"
+                      checked={selectedSourceProjects.includes(project.id)}
+                      onChange={() => toggleSourceProject(project.id)}
+                    />
+                    <span>
+                      <strong>{project.name}</strong>
+                      <span className="block text-muted-foreground">
+                        {project.detectedType} · {project.path}
+                      </span>
+                    </span>
+                  </label>
+                ))
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No source projects yet. Add them from Source Code.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+          <Card className="shrink-0">
+            <CardHeader>
+              <CardTitle>Capabilities supported</CardTitle>
+              <CardDescription>
+                Capability behaviour stays in capability files. This component records the
+                technical ownership needed to support those capabilities.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {linkedCapabilities.length ? (
+                <div className="flex flex-wrap gap-2">
+                  {linkedCapabilities.map((capabilitySlug) => {
+                    const capability = setup?.capabilities.find(
+                      (item) => item.slug === capabilitySlug,
+                    );
+                    return (
+                      <Badge key={capabilitySlug} variant="secondary">
+                        {capability?.title || capabilitySlug}
+                      </Badge>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No capabilities currently link to this component. Link components from the
+                  capability editor.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+    </div>
+  );
 }
-function Metric({ label, value }: { label: string; value: number }) { return <Card><CardContent className="p-4"><div className="text-2xl font-semibold">{value}</div><div className="text-sm text-muted-foreground">{label}</div></CardContent></Card>; }
+
+function Metric({ label, value }: { label: string; value: number }) {
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="text-2xl font-semibold">{value}</div>
+        <div className="text-sm text-muted-foreground">{label}</div>
+      </CardContent>
+    </Card>
+  );
+}

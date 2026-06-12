@@ -5,7 +5,7 @@ aidd:
   title: Product Definition
   status: not-started
   required: true
-  templateVersion: 0.6.0
+  templateVersion: 0.8.0
   purpose: Define the product intent, problem space, outcomes, and non-goals.
 ---
 

@@ -15,9 +15,10 @@ import { DeliveryPackages } from './components/DeliveryPackages';
 import { BundleEditor } from './components/BundleEditor';
 import { Reviews } from './components/Reviews';
 import { Settings } from './components/Settings';
+import { ProjectValidation } from './components/ProjectValidation';
 import { SourceCode } from './components/SourceCode';
 
-export type Screen = 'projects' | 'project-create' | 'home' | 'foundation' | 'capabilities' | 'components' | 'source-code' | 'delivery-packages' | 'bundle-editor' | 'reviews' | 'settings';
+export type Screen = 'projects' | 'project-create' | 'home' | 'foundation' | 'capabilities' | 'components' | 'source-code' | 'delivery-packages' | 'bundle-editor' | 'reviews' | 'validation' | 'settings';
 
 type ThemeMode = 'system' | 'light' | 'dark';
 
@@ -154,6 +155,7 @@ function App() {
         {screen === 'delivery-packages' && <DeliveryPackages packages={packages} selectedId={selectedId} onSelectPackage={selectPackage} onCreatePackage={createPackage} activeProject={activeProject} />}
         {screen === 'bundle-editor' && <BundleEditor bundle={selectedPackage} onChange={updatePackage} onSubmitForReview={submitSelectedForReview} activeProject={activeProject} onBack={() => setScreen('delivery-packages')} />}
         {screen === 'reviews' && <Reviews bundles={packages} selectedId={selectedId} onSelectBundle={(id) => selectPackage(id, 'reviews')} bundle={selectedPackage} onChange={updatePackage} />}
+        {screen === 'validation' && <ProjectValidation activeProject={activeProject} />}
         {screen === 'settings' && <Settings activeProject={activeProject} themeMode={themeMode} onThemeModeChange={setThemeMode} />}
       </main>
     </div>

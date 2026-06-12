@@ -3,5 +3,18 @@
   "title": "__CAPABILITY_TITLE__",
   "status": "template",
   "components": [],
-  "createdAt": null
+  "createdAt": null,
+  "template": {
+    "type": "capability",
+    "sectionFiles": [
+      "01-outcomes.md",
+      "02-scope.md",
+      "03-user-journeys.md",
+      "04-functional-requirements.md",
+      "05-ux-ui.md",
+      "06-risks.md",
+      "07-validation.md"
+    ],
+    "templateVersion": "0.8.0"
+  }
 }

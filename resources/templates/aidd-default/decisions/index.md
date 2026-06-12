@@ -5,7 +5,7 @@ aidd:
   title: Decisions
   status: not-started
   required: false
-  templateVersion: 0.6.0
+  templateVersion: 0.8.0
 ---
 
 # Decisions
