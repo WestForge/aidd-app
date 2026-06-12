@@ -11,6 +11,8 @@ import { connectProjectToRepository, getProjectConnectionStatus } from './servic
 import { readGitIdentity, requireGitIdentity, saveGitIdentity } from './services/gitIdentityStore';
 import { checkForUpdates, createCheckpointIfNeeded, getSyncStatus, syncProject } from './services/gitSyncWorkflow';
 import type { AiddSaveGitIdentityInput, AiddSaveGitSyncSettingsInput, AiddGitSyncTestInput } from './services/gitSyncTypes';
+import { cancelGitReview, completeGitReview, listGitReviewFiles, readGitReviewFileContent, resolveGitReviewFile } from './services/gitReviewResolver';
+import { readActiveGitReviewState } from './services/gitReviewPackageStore';
 
 const isDev = process.env.NODE_ENV !== 'production';
 const TEMPLATE_ID = 'aidd-default';
@@ -3194,6 +3196,30 @@ ipcMain.handle('gitSync:syncProject', async (_event, projectPath: string) => {
     projectPath,
     credentialStore: gitCredentialStore
   });
+});
+
+ipcMain.handle('gitSync:getReviewState', async (_event, projectPath: string) => {
+  return readActiveGitReviewState(projectPath);
+});
+
+ipcMain.handle('gitSync:listReviewFiles', async (_event, projectPath: string) => {
+  return listGitReviewFiles(projectPath);
+});
+
+ipcMain.handle('gitSync:readReviewFile', async (_event, input: { projectPath: string; reviewId: string; filePath: string; kind: 'local' | 'remote' | 'base' }) => {
+  return readGitReviewFileContent(input);
+});
+
+ipcMain.handle('gitSync:resolveReviewFile', async (_event, input: { projectPath: string; reviewId: string; filePath: string; resolution: 'keep_local' | 'use_shared' | 'use_combined_draft'; combinedContent?: string }) => {
+  return resolveGitReviewFile(input);
+});
+
+ipcMain.handle('gitSync:completeReview', async (_event, projectPath: string, reviewId: string) => {
+  return completeGitReview(projectPath, reviewId);
+});
+
+ipcMain.handle('gitSync:cancelReview', async (_event, projectPath: string, reviewId: string) => {
+  return cancelGitReview(projectPath, reviewId);
 });
 
 ipcMain.handle('fs:readText', async (_event, filePath: string) => fsp.readFile(filePath, 'utf8'));

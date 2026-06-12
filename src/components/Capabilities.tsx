@@ -5,12 +5,8 @@ import {
   CheckCircle2,
   Circle,
   CircleDashed,
-  Database,
   Eye,
   FileText,
-  FolderOpen,
-  GitBranch,
-  Layers,
   ListChecks,
   PackagePlus,
   Pencil,
@@ -35,9 +31,7 @@ import {
   CardTitle,
 } from "./ui/card";
 import { Input } from "./ui/input";
-import { Textarea } from "./ui/textarea";
 import { Select } from "./ui/select";
-import { Label } from "./ui/label";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { cn } from "../lib/utils";
 
@@ -65,9 +59,6 @@ const icons = [
   Users,
   Zap,
   ShieldAlert,
-  Database,
-  GitBranch,
-  Layers,
   Workflow,
   ShieldAlert,
   CheckCircle2,
@@ -143,7 +134,7 @@ Describe the minimum behaviour required before implementation can be accepted.`,
   {
     key: "non-functional-requirements",
     fileName: "05-non-functional-requirements.md",
-    title: "Non-Functional Requirements",
+    title: "Quality Requirements",
     body: `## Quality Attributes
 - Performance:
 - Reliability:
@@ -157,63 +148,11 @@ Describe the minimum behaviour required before implementation can be accepted.`,
 ## Service Expectations
 Describe any limits, response times, scale, offline behaviour, or compatibility needs.`,
     prompt:
-      "List quality attributes, constraints, performance, reliability, security, or accessibility needs.",
-  },
-  {
-    key: "data-model",
-    fileName: "06-data-model.md",
-    title: "Data Model",
-    body: `## Key Data
-| Name | Purpose | Owner / Source | Notes |
-| --- | --- | --- | --- |
-|  |  |  |  |
-
-## State
-Describe important state transitions, identifiers, and persistence rules.
-
-## Data Rules
-- `,
-    prompt: "Describe important data, records, state, and identifiers.",
-  },
-  {
-    key: "integrations",
-    fileName: "07-integrations.md",
-    title: "Integrations",
-    body: `## Internal Integrations
-- Components:
-- Capabilities:
-- Workflows:
-
-## External Integrations
-- Services:
-- Files / APIs:
-- Authentication / permissions:
-
-## Integration Rules
-- `,
-    prompt:
-      "Describe systems, services, components, or workflows this capability integrates with.",
-  },
-  {
-    key: "architecture",
-    fileName: "08-architecture.md",
-    title: "Architecture",
-    body: `## Proposed Shape
-Describe the technical approach, affected layers, and important design decisions.
-
-## Components Involved
-- 
-
-## Constraints
-- 
-
-## Open Questions
-- `,
-    prompt: "Describe the expected architectural shape or constraints.",
+      "List quality, performance, reliability, security, or accessibility needs.",
   },
   {
     key: "ux-ui",
-    fileName: "09-ux-ui.md",
+    fileName: "06-ux-ui.md",
     title: "UX/UI",
     body: `## User Interface
 Describe screens, panels, controls, messages, empty states, and error states.
@@ -230,7 +169,7 @@ Describe screens, panels, controls, messages, empty states, and error states.
   },
   {
     key: "risks",
-    fileName: "10-risks.md",
+    fileName: "07-risks.md",
     title: "Risks",
     body: `## Risks
 | Risk | Impact | Mitigation |
@@ -246,7 +185,7 @@ Describe screens, panels, controls, messages, empty states, and error states.
   },
   {
     key: "validation",
-    fileName: "11-validation.md",
+    fileName: "08-validation.md",
     title: "Validation",
     body: `## Verification Approach
 Describe how this capability will be checked before it is considered ready.
@@ -372,8 +311,8 @@ function StatusBadge({ status, label }: { status?: string; label?: string }) {
 function newSections() {
   return capabilityTemplateSections.map((section) => ({
     ...section,
-    body: "",
-    status: "not-started" as AiddSetupStatus,
+    body: section.body,
+    status: "draft" as AiddSetupStatus,
   }));
 }
 function sectionReady(section: CapabilitySection) {
@@ -393,15 +332,12 @@ export function Capabilities({
   const [title, setTitle] = useState("");
   const [status, setStatus] = useState<AiddSetupStatus>("draft");
   const [selectedComponents, setSelectedComponents] = useState<string[]>([]);
-  const [inlineComponentTitle, setInlineComponentTitle] = useState("");
-  const [inlineComponentDescription, setInlineComponentDescription] =
-    useState("");
   const [sections, setSections] = useState<CapabilitySection[]>(newSections());
   const [activeSectionKey, setActiveSectionKey] = useState("outcomes");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [dragFilePath, setDragFilePath] = useState<string | null>(null);
+  const [sectionDragFiles, setSectionDragFiles] = useState<Record<string, string>>({});
   const [dragError, setDragError] = useState<string | null>(null);
   const load = async () => {
     if (!activeProject?.path) return;
@@ -435,86 +371,80 @@ export function Capabilities({
     (status === "active" || status === "complete") &&
     allSectionsReady;
 
+  const prepareCapabilitySectionDragFile = async (section: CapabilitySection) => {
+    if (!activeProject?.path) return null;
+
+    const capabilityName = title.trim() || "New capability";
+    const filePath = await window.aidd.prepareMarkdownDragFile({
+      projectPath: activeProject.path,
+      directory: selectedSlug
+        ? `capabilities/${selectedSlug}`
+        : "capabilities/draft",
+      fileName: section.fileName,
+      title: `${capabilityName} - ${section.title}`,
+      status: section.status || "draft",
+      body: section.body || "",
+      metadata: {
+        capability: selectedSlug || "draft",
+        section: section.key,
+      },
+    });
+
+    setSectionDragFiles((current) => ({ ...current, [section.key]: filePath }));
+    setDragError(null);
+    return filePath;
+  };
+
   useEffect(() => {
-    if (!activeProject?.path || !activeSection) {
-      setDragFilePath(null);
+    if (!activeProject?.path) {
+      setSectionDragFiles({});
       return;
     }
 
-    const capabilityName = title.trim() || "New capability";
     const timer = window.setTimeout(() => {
-      window.aidd
-        .prepareMarkdownDragFile({
-          projectPath: activeProject.path,
-          directory: selectedSlug
-            ? `capabilities/${selectedSlug}`
-            : "capabilities/draft",
-          fileName: activeSection.fileName,
-          title: `${capabilityName} - ${activeSection.title}`,
-          status: activeSection.status || "draft",
-          body: activeSection.body || "",
-          metadata: {
-            capability: selectedSlug || "draft",
-            section: activeSection.key,
-          },
-        })
-        .then((filePath) => {
-          setDragFilePath(filePath);
-          setDragError(null);
-        })
-        .catch((err) => {
-          setDragFilePath(null);
+      Promise.all(sections.map((section) => prepareCapabilitySectionDragFile(section))).catch(
+        (err) => {
+          setSectionDragFiles({});
           setDragError(err instanceof Error ? err.message : String(err));
-        });
+        },
+      );
     }, 350);
 
     return () => window.clearTimeout(timer);
-  }, [
-    activeProject?.path,
-    selectedSlug,
-    title,
-    activeSection?.key,
-    activeSection?.fileName,
-    activeSection?.title,
-    activeSection?.status,
-    activeSection?.body,
-  ]);
+  }, [activeProject?.path, selectedSlug, title, sections]);
 
   const startCapabilitySectionDrag = (
-    event: React.DragEvent<HTMLDivElement>,
+    event: React.DragEvent<HTMLButtonElement>,
+    section: CapabilitySection,
   ) => {
-    if (!dragFilePath) {
+    const filePath = sectionDragFiles[section.key];
+
+    if (!filePath) {
       event.preventDefault();
       setDragError(
-        "The drag file is still being prepared. Try again in a moment.",
+        `${section.title} is still being prepared for drag-out. Try again in a moment.`,
+      );
+      prepareCapabilitySectionDragFile(section).catch((err) =>
+        setDragError(err instanceof Error ? err.message : String(err)),
       );
       return;
     }
 
     event.dataTransfer.effectAllowed = "copy";
-    event.dataTransfer.setData("text/plain", dragFilePath);
+    event.dataTransfer.setData("text/plain", filePath);
     event.preventDefault();
-    window.aidd.startNativeFileDrag(dragFilePath);
+    window.aidd.startNativeFileDrag(filePath);
   };
 
-  const openDragFileLocation = () => {
-    if (!dragFilePath) return;
-    window.aidd
-      .showItemInFolder(dragFilePath)
-      .catch((err) =>
-        setDragError(err instanceof Error ? err.message : String(err)),
-      );
-  };
   const resetForm = () => {
     setTitle("");
     setStatus("draft");
     setSelectedComponents([]);
-    setInlineComponentTitle("");
-    setInlineComponentDescription("");
     setSelectedSlug(null);
     setSections(newSections());
     setActiveSectionKey("outcomes");
     setMessage(null);
+    setDragError(null);
   };
   const openCapability = async (slug: string) => {
     if (!activeProject?.path) return;
@@ -575,14 +505,7 @@ export function Capabilities({
       const next = await window.aidd.createCapability({
         projectPath: activeProject.path,
         title,
-        componentSlugs: selectedComponents,
-        inlineComponent: inlineComponentTitle.trim()
-          ? {
-              title: inlineComponentTitle,
-              description: inlineComponentDescription,
-            }
-          : undefined,
-        status,
+        componentSlugs: selectedComponents,        status,
         sections,
       });
       setSetup(next);
@@ -773,18 +696,13 @@ export function Capabilities({
               <PackagePlus className="h-4 w-4" /> Create Delivery Package
             </Button>
           )}
-          {view === "edit" ? (
-            <Button onClick={saveCapability} disabled={saving || !title.trim()}>
-              <Save className="h-4 w-4" /> Save
-            </Button>
-          ) : (
-            <Button
-              onClick={createCapability}
-              disabled={saving || !title.trim()}
-            >
-              <Plus className="h-4 w-4" /> Create
-            </Button>
-          )}
+          <Button
+            onClick={view === "edit" ? saveCapability : createCapability}
+            disabled={saving || !title.trim()}
+          >
+            <Save className="h-4 w-4" />
+            {view === "edit" ? "Save" : "Save capability"}
+          </Button>
         </div>
       </header>
       {error && (
@@ -809,40 +727,57 @@ export function Capabilities({
           return (
             <button
               key={section.key}
+              draggable={Boolean(sectionDragFiles[section.key])}
               className={cn(
-                "relative flex h-16 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent",
+                "relative flex h-16 w-32 shrink-0 cursor-grab flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent active:cursor-grabbing",
                 activeSectionKey === section.key &&
                   "border-ring bg-accent ring-1 ring-ring",
+                !sectionDragFiles[section.key] && "cursor-default opacity-80",
               )}
               onClick={() => setActiveSectionKey(section.key)}
-              title={`${section.title}: ${statusLabel(section.status)}`}
+              onDragStart={(event) => startCapabilitySectionDrag(event, section)}
+              onFocus={() => prepareCapabilitySectionDragFile(section).catch(() => undefined)}
+              onMouseEnter={() => prepareCapabilitySectionDragFile(section).catch(() => undefined)}
+              title={`${section.title}: ${statusLabel(section.status)}. Drag this file out.`}
             >
               <StatusIcon
                 status={section.status}
                 className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
               />
-              <Icon className="h-4 w-4 text-muted-foreground" />
-              <span className="line-clamp-2 px-1 text-center font-medium leading-tight">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <FileText className="h-3.5 w-3.5" />
+                <Icon className="h-4 w-4" />
+              </div>
+              <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
                 {section.title}
+              </span>
+              <span className="line-clamp-1 text-[10px] text-muted-foreground">
+                {section.fileName}
               </span>
             </button>
           );
         })}
       </div>
-      <main className="grid min-h-0 flex-1 gap-4 overflow-hidden p-6 xl:grid-cols-[minmax(0,1fr)_88px]">
-        <div className="flex min-h-0 flex-col gap-4 overflow-hidden">
-          <Card className="flex min-h-0 flex-1 flex-col">
+      {dragError && (
+        <div className="shrink-0 px-6 pt-2 text-xs text-destructive">
+          {dragError}
+        </div>
+      )}
+      <main className="min-h-0 flex-1 overflow-auto p-6">
+        <div className="flex min-w-0 flex-col gap-4">
+          <Card className="flex min-h-[460px] flex-col overflow-hidden">
             <CardHeader className="shrink-0">
               <div>
                 <CardTitle>{activeSection?.title}</CardTitle>
                 <CardDescription>{activeSection?.prompt}</CardDescription>
               </div>
             </CardHeader>
-            <CardContent className="min-h-0 flex-1">
+            <CardContent className="min-h-0 flex-1 overflow-hidden p-4">
               <AiddMarkdownEditor
                 value={activeSection?.body || ""}
                 onChange={updateActiveSectionBody}
-                minHeight={520}
+                minHeight={360}
+                height="420px"
               />
             </CardContent>
           </Card>
@@ -954,75 +889,9 @@ export function Capabilities({
                   </p>
                 )}
               </div>
-              {view === "new" && (
-                <div className="space-y-2 rounded-md border p-3">
-                  <Label>Create new component inline</Label>
-                  <Input
-                    value={inlineComponentTitle}
-                    onChange={(e) => setInlineComponentTitle(e.target.value)}
-                    placeholder="Component name"
-                  />
-                  <Textarea
-                    value={inlineComponentDescription}
-                    onChange={(e) =>
-                      setInlineComponentDescription(e.target.value)
-                    }
-                    placeholder="Component description"
-                  />
-                </div>
-              )}
             </CardContent>
           </Card>
         </div>
-        <aside
-          className="flex min-h-0 flex-col gap-2"
-          aria-label="Current capability section file drag column"
-        >
-          <Card className="rounded-md">
-            <CardHeader className="px-2 py-2">
-              <CardTitle className="text-center text-xs">File</CardTitle>
-            </CardHeader>
-            <CardContent className="px-2 pb-2">
-              <div
-                draggable={Boolean(dragFilePath)}
-                onDragStart={startCapabilitySectionDrag}
-                title={
-                  dragFilePath
-                    ? "Drag this Markdown file into Explorer, ChatGPT, Claude, or another file upload target."
-                    : "Preparing current Markdown file..."
-                }
-                className={cn(
-                  "flex h-28 select-none flex-col items-center justify-center gap-2 rounded-md border bg-card p-2 text-center text-xs text-card-foreground shadow-sm",
-                  dragFilePath
-                    ? "cursor-grab hover:bg-accent active:cursor-grabbing"
-                    : "cursor-not-allowed opacity-60",
-                )}
-              >
-                <FileText className="pointer-events-none h-8 w-8" />
-                <span className="pointer-events-none line-clamp-2 break-all leading-tight">
-                  {activeSection?.fileName ?? "capability.md"}
-                </span>
-                <span className="pointer-events-none text-[10px] text-muted-foreground">
-                  Drag out
-                </span>
-              </div>
-              <Button
-                className="mt-2 w-full px-1 text-[11px]"
-                variant="outline"
-                size="sm"
-                onClick={openDragFileLocation}
-                disabled={!dragFilePath}
-                title="Open the generated file location"
-              >
-                <FolderOpen className="mr-1 h-3 w-3" />
-                Folder
-              </Button>
-              {dragError && (
-                <p className="mt-2 text-[10px] text-destructive">{dragError}</p>
-              )}
-            </CardContent>
-          </Card>
-        </aside>
       </main>
     </div>
   );

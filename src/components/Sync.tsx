@@ -3,6 +3,7 @@ import type { DeliveryBundle } from '../domain/types';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { GitReviewPanel } from './GitReviewPanel';
 
 function setupStatusLabel(state: AiddGitProjectConnectionState) {
   switch (state) {
@@ -321,6 +322,8 @@ export function Sync({ bundles, activeProject }: { bundles: DeliveryBundle[]; ac
             </div>
           </CardContent>
         </Card>
+
+        <GitReviewPanel activeProject={activeProject} />
 
         <Card>
           <CardHeader>

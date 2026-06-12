@@ -141,6 +141,43 @@ interface AiddGitSyncResult {
   status: AiddGitSyncStatus;
 }
 
+
+type AiddGitReviewPackageStatus = 'none' | 'pending' | 'partially_resolved' | 'ready_to_complete' | 'completed';
+type AiddGitReviewFileStatus = 'unresolved' | 'resolved';
+type AiddGitReviewVersionKind = 'local' | 'remote' | 'base';
+type AiddGitReviewResolution = 'keep_local' | 'use_shared' | 'use_combined_draft';
+
+interface AiddGitReviewFile {
+  path: string;
+  status: AiddGitReviewFileStatus;
+  options: Array<'keep_local' | 'use_shared' | 'manual_review' | 'combined_draft'>;
+}
+
+interface AiddGitReviewState {
+  active: boolean;
+  reviewId?: string;
+  createdAt?: string;
+  status: AiddGitReviewPackageStatus;
+  message: string;
+  files: AiddGitReviewFile[];
+  packagePath?: string;
+}
+
+interface AiddGitReadReviewFileInput {
+  projectPath: string;
+  reviewId: string;
+  filePath: string;
+  kind: AiddGitReviewVersionKind;
+}
+
+interface AiddGitResolveReviewFileInput {
+  projectPath: string;
+  reviewId: string;
+  filePath: string;
+  resolution: AiddGitReviewResolution;
+  combinedContent?: string;
+}
+
 interface AiddTrackedProject {
   id: string;
   name: string;
@@ -545,6 +582,12 @@ interface Window {
       saveSettings: (input: AiddSaveGitSyncSettingsInput) => Promise<AiddGitSyncSettings>;
       testConnection: (input: AiddGitSyncTestInput) => Promise<AiddGitSyncTestResult>;
       clearToken: (projectPath: string) => Promise<AiddGitSyncSettings | null>;
+      getReviewState: (projectPath: string) => Promise<AiddGitReviewState>;
+      listReviewFiles: (projectPath: string) => Promise<AiddGitReviewFile[]>;
+      readReviewFile: (input: AiddGitReadReviewFileInput) => Promise<string>;
+      resolveReviewFile: (input: AiddGitResolveReviewFileInput) => Promise<AiddGitReviewState>;
+      completeReview: (projectPath: string, reviewId: string) => Promise<AiddGitReviewState>;
+      cancelReview: (projectPath: string, reviewId: string) => Promise<AiddGitReviewState>;
       getProjectConnectionStatus: (projectPath: string) => Promise<AiddGitProjectConnectionStatus>;
       connectProject: (projectPath: string) => Promise<AiddGitProjectConnectionResult>;
       getSyncStatus: (projectPath: string) => Promise<AiddGitSyncStatus>;
