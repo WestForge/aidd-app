@@ -163,7 +163,16 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
         token: '',
         hasToken: saved.hasToken
       });
-      setGitSyncMessage(saved.repoUrl ? 'Repository sync settings saved.' : 'Remote repository cleared. Local Git remains enabled.');
+
+      const setupResult = await window.aidd.gitSync.connectProject(activeProject.path);
+
+      if (!setupResult.ok) {
+        setGitSyncMessage(`Repository settings saved, but local Git setup needs attention: ${setupResult.message}`);
+        setGitSyncTone('error');
+        return;
+      }
+
+      setGitSyncMessage(setupResult.message);
       setGitSyncTone('success');
     } catch (error) {
       setGitSyncMessage(error instanceof Error ? error.message : 'Could not save repository sync settings.');
@@ -375,7 +384,7 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
 
               <div className="flex flex-wrap gap-2">
                 <Button type="button" disabled={gitSyncDisabled} onClick={saveGitSyncSettings}>
-                  {gitSyncBusy ? 'Working...' : 'Save repository settings'}
+                  {gitSyncBusy ? 'Working...' : 'Save and update Git setup'}
                 </Button>
                 <Button type="button" variant="outline" disabled={gitSyncDisabled || !gitSync.repoUrl.trim()} onClick={testGitSyncConnection}>Test connection</Button>
                 <Button type="button" variant="outline" disabled={gitSyncDisabled || !gitSync.hasToken} onClick={clearGitSyncToken}>Clear token</Button>
