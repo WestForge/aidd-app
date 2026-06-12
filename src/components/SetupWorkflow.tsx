@@ -14,7 +14,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { AiddMarkdownEditor } from "./editor/AiddMarkdownEditor";
 import { Button } from "./ui/button";
 import {
   Card,
@@ -606,11 +605,10 @@ export function SetupWorkflow({
                 </div>
               </CardHeader>
               <CardContent className="min-h-0 flex-1 px-4 pb-4">
-                <AiddMarkdownEditor
+                <Textarea
+                  className="h-full min-h-[520px] resize-none font-mono text-sm"
                   value={draftBody}
-                  onChange={setDraftBody}
-                  minHeight={520}
-                  height="100%"
+                  onChange={(event) => setDraftBody(event.target.value)}
                 />
               </CardContent>
             </Card>
@@ -716,13 +714,14 @@ export function SetupWorkflow({
                   />
                 </div>
                 <div className="min-h-0 flex-1">
-                  <AiddMarkdownEditor
-                    label="Project-specific additions"
-                    value={projectSpecificNotes}
-                    onChange={setProjectSpecificNotes}
-                    minHeight={360}
-                    height="100%"
-                  />
+                  <div className="flex h-full min-h-[360px] flex-col gap-2">
+                    <Label>Project-specific additions</Label>
+                    <Textarea
+                      className="h-full min-h-[320px] resize-none font-mono text-sm"
+                      value={projectSpecificNotes}
+                      onChange={(event) => setProjectSpecificNotes(event.target.value)}
+                    />
+                  </div>
                 </div>
                 <div className="flex shrink-0 gap-2">
                   <Button

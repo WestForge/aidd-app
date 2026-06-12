@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, ipcMain, dialog, shell, Notification } from '
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import git from 'isomorphic-git';
 import matter from 'gray-matter';
 import { createKeytarCredentialStore } from './services/gitCredentialStore';
@@ -149,6 +150,7 @@ interface HomeWorkComponentItem {
   title: string;
   status: string;
   sourceProjects: string[];
+  source?: ComponentSourceConfig;
   capabilities: string[];
   reason: string;
 }
@@ -243,10 +245,23 @@ interface FoundationDocument {
   body: string;
 }
 
+interface ComponentContractInfo {
+  path: string;
+  version: number;
+  sourceHash?: string;
+  status: 'blocked' | 'missing' | 'stale' | 'current';
+  blockers: string[];
+}
+
+interface ComponentSourceConfig {
+  directory: string;
+  type: string;
+}
+
 interface ProjectSetupState {
   foundation: FoundationDocument[];
   standards: { status: SetupStepStatus; filePath: string; body: string; profiles: string[] };
-  components: Array<{ slug: string; title: string; status?: string; sourceProjects?: string[] }>;
+  components: Array<{ slug: string; title: string; status?: string; sourceProjects?: string[]; source?: ComponentSourceConfig; contract?: ComponentContractInfo }>;
   capabilities: Array<{ slug: string; title: string; status?: string; components?: string[] }>;
   gitInitialized: boolean;
 }
@@ -291,7 +306,8 @@ interface ComponentSectionInput {
   fileName: string;
   title: string;
   body: string;
-  status?: SetupStepStatus;
+  status?: SetupStepStatus | string;
+  skipReason?: string;
 }
 
 interface CreateComponentInput {
@@ -300,11 +316,17 @@ interface CreateComponentInput {
   description?: string;
   status?: SetupStepStatus | 'active' | 'deprecated';
   sourceProjects?: string[];
+  source?: Partial<ComponentSourceConfig>;
   capabilities?: string[];
   sections?: ComponentSectionInput[];
 }
 
 interface ReadComponentInput {
+  projectPath: string;
+  slug: string;
+}
+
+interface GenerateComponentContractInput {
   projectPath: string;
   slug: string;
 }
@@ -316,6 +338,7 @@ interface UpdateComponentInput {
   description?: string;
   status?: SetupStepStatus | 'active' | 'deprecated';
   sourceProjects?: string[];
+  source?: Partial<ComponentSourceConfig>;
   capabilities?: string[];
   sections?: ComponentSectionInput[];
 }
@@ -603,7 +626,7 @@ async function fileStatus(filePath: string): Promise<SetupStepStatus> {
 }
 
 async function readFoundationDocuments(projectPath: string): Promise<FoundationDocument[]> {
-  const foundationDir = await exists(path.join(projectPath, 'foundation')) ? 'foundation' : 'common';
+  const foundationDir = 'foundation';
   const definitions = [
     ['product-definition', 'Product definition', '02-product-definition.md'],
     ['audience-and-users', 'Audience & users', '03-audience-and-users.md'],
@@ -813,21 +836,24 @@ async function readHomeWork(projectPath: string): Promise<HomeWork> {
       const slug = String(component.slug || component.id || '').trim();
       const status = String(component.status || component.lifecycle || 'draft');
       const sourceProjects = Array.isArray(component.sourceProjects) ? component.sourceProjects : [];
+      const source = normaliseComponentSource(component.source);
+      const hasSourceMapping = sourceProjects.length > 0 || componentSourceIsConfigured(source);
       const capabilities = capabilityByComponent.get(slug) || [];
       const reasons: string[] = [];
       if (!isTerminalHomeStatus(status)) reasons.push(`Status is ${status.replace(/-/g, ' ')}`);
-      if (!sourceProjects.length) reasons.push('No source mapping');
+      if (!hasSourceMapping) reasons.push('No source mapping');
       if (!capabilities.length) reasons.push('No capability mapping');
       return {
         slug,
         title: String(component.title || slug || 'Untitled component'),
         status,
         sourceProjects,
+        source,
         capabilities,
         reason: reasons.join(' · ') || 'Needs review'
       };
     })
-    .filter((component) => !isTerminalHomeStatus(component.status) || !component.sourceProjects.length || !component.capabilities.length)
+    .filter((component) => !isTerminalHomeStatus(component.status) || !(component.sourceProjects.length > 0 || componentSourceIsConfigured(component.source)) || !component.capabilities.length)
     .sort((a, b) => a.title.localeCompare(b.title));
 
   const capabilities: HomeWorkCapabilityItem[] = [];
@@ -887,7 +913,7 @@ async function readHomeWork(projectPath: string): Promise<HomeWork> {
 async function readProjectStatus(projectPath: string): Promise<ProjectStatus> {
   const manifestPath = path.join(projectPath, 'aidd.template.json');
   const manifest = await exists(manifestPath) ? await readJson<any>(manifestPath) : {};
-  const foundationDir = await exists(path.join(projectPath, 'foundation')) ? 'foundation' : 'common';
+  const foundationDir = 'foundation';
   const foundationFiles = [
     ['product', 'Product definition', '02-product-definition.md', 'Defines the product intent future work inherits.'],
     ['audience', 'Audience & users', '03-audience-and-users.md', 'Identifies who the product is for.'],
@@ -3227,6 +3253,7 @@ function normaliseComponentSections(inputSections?: ComponentSectionInput[], fal
       title: template.title,
       body,
       status: input?.status || (body.trim() ? 'draft' : 'not-started') as SetupStepStatus,
+      skipReason: input?.skipReason?.trim() || '',
       prompt: template.prompt
     };
   });
@@ -3234,29 +3261,34 @@ function normaliseComponentSections(inputSections?: ComponentSectionInput[], fal
 
 function buildComponentSectionMarkdown(input: { slug: string; componentTitle: string; section: ReturnType<typeof normaliseComponentSections>[number]; status: string; sourceProjects: string[]; capabilities: string[] }) {
   const body = input.section.body?.trim() || input.section.prompt;
+  const sectionAidd: Record<string, unknown> = {
+    type: 'component-section',
+    id: `${input.slug}-${input.section.key}`,
+    title: `${input.componentTitle} ${input.section.title}`,
+    status: input.section.status || 'not-started',
+    required: true,
+    component: input.slug,
+    section: input.section.key,
+    sourceProjects: input.sourceProjects,
+    capabilitiesSupported: input.capabilities,
+    templateVersion: TEMPLATE_VERSION,
+    updatedAt: new Date().toISOString()
+  };
+  if (input.section.status === 'skipped' && input.section.skipReason?.trim()) {
+    sectionAidd.skipReason = input.section.skipReason.trim();
+  }
+
   return matter.stringify([
     `# ${input.componentTitle} ${input.section.title}`,
     '',
     body,
     ''
   ].join('\n'), {
-    aidd: {
-      type: 'component-section',
-      id: `${input.slug}-${input.section.key}`,
-      title: `${input.componentTitle} ${input.section.title}`,
-      status: input.section.status || 'not-started',
-      required: true,
-      component: input.slug,
-      section: input.section.key,
-      sourceProjects: input.sourceProjects,
-      capabilitiesSupported: input.capabilities,
-      templateVersion: TEMPLATE_VERSION,
-      updatedAt: new Date().toISOString()
-    }
+    aidd: sectionAidd
   });
 }
 
-function buildComponentIndexMarkdown(input: { slug: string; title: string; status: string; sourceProjects: string[]; capabilities: string[]; sections: ReturnType<typeof normaliseComponentSections> }) {
+function buildComponentIndexMarkdown(input: { slug: string; title: string; status: string; sourceProjects: string[]; source: ComponentSourceConfig; capabilities: string[]; sections: ReturnType<typeof normaliseComponentSections> }) {
   return matter.stringify([
     `# ${input.title}`,
     '',
@@ -3266,9 +3298,13 @@ function buildComponentIndexMarkdown(input: { slug: string; title: string; statu
     '',
     ...input.sections.map((section) => `- [${section.title}](./${section.fileName})`),
     '',
+    '## Source',
+    '',
+    componentSourceDisplay(input.source),
+    '',
     '## Source Projects',
     '',
-    input.sourceProjects.length ? input.sourceProjects.map((project) => `- ${project}`).join('\n') : 'No source projects linked yet.',
+    input.sourceProjects.length ? input.sourceProjects.map((project) => `- ${project}`).join('\n') : 'No legacy source projects linked.',
     '',
     '## Capabilities Supported',
     '',
@@ -3282,12 +3318,170 @@ function buildComponentIndexMarkdown(input: { slug: string; title: string; statu
       status: input.status || 'draft',
       required: true,
       sourceProjects: input.sourceProjects,
+      source: input.source,
       capabilitiesSupported: input.capabilities,
       templateVersion: TEMPLATE_VERSION,
       updatedAt: new Date().toISOString()
     }
   });
 }
+
+type NormalisedComponentSection = ReturnType<typeof normaliseComponentSections>[number];
+
+function normaliseComponentSource(input?: Partial<ComponentSourceConfig> | null): ComponentSourceConfig {
+  return {
+    directory: String(input?.directory || '').trim().replace(/\\/g, '/'),
+    type: String(input?.type || '').trim() || 'other'
+  };
+}
+
+function componentSourceIsConfigured(source?: Partial<ComponentSourceConfig> | null) {
+  return Boolean(String(source?.directory || '').trim());
+}
+
+function componentSourceDisplay(source: ComponentSourceConfig) {
+  if (!componentSourceIsConfigured(source)) return 'Source location has not been configured for this component.';
+  return [
+    `- Type: \`${source.type || 'other'}\``,
+    `- Directory: \`${source.directory}\``
+  ].join('\n');
+}
+
+type ComponentContractStatus = ComponentContractInfo['status'];
+
+function componentSectionIsContractReady(section: NormalisedComponentSection) {
+  if (section.status === 'skipped') return Boolean(section.skipReason?.trim());
+  return section.status === 'complete' || section.status === 'active';
+}
+
+function componentContractBlockers(sections: NormalisedComponentSection[]) {
+  return sections.flatMap((section) => {
+    if (section.status === 'skipped' && !section.skipReason?.trim()) {
+      return [`${section.title} is skipped but needs a reason.`];
+    }
+    if (!componentSectionIsContractReady(section)) {
+      return [`${section.title} must be ready or skipped.`];
+    }
+    return [];
+  });
+}
+
+function componentContractSource(input: { slug: string; title: string; status: string; sourceProjects: string[]; source: ComponentSourceConfig; capabilities: string[]; sections: NormalisedComponentSection[] }) {
+  return {
+    slug: input.slug,
+    title: input.title,
+    status: input.status,
+    sourceProjects: [...input.sourceProjects].sort(),
+    source: normaliseComponentSource(input.source),
+    capabilities: [...input.capabilities].sort(),
+    sections: input.sections.map((section) => ({
+      key: section.key,
+      fileName: section.fileName,
+      title: section.title,
+      status: section.status || 'not-started',
+      skipReason: section.skipReason?.trim() || '',
+      body: section.body?.trim() || ''
+    }))
+  };
+}
+
+function computeComponentContractHash(input: { slug: string; title: string; status: string; sourceProjects: string[]; source: ComponentSourceConfig; capabilities: string[]; sections: NormalisedComponentSection[] }) {
+  return createHash('sha256')
+    .update(JSON.stringify(componentContractSource(input)))
+    .digest('hex');
+}
+
+async function getComponentContractInfo(input: { dir: string; manifest: any; slug: string; title: string; status: string; sourceProjects: string[]; source: ComponentSourceConfig; capabilities: string[]; sections: NormalisedComponentSection[] }): Promise<ComponentContractInfo> {
+  const blockers = componentContractBlockers(input.sections);
+  const sourceHash = computeComponentContractHash(input);
+  const stored = input.manifest.contract || {};
+  const version = Number(stored.version || 0);
+  const contractExists = await exists(path.join(input.dir, 'component.md'));
+  let status: ComponentContractStatus = 'missing';
+  if (blockers.length) status = 'blocked';
+  else if (!contractExists || !stored.sourceHash) status = 'missing';
+  else if (stored.sourceHash === sourceHash) status = 'current';
+  else status = 'stale';
+
+  return {
+    path: 'component.md',
+    version,
+    sourceHash,
+    status,
+    blockers
+  };
+}
+
+function buildComponentContractMarkdown(input: { slug: string; title: string; status: string; sourceProjects: string[]; source: ComponentSourceConfig; capabilities: string[]; sections: NormalisedComponentSection[]; version: number; sourceHash: string }) {
+  const sectionBlocks = input.sections.map((section) => {
+    const body = section.status === 'skipped'
+      ? `Skipped: ${section.skipReason?.trim() || 'No reason provided.'}`
+      : (section.body?.trim() || section.prompt || 'No content provided.');
+    return [`## ${section.title}`, '', body, ''].join('\n');
+  }).join('\n');
+
+  const sourceProjects = input.sourceProjects.length
+    ? input.sourceProjects.map((project) => `- ${project}`).join('\n')
+    : 'No legacy source projects linked.';
+  const source = componentSourceDisplay(input.source);
+  const capabilities = input.capabilities.length
+    ? input.capabilities.map((capability) => `- ${capability}`).join('\n')
+    : 'No capabilities linked yet.';
+
+  return matter.stringify([
+    `# Component: ${input.title}`,
+    '',
+    'Generated by AIDD from component definition sections.',
+    'Do not edit this file directly. Update the component sections and regenerate this contract.',
+    '',
+    '## Contract status',
+    '',
+    `- Component ID: \`${input.slug}\``,
+    `- Contract version: \`${input.version}\``,
+    '- Source sections: ready/skipped',
+    '',
+    '## Source',
+    '',
+    source,
+    '',
+    '## Source projects',
+    '',
+    sourceProjects,
+    '',
+    '## Capabilities supported',
+    '',
+    capabilities,
+    '',
+    sectionBlocks,
+    '## AI coding instructions',
+    '',
+    '- Preserve the responsibilities, boundaries, interfaces, data ownership, dependencies, and architecture defined above.',
+    '- Do not move ownership to another component without updating AIDD component documentation.',
+    '- Follow project coding standards before modifying source code.',
+    '- Update the component sections and regenerate this contract when implementation changes the architecture.',
+    ''
+  ].join('\n'), {
+    aidd: {
+      type: 'component-contract',
+      id: `${input.slug}-component-contract`,
+      title: `${input.title} Component Contract`,
+      component: input.slug,
+      contractVersion: input.version,
+      sourceHash: input.sourceHash,
+      source: input.source,
+      sourceSections: input.sections.map((section) => ({
+        key: section.key,
+        fileName: section.fileName,
+        status: section.status || 'not-started',
+        skipReason: section.status === 'skipped' ? section.skipReason?.trim() || '' : undefined
+      })),
+      sourceProjects: input.sourceProjects,
+      capabilitiesSupported: input.capabilities,
+      templateVersion: TEMPLATE_VERSION
+    }
+  });
+}
+
 
 const CAPABILITY_TEMPLATE_SECTIONS = [
   {
@@ -3430,7 +3624,8 @@ async function readSectionFromFirstExistingFile(dir: string, fileNames: string[]
     const body = sectionBodyFromMarkdown(raw);
     return {
       body,
-      status: sectionAidd.status || (body.trim() ? 'draft' : 'not-started') as SetupStepStatus
+      status: sectionAidd.status || (body.trim() ? 'draft' : 'not-started') as SetupStepStatus,
+      skipReason: sectionAidd.skipReason ? String(sectionAidd.skipReason) : ''
     };
   }
   return null;
@@ -3581,15 +3776,17 @@ async function readComponentCapabilities(root: string, slug: string) {
   return caps.filter((capability: any) => capability.components.includes(slug)).map((capability: any) => String(capability.slug || capability.id)).filter(Boolean);
 }
 
-async function createComponent(root: string, title: string, description?: string, status: string = 'draft', sourceProjects: string[] = [], sectionsInput?: ComponentSectionInput[]) {
+async function createComponent(root: string, title: string, description?: string, status: string = 'draft', sourceProjects: string[] = [], sourceInput?: Partial<ComponentSourceConfig>, sectionsInput?: ComponentSectionInput[]) {
   const slug = slugify(title);
   const dir = path.join(root, 'components', slug);
   if (await exists(dir)) return slug;
 
   const linkedCapabilities: string[] = [];
   const sourceProjectIds = Array.from(new Set(sourceProjects));
+  const source = normaliseComponentSource(sourceInput);
   const fallback: Partial<Record<string, string>> = { purpose: description || '' };
   const sections = normaliseComponentSections(sectionsInput, fallback);
+  const initialContractBlockers = componentContractBlockers(sections);
 
   await fsp.mkdir(dir, { recursive: true });
   await writeJson(path.join(dir, 'component.json'), {
@@ -3599,19 +3796,35 @@ async function createComponent(root: string, title: string, description?: string
     status,
     lifecycle: status,
     sourceProjects: sourceProjectIds,
+    source,
     createdAt: new Date().toISOString(),
     supportsCapabilities: linkedCapabilities,
     capabilitiesSupported: linkedCapabilities,
     dependsOn: [],
     exposes: [],
     dataOwned: [],
+    sections: sections.map((section) => ({
+      key: section.key,
+      title: section.title,
+      fileName: section.fileName,
+      status: section.status || 'not-started',
+      required: true,
+      skipReason: section.status === 'skipped' ? section.skipReason?.trim() || '' : undefined
+    })),
+    contract: {
+      path: 'component.md',
+      version: 0,
+      sourceHash: '',
+      status: initialContractBlockers.length ? 'blocked' : 'missing',
+      blockers: initialContractBlockers
+    },
     template: {
       type: 'component',
       sectionFiles: sections.map((section) => section.fileName),
       templateVersion: TEMPLATE_VERSION
     }
   });
-  await fsp.writeFile(path.join(dir, 'index.md'), buildComponentIndexMarkdown({ slug, title, status, sourceProjects: sourceProjectIds, capabilities: linkedCapabilities, sections }), 'utf8');
+  await fsp.writeFile(path.join(dir, 'index.md'), buildComponentIndexMarkdown({ slug, title, status, sourceProjects: sourceProjectIds, source, capabilities: linkedCapabilities, sections }), 'utf8');
   for (const section of sections) {
     await fsp.writeFile(path.join(dir, section.fileName), buildComponentSectionMarkdown({ slug, componentTitle: title, section, status, sourceProjects: sourceProjectIds, capabilities: linkedCapabilities }), 'utf8');
   }
@@ -3637,6 +3850,7 @@ async function readComponent(input: ReadComponentInput) {
     : Array.isArray(aidd.sourceProjects)
       ? aidd.sourceProjects
       : [];
+  const source = normaliseComponentSource(manifest.source || aidd.source);
   const capabilities: string[] = Array.from(new Set<string>([
     ...(Array.isArray(manifest.supportsCapabilities) ? manifest.supportsCapabilities.map(String) : []),
     ...(Array.isArray(manifest.capabilitiesSupported) ? manifest.capabilitiesSupported.map(String) : []),
@@ -3659,11 +3873,32 @@ async function readComponent(input: ReadComponentInput) {
       const sectionAidd = (parsed.data as any)?.aidd || {};
       body = sectionBodyFromMarkdown(raw);
       sectionStatus = sectionAidd.status || (body.trim() ? 'draft' : 'not-started');
+      const skipReason = sectionAidd.skipReason ? String(sectionAidd.skipReason) : '';
+      sections.push({
+        key: template.key,
+        fileName: template.fileName,
+        title: template.title,
+        body,
+        status: sectionStatus,
+        skipReason,
+        prompt: template.prompt
+      });
+      continue;
     } else {
       const legacySection = await readSectionFromFirstExistingFile(dir, COMPONENT_LEGACY_SECTION_FILES[template.key] || []);
       if (legacySection) {
         body = legacySection.body;
         sectionStatus = legacySection.status;
+        sections.push({
+          key: template.key,
+          fileName: template.fileName,
+          title: template.title,
+          body,
+          status: sectionStatus,
+          skipReason: legacySection.skipReason || '',
+          prompt: template.prompt
+        });
+        continue;
       } else if (!body.trim()) {
         body = template.body;
         sectionStatus = 'draft';
@@ -3675,17 +3910,32 @@ async function readComponent(input: ReadComponentInput) {
       title: template.title,
       body,
       status: sectionStatus,
+      skipReason: '',
       prompt: template.prompt
     });
   }
+
+  const contract = await getComponentContractInfo({
+    dir,
+    manifest,
+    slug,
+    title,
+    status,
+    sourceProjects,
+    source,
+    capabilities,
+    sections
+  });
 
   return {
     slug,
     title,
     status,
     sourceProjects,
+    source,
     capabilities,
     sections,
+    contract,
     description: sections.find((section) => section.key === 'purpose')?.body || parsedIndex.content.replace(/^\s*\n/, ''),
     filePath: markdownPath
   };
@@ -3707,6 +3957,7 @@ async function updateComponent(input: UpdateComponentInput) {
       ? manifest.sourceProjects
       : [];
   const sourceProjects: string[] = Array.from(new Set<string>(sourceProjectSource.map(String)));
+  const source = normaliseComponentSource(input.source || manifest.source);
   const capabilities: string[] = Array.from(new Set<string>([
     ...(Array.isArray(input.capabilities) ? input.capabilities.map(String) : []),
     ...(Array.isArray(manifest.supportsCapabilities) ? manifest.supportsCapabilities.map(String) : []),
@@ -3717,6 +3968,17 @@ async function updateComponent(input: UpdateComponentInput) {
     purpose: input.description || sectionBodyFromMarkdown(rawIndex)
   };
   const sections = normaliseComponentSections(input.sections, fallback);
+  const contractSourceHash = computeComponentContractHash({ slug, title, status, sourceProjects, source, capabilities, sections });
+  const contractBlockers = componentContractBlockers(sections);
+  const previousContract = manifest.contract || {};
+  const contractExists = await exists(path.join(dir, 'component.md'));
+  const contractStatus: ComponentContractStatus = contractBlockers.length
+    ? 'blocked'
+    : (!contractExists || !previousContract.sourceHash)
+      ? 'missing'
+      : previousContract.sourceHash === contractSourceHash
+        ? 'current'
+        : 'stale';
 
   await writeJson(manifestPath, {
     ...manifest,
@@ -3726,9 +3988,26 @@ async function updateComponent(input: UpdateComponentInput) {
     status,
     lifecycle: status,
     sourceProjects,
+    source,
     supportsCapabilities: capabilities,
     capabilitiesSupported: capabilities,
     updatedAt: new Date().toISOString(),
+    sections: sections.map((section) => ({
+      key: section.key,
+      title: section.title,
+      fileName: section.fileName,
+      status: section.status || 'not-started',
+      required: true,
+      skipReason: section.status === 'skipped' ? section.skipReason?.trim() || '' : undefined
+    })),
+    contract: {
+      ...previousContract,
+      path: 'component.md',
+      version: Number(previousContract.version || 0),
+      sourceHash: previousContract.sourceHash || '',
+      status: contractStatus,
+      blockers: contractBlockers
+    },
     template: {
       ...(manifest.template || {}),
       type: 'component',
@@ -3736,13 +4015,80 @@ async function updateComponent(input: UpdateComponentInput) {
       templateVersion: TEMPLATE_VERSION
     }
   });
-  await fsp.writeFile(markdownPath, buildComponentIndexMarkdown({ slug, title, status, sourceProjects, capabilities, sections }), 'utf8');
+  await fsp.writeFile(markdownPath, buildComponentIndexMarkdown({ slug, title, status, sourceProjects, source, capabilities, sections }), 'utf8');
   for (const section of sections) {
     await fsp.writeFile(path.join(dir, section.fileName), buildComponentSectionMarkdown({ slug, componentTitle: title, section, status, sourceProjects, capabilities }), 'utf8');
   }
   await refreshComponentsIndex(input.projectPath);
   return readProjectSetup(input.projectPath);
 }
+
+async function generateComponentContract(input: GenerateComponentContractInput) {
+  const slug = slugify(input.slug);
+  const dir = path.join(input.projectPath, 'components', slug);
+  const manifestPath = path.join(dir, 'component.json');
+  if (!(await exists(manifestPath))) throw new Error(`Component not found: ${slug}`);
+
+  const manifest = await readJson<any>(manifestPath);
+  const component = await readComponent({ projectPath: input.projectPath, slug });
+  const sections = normaliseComponentSections(component.sections, {});
+  const blockers = componentContractBlockers(sections);
+  if (blockers.length) {
+    throw new Error(`Component contract is not ready: ${blockers.join(' ')}`);
+  }
+
+  const sourceHash = computeComponentContractHash({
+    slug,
+    title: component.title,
+    status: String(component.status || 'draft'),
+    sourceProjects: component.sourceProjects || [],
+    source: normaliseComponentSource(component.source),
+    capabilities: component.capabilities || [],
+    sections
+  });
+  const previousContract = manifest.contract || {};
+  const previousVersion = Number(previousContract.version || 0);
+  const version = previousContract.sourceHash === sourceHash && previousVersion > 0
+    ? previousVersion
+    : previousVersion + 1;
+
+  await fsp.writeFile(path.join(dir, 'component.md'), buildComponentContractMarkdown({
+    slug,
+    title: component.title,
+    status: String(component.status || 'draft'),
+    sourceProjects: component.sourceProjects || [],
+    source: normaliseComponentSource(component.source),
+    capabilities: component.capabilities || [],
+    sections,
+    version,
+    sourceHash
+  }), 'utf8');
+
+  await writeJson(manifestPath, {
+    ...manifest,
+    slug,
+    title: component.title,
+    source: normaliseComponentSource(component.source),
+    contract: {
+      path: 'component.md',
+      version,
+      sourceHash,
+      status: 'current',
+      blockers: [],
+      sections: sections.map((section) => ({
+        key: section.key,
+        title: section.title,
+        fileName: section.fileName,
+        status: section.status || 'not-started',
+        skipReason: section.status === 'skipped' ? section.skipReason?.trim() || '' : undefined
+      }))
+    }
+  });
+
+  await refreshComponentsIndex(input.projectPath);
+  return readComponent({ projectPath: input.projectPath, slug });
+}
+
 
 async function createCapability(root: string, input: CreateCapabilityInput) {
   const title = input.title.trim();
@@ -4908,7 +5254,7 @@ ipcMain.handle('project:defineStandards', async (_event, input: DefineStandardsI
 
 ipcMain.handle('project:createComponent', async (_event, input: CreateComponentInput) => {
   if (!input.title.trim()) throw new Error('Component title is required.');
-  await createComponent(input.projectPath, input.title.trim(), input.description, input.status || 'draft', input.sourceProjects || [], input.sections || []);
+  await createComponent(input.projectPath, input.title.trim(), input.description, input.status || 'draft', input.sourceProjects || [], input.source, input.sections || []);
   await checkpointAndShareProjectAfterSave(input.projectPath);
   return readProjectSetup(input.projectPath);
 });
@@ -4921,6 +5267,11 @@ ipcMain.handle('project:readComponent', async (_event, input: ReadComponentInput
 ipcMain.handle('project:updateComponent', async (_event, input: UpdateComponentInput) => {
   if (!input.projectPath || !input.slug || !input.title?.trim()) throw new Error('Project path, component slug, and title are required.');
   return withProjectSaveSync(input.projectPath, () => updateComponent(input));
+});
+
+ipcMain.handle('project:generateComponentContract', async (_event, input: GenerateComponentContractInput) => {
+  if (!input.projectPath || !input.slug) throw new Error('Project path and component slug are required.');
+  return withProjectSaveSync(input.projectPath, () => generateComponentContract(input));
 });
 
 ipcMain.handle('project:createCapability', async (_event, input: CreateCapabilityInput) => {

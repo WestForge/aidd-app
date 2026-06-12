@@ -20,7 +20,6 @@ import {
   Workflow,
   Zap,
 } from "lucide-react";
-import { AiddMarkdownEditor } from "./editor/AiddMarkdownEditor";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import {
@@ -32,6 +31,7 @@ import {
 } from "./ui/card";
 import { Input } from "./ui/input";
 import { Select } from "./ui/select";
+import { Textarea } from "./ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { cn } from "../lib/utils";
 
@@ -773,11 +773,10 @@ export function Capabilities({
               </div>
             </CardHeader>
             <CardContent className="min-h-0 flex-1 overflow-hidden p-4">
-              <AiddMarkdownEditor
+              <Textarea
+                className="h-[420px] min-h-[360px] resize-none font-mono text-sm"
                 value={activeSection?.body || ""}
-                onChange={updateActiveSectionBody}
-                minHeight={360}
-                height="420px"
+                onChange={(event) => updateActiveSectionBody(event.target.value)}
               />
             </CardContent>
           </Card>

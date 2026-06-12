@@ -280,6 +280,7 @@ interface AiddHomeWorkComponentItem {
   title: string;
   status: string;
   sourceProjects: string[];
+  source?: AiddComponentSourceConfig;
   capabilities: string[];
   reason: string;
 }
@@ -318,11 +319,26 @@ interface AiddFoundationDocument {
   body: string;
 }
 
+interface AiddComponentContractInfo {
+  path: string;
+  version: number;
+  sourceHash?: string;
+  status: 'blocked' | 'missing' | 'stale' | 'current';
+  blockers: string[];
+}
+
+interface AiddComponentSourceConfig {
+  directory: string;
+  type: string;
+}
+
 interface AiddComponentSummary {
   slug: string;
   title: string;
   status?: string;
   sourceProjects?: string[];
+  source?: AiddComponentSourceConfig;
+  contract?: AiddComponentContractInfo;
 }
 
 interface AiddCapabilitySummary {
@@ -359,6 +375,7 @@ interface AiddComponentSection {
   title: string;
   body: string;
   status?: AiddSetupStatus | string;
+  skipReason?: string;
   prompt?: string;
 }
 
@@ -368,6 +385,7 @@ interface AiddCreateComponentInput {
   description?: string;
   status?: AiddSetupStatus;
   sourceProjects?: string[];
+  source?: Partial<AiddComponentSourceConfig>;
   capabilities?: string[];
   sections?: AiddComponentSection[];
 }
@@ -377,13 +395,20 @@ interface AiddComponentDetail {
   title: string;
   status: AiddSetupStatus | string;
   sourceProjects: string[];
+  source: AiddComponentSourceConfig;
   capabilities: string[];
   sections: AiddComponentSection[];
+  contract: AiddComponentContractInfo;
   description: string;
   filePath: string;
 }
 
 interface AiddReadComponentInput {
+  projectPath: string;
+  slug: string;
+}
+
+interface AiddGenerateComponentContractInput {
   projectPath: string;
   slug: string;
 }
@@ -395,6 +420,7 @@ interface AiddUpdateComponentInput {
   description?: string;
   status?: AiddSetupStatus;
   sourceProjects?: string[];
+  source?: Partial<AiddComponentSourceConfig>;
   capabilities?: string[];
   sections?: AiddComponentSection[];
 }
@@ -590,6 +616,7 @@ interface Window {
     createComponent: (input: AiddCreateComponentInput) => Promise<AiddProjectSetupState>;
     readComponent: (input: AiddReadComponentInput) => Promise<AiddComponentDetail>;
     updateComponent: (input: AiddUpdateComponentInput) => Promise<AiddProjectSetupState>;
+    generateComponentContract: (input: AiddGenerateComponentContractInput) => Promise<AiddComponentDetail>;
     createCapability: (input: AiddCreateCapabilityInput) => Promise<AiddProjectSetupState>;
     readCapability: (input: AiddReadCapabilityInput) => Promise<AiddCapabilityDetail>;
     updateCapability: (input: AiddUpdateCapabilityInput) => Promise<AiddProjectSetupState>;

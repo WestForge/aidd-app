@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('aidd', {
   createComponent: (input: unknown) => ipcRenderer.invoke('project:createComponent', input),
   readComponent: (input: unknown) => ipcRenderer.invoke('project:readComponent', input),
   updateComponent: (input: unknown) => ipcRenderer.invoke('project:updateComponent', input),
+  generateComponentContract: (input: unknown) => ipcRenderer.invoke('project:generateComponentContract', input),
   createCapability: (input: unknown) => ipcRenderer.invoke('project:createCapability', input),
   readCapability: (input: unknown) => ipcRenderer.invoke('project:readCapability', input),
   updateCapability: (input: unknown) => ipcRenderer.invoke('project:updateCapability', input),

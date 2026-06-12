@@ -22,7 +22,6 @@ import {
   Workflow,
   Zap,
 } from "lucide-react";
-import { AiddMarkdownEditor } from "./editor/AiddMarkdownEditor";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import {
@@ -34,6 +33,7 @@ import {
 } from "./ui/card";
 import { Input } from "./ui/input";
 import { Select } from "./ui/select";
+import { Textarea } from "./ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { cn } from "../lib/utils";
 
@@ -47,6 +47,22 @@ const statusOptions: AiddSetupStatus[] = [
   "skipped",
 ];
 
+const componentSectionStatusOptions: AiddSetupStatus[] = ["draft", "complete", "skipped"];
+
+const componentSourceTypeOptions = [
+  { value: "webapp", label: "Web app" },
+  { value: "desktop-app", label: "Desktop app" },
+  { value: "plugin", label: "Plugin" },
+  { value: "library", label: "Library" },
+  { value: "service", label: "Service" },
+  { value: "api", label: "API" },
+  { value: "cli", label: "CLI" },
+  { value: "game-module", label: "Game module" },
+  { value: "shared-module", label: "Shared module" },
+  { value: "test-suite", label: "Test suite" },
+  { value: "other", label: "Other" },
+];
+
 type ComponentView = "list" | "new" | "edit";
 type ComponentSection = {
   key: string;
@@ -54,6 +70,7 @@ type ComponentSection = {
   title: string;
   body: string;
   status?: AiddSetupStatus | string;
+  skipReason?: string;
   prompt?: string;
 };
 
@@ -308,7 +325,7 @@ Architecture changes that affect ownership, dependencies, state, or public inter
 ];
 
 function statusLabel(status?: string) {
-  return (status ?? "draft").replace(/-/g, " ");
+  return status === "complete" ? "ready" : (status ?? "draft").replace(/-/g, " ");
 }
 
 const statusVisuals: Record<
@@ -427,7 +444,30 @@ function newSections() {
 }
 
 function sectionReady(section: ComponentSection) {
+  if (section.status === "skipped") return Boolean(section.skipReason?.trim());
   return section.status === "active" || section.status === "complete";
+}
+
+function sectionContractBlocker(section: ComponentSection) {
+  if (section.status === "skipped" && !section.skipReason?.trim()) {
+    return `${section.title} is skipped but needs a reason.`;
+  }
+  if (!sectionReady(section)) {
+    return `${section.title} must be ready or skipped.`;
+  }
+  return null;
+}
+
+function contractLabel(status?: string) {
+  if (!status) return "missing";
+  return status.replace(/-/g, " ");
+}
+
+function sourceTypeLabel(type?: string) {
+  return (
+    componentSourceTypeOptions.find((option) => option.value === type)?.label ??
+    (type || "other").replace(/-/g, " ")
+  );
 }
 
 export function Components({
@@ -436,7 +476,6 @@ export function Components({
   activeProject?: AiddTrackedProject | null;
 }) {
   const [setup, setSetup] = useState<AiddProjectSetupState | null>(null);
-  const [sourceProjects, setSourceProjects] = useState<AiddSourceCodeProject[]>([]);
   const [view, setView] = useState<ComponentView>("list");
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -444,7 +483,11 @@ export function Components({
   const [sections, setSections] = useState<ComponentSection[]>(newSections());
   const [activeSectionKey, setActiveSectionKey] = useState("purpose");
   const [selectedSourceProjects, setSelectedSourceProjects] = useState<string[]>([]);
+  const [sourceDirectory, setSourceDirectory] = useState("");
+  const [sourceType, setSourceType] = useState("webapp");
+  const [showSourceConfig, setShowSourceConfig] = useState(false);
   const [linkedCapabilities, setLinkedCapabilities] = useState<string[]>([]);
+  const [contract, setContract] = useState<AiddComponentContractInfo | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -453,12 +496,8 @@ export function Components({
 
   const load = async () => {
     if (!activeProject?.path) return;
-    const [nextSetup, nextSourceProjects] = await Promise.all([
-      window.aidd.readProjectSetup(activeProject.path),
-      window.aidd.readSourceProjects(activeProject.path),
-    ]);
+    const nextSetup = await window.aidd.readProjectSetup(activeProject.path);
     setSetup(nextSetup);
-    setSourceProjects(nextSourceProjects);
   };
 
   useEffect(() => {
@@ -478,9 +517,17 @@ export function Components({
 
   const activeSection =
     sections.find((section) => section.key === activeSectionKey) ?? sections[0];
+  const contractBlockers = sections
+    .map(sectionContractBlocker)
+    .filter(Boolean) as string[];
   const progress = {
     completed: sections.filter(sectionReady).length,
     total: sections.length,
+  };
+  const canGenerateContract = view === "edit" && Boolean(editingSlug) && contractBlockers.length === 0;
+  const sourceConfig = {
+    directory: sourceDirectory.trim(),
+    type: sourceType || "other",
   };
 
   const resetForm = () => {
@@ -490,7 +537,11 @@ export function Components({
     setSections(newSections());
     setActiveSectionKey("purpose");
     setSelectedSourceProjects([]);
+    setSourceDirectory("");
+    setSourceType("webapp");
+    setShowSourceConfig(false);
     setLinkedCapabilities([]);
+    setContract(null);
     setMessage(null);
     setDragError(null);
     setSectionDragFiles({});
@@ -515,7 +566,11 @@ export function Components({
       setTitle(component.title);
       setStatus((component.status as AiddSetupStatus) || "draft");
       setSelectedSourceProjects(component.sourceProjects || []);
+      setSourceDirectory(component.source?.directory || "");
+      setSourceType(component.source?.type || "webapp");
+      setShowSourceConfig(false);
       setLinkedCapabilities(component.capabilities || []);
+      setContract(component.contract || null);
       setSections(component.sections?.length ? component.sections : newSections());
       setActiveSectionKey(component.sections?.[0]?.key || "purpose");
       setView("edit");
@@ -551,6 +606,15 @@ export function Components({
       ),
     );
 
+  const updateActiveSectionSkipReason = (skipReason: string) =>
+    setSections((current) =>
+      current.map((section) =>
+        section.key === activeSectionKey
+          ? { ...section, skipReason }
+          : section,
+      ),
+    );
+
   const createComponent = async () => {
     if (!activeProject?.path) return;
     setSaving(true);
@@ -562,6 +626,7 @@ export function Components({
         title,
         status,
         sourceProjects: selectedSourceProjects,
+        source: sourceConfig,
         sections,
       });
       setSetup(next);
@@ -586,6 +651,7 @@ export function Components({
         title,
         status,
         sourceProjects: selectedSourceProjects,
+        source: sourceConfig,
         sections,
       });
       setSetup(next);
@@ -598,12 +664,46 @@ export function Components({
     }
   };
 
-  const toggleSourceProject = (projectId: string) =>
-    setSelectedSourceProjects((current) =>
-      current.includes(projectId)
-        ? current.filter((item) => item !== projectId)
-        : [...current, projectId],
-    );
+  const generateComponentContract = async () => {
+    if (!activeProject?.path || !editingSlug) return;
+    if (contractBlockers.length) {
+      setError(contractBlockers.join(" "));
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await window.aidd.updateComponent({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+        title,
+        status,
+        sourceProjects: selectedSourceProjects,
+        source: sourceConfig,
+        sections,
+      });
+      const component = await window.aidd.generateComponentContract({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+      });
+      setContract(component.contract || null);
+      setSections(component.sections?.length ? component.sections : sections);
+      setSelectedSourceProjects(component.sourceProjects || selectedSourceProjects);
+      setSourceDirectory(component.source?.directory || sourceDirectory);
+      setSourceType(component.source?.type || sourceType);
+      setLinkedCapabilities(component.capabilities || linkedCapabilities);
+      const nextSetup = await window.aidd.readProjectSetup(activeProject.path);
+      setSetup(nextSetup);
+      setMessage("Generated component.md.");
+      void window.aidd.notify({ title: "Generated", body: "Component contract generated." });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const prepareComponentSectionDragFile = async (section: ComponentSection) => {
     if (!activeProject?.path) return null;
@@ -619,6 +719,7 @@ export function Components({
       metadata: {
         component: editingSlug || "draft",
         section: section.key,
+        skipReason: section.skipReason || "",
       },
     });
 
@@ -732,19 +833,22 @@ export function Components({
                             : "No capabilities linked yet"}
                         </CardDescription>
                       </div>
-                      <Badge variant="outline">
-                        <StatusPill status={component.status} />
-                      </Badge>
+                      <div className="flex flex-col items-end gap-1">
+                        <Badge variant="outline">
+                          <StatusPill status={component.status} />
+                        </Badge>
+                        <Badge variant={component.contract?.status === "current" ? "secondary" : "outline"}>
+                          Contract: {contractLabel(component.contract?.status)}
+                        </Badge>
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    {component.sourceProjects?.length ? (
+                    {component.source?.directory ? (
                       <div className="flex flex-wrap gap-2">
-                        {component.sourceProjects.map((sourceProject) => (
-                          <Badge key={sourceProject} variant="outline">
-                            {sourceProject}
-                          </Badge>
-                        ))}
+                        <Badge variant="outline">
+                          {sourceTypeLabel(component.source.type)} · {component.source.directory}
+                        </Badge>
                       </div>
                     ) : null}
                     {capabilities.length ? (
@@ -810,6 +914,25 @@ export function Components({
           <StatusBadge status={status} label="Lifecycle" />
           <StatusBadge status={activeSection?.status} label="Section" />
           <Button
+            variant="outline"
+            onClick={() => setShowSourceConfig((current) => !current)}
+            title="Configure the source directory owned by this component"
+          >
+            <GitBranch className="h-4 w-4" />
+            Configure source
+          </Button>
+          {view === "edit" && (
+            <Button
+              variant="outline"
+              onClick={generateComponentContract}
+              disabled={saving || !canGenerateContract}
+              title={canGenerateContract ? "Generate versioned component.md" : contractBlockers.join(" ")}
+            >
+              <FileText className="h-4 w-4" />
+              {contract?.status === "current" ? "Regenerate component.md" : "Generate component.md"}
+            </Button>
+          )}
+          <Button
             onClick={view === "edit" ? updateComponent : createComponent}
             disabled={saving || !title.trim()}
           >
@@ -832,6 +955,47 @@ export function Components({
             <AlertTitle>Saved</AlertTitle>
             <AlertDescription>{message}</AlertDescription>
           </Alert>
+        </div>
+      )}
+      {showSourceConfig && (
+        <div className="shrink-0 border-b bg-muted/20 px-6 py-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Component source</CardTitle>
+              <CardDescription>
+                Reference the implementation directory this component owns. This is stored with
+                the component and included in the generated component contract.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+              <div className="space-y-1">
+                <span className="text-sm text-muted-foreground">Source directory</span>
+                <Input
+                  value={sourceDirectory}
+                  onChange={(event) => setSourceDirectory(event.target.value)}
+                  placeholder="src/components/editor-shell"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Use a path relative to the workspace code root, for example
+                  <code className="mx-1 rounded bg-muted px-1">src/components/editor-shell</code>.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-sm text-muted-foreground">Source type</span>
+                <Select
+                  className="w-full"
+                  value={sourceType}
+                  onChange={(event) => setSourceType(event.target.value)}
+                >
+                  {componentSourceTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
       <div className="flex shrink-0 gap-1.5 overflow-x-auto border-b bg-muted/30 px-6 py-2">
@@ -886,11 +1050,10 @@ export function Components({
               </div>
             </CardHeader>
             <CardContent className="min-h-0 flex-1 overflow-hidden p-4">
-              <AiddMarkdownEditor
+              <Textarea
+                className="h-[420px] min-h-[360px] resize-none font-mono text-sm"
                 value={activeSection?.body || ""}
-                onChange={updateActiveSectionBody}
-                minHeight={360}
-                height="420px"
+                onChange={(event) => updateActiveSectionBody(event.target.value)}
               />
             </CardContent>
           </Card>
@@ -902,7 +1065,7 @@ export function Components({
                 instead of copying architecture, data, or dependency rules.
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-3 text-sm md:grid-cols-3">
+            <CardContent className="grid gap-3 text-sm md:grid-cols-4">
               <div className="space-y-1">
                 <span className="text-muted-foreground">Lifecycle</span>
                 <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-1.5 text-sm">
@@ -936,65 +1099,63 @@ export function Components({
                     updateActiveSectionStatus(event.target.value as AiddSetupStatus)
                   }
                 >
-                  {statusOptions.map((item) => (
+                  {componentSectionStatusOptions.map((item) => (
                     <option key={item} value={item}>
                       {statusLabel(item)}
                     </option>
                   ))}
                 </Select>
+                {activeSection?.status === "skipped" && (
+                  <Input
+                    className="w-full"
+                    value={activeSection.skipReason || ""}
+                    onChange={(event) => updateActiveSectionSkipReason(event.target.value)}
+                    placeholder="Why is this section skipped?"
+                  />
+                )}
               </div>
               <div className="flex items-center justify-between gap-3 md:flex-col md:items-start md:justify-center">
                 <div>
-                  <span className="text-muted-foreground">Template progress</span>
+                  <span className="text-muted-foreground">Component contract</span>
+                  <div className="font-semibold capitalize">
+                    {contractLabel(contract?.status)}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Version</span>
+                  <Badge variant={contract?.status === "current" ? "secondary" : "outline"}>
+                    {contract?.version || "None"}
+                  </Badge>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-3 md:flex-col md:items-start md:justify-center">
+                <div>
+                  <span className="text-muted-foreground">Contract readiness</span>
                   <div className="font-semibold">
                     {progress.completed}/{progress.total}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">Source maps</span>
-                  <Badge variant={selectedSourceProjects.length ? "secondary" : "outline"}>
-                    {selectedSourceProjects.length || "None"}
+                  <span className="text-muted-foreground">Source</span>
+                  <Badge variant={sourceDirectory.trim() ? "secondary" : "outline"}>
+                    {sourceDirectory.trim() ? sourceTypeLabel(sourceType) : "Not configured"}
                   </Badge>
                 </div>
               </div>
             </CardContent>
           </Card>
-          <Card className="shrink-0">
-            <CardHeader>
-              <CardTitle>Source projects</CardTitle>
-              <CardDescription>
-                Map this component to implementation directories without putting source-code
-                details in capability documents.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {sourceProjects.length ? (
-                sourceProjects.map((project) => (
-                  <label
-                    key={project.id}
-                    className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm hover:bg-accent"
-                  >
-                    <input
-                      className="mt-1"
-                      type="checkbox"
-                      checked={selectedSourceProjects.includes(project.id)}
-                      onChange={() => toggleSourceProject(project.id)}
-                    />
-                    <span>
-                      <strong>{project.name}</strong>
-                      <span className="block text-muted-foreground">
-                        {project.detectedType} · {project.path}
-                      </span>
-                    </span>
-                  </label>
-                ))
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  No source projects yet. Add them from Source Code.
-                </p>
-              )}
-            </CardContent>
-          </Card>
+          {contractBlockers.length > 0 && (
+            <Alert>
+              <AlertTitle>Component contract not ready</AlertTitle>
+              <AlertDescription>
+                <ul className="list-disc space-y-1 pl-5">
+                  {contractBlockers.map((blocker) => (
+                    <li key={blocker}>{blocker}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
           <Card className="shrink-0">
             <CardHeader>
               <CardTitle>Capabilities supported</CardTitle>

@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Code2, FolderGit2, HeartPulse, Home, ListChecks, PackageCheck, Settings, Sparkles, Puzzle, type LucideIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FolderGit2, HeartPulse, Home, ListChecks, PackageCheck, Settings, Sparkles, Puzzle, type LucideIcon } from 'lucide-react';
 import type { Screen } from '../main';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -18,7 +18,6 @@ const primaryItems: Array<{ id: Screen; label: string; icon: LucideIcon }> = [
   { id: 'foundation', label: 'Foundation', icon: ListChecks },
   { id: 'capabilities', label: 'Capabilities', icon: Sparkles },
   { id: 'components', label: 'Components', icon: Puzzle },
-  { id: 'source-code', label: 'Source Code', icon: Code2 },
   { id: 'delivery-packages', label: 'Delivery', icon: PackageCheck }
 ];
 

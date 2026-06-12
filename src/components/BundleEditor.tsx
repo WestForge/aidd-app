@@ -19,7 +19,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { DeliveryBundle } from "../domain/types";
-import { AiddMarkdownEditor } from "./editor/AiddMarkdownEditor";
 import { Button } from "./ui/button";
 import {
   Card,
@@ -32,6 +31,7 @@ import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Select } from "./ui/select";
+import { Textarea } from "./ui/textarea";
 import { cn } from "../lib/utils";
 
 interface BundleEditorProps {
@@ -646,12 +646,12 @@ export function BundleEditor({
                     title="Implementation strategy"
                     description="Use the wider package context to refine this, but keep this file focused on what the AI/dev needs to implement."
                   >
-                    <AiddMarkdownEditor
+                    <Textarea
+                      className="min-h-[620px] resize-none font-mono text-sm"
                       value={detail.strategyBody}
-                      onChange={(value) =>
-                        updateDetail({ strategyBody: value })
+                      onChange={(event) =>
+                        updateDetail({ strategyBody: event.target.value })
                       }
-                      minHeight={620}
                     />
                   </EditorCard>
                 )}
@@ -661,12 +661,12 @@ export function BundleEditor({
                     title="Package context snapshot"
                     description="Working context from Foundation, capability, and component documents. This is not included in the assembled AI implementation instructions."
                   >
-                    <AiddMarkdownEditor
+                    <Textarea
+                      className="min-h-[620px] resize-none font-mono text-sm"
                       value={detail.snapshotBody}
-                      onChange={(value) =>
-                        updateDetail({ snapshotBody: value })
+                      onChange={(event) =>
+                        updateDetail({ snapshotBody: event.target.value })
                       }
-                      minHeight={620}
                     />
                   </EditorCard>
                 )}
@@ -676,13 +676,12 @@ export function BundleEditor({
                     title="Packaged implementation instructions"
                     description="Generated handoff containing only the implementation strategy and implementation phases to reduce unnecessary token load."
                   >
-                    <AiddMarkdownEditor
+                    <Textarea
+                      className="min-h-[620px] resize-none font-mono text-sm"
                       value={
                         detail.packagedBody ||
                         "Use Package document to generate delivery-package.md from the strategy and phases."
                       }
-                      onChange={() => undefined}
-                      minHeight={620}
                       readOnly
                     />
                   </EditorCard>
@@ -709,10 +708,10 @@ export function BundleEditor({
                         Create phase
                       </Button>
                     </div>
-                    <AiddMarkdownEditor
+                    <Textarea
+                      className="min-h-[560px] resize-none font-mono text-sm"
                       value={newPhaseBody}
-                      onChange={setNewPhaseBody}
-                      minHeight={560}
+                      onChange={(event) => setNewPhaseBody(event.target.value)}
                     />
                   </EditorCard>
                 )}
@@ -795,12 +794,12 @@ export function BundleEditor({
                       }.md`}
                       .
                     </p>
-                    <AiddMarkdownEditor
+                    <Textarea
+                      className="min-h-[560px] resize-none font-mono text-sm"
                       value={currentPhase.body}
-                      onChange={(value) =>
-                        updatePhase(currentPhase.id, { body: value })
+                      onChange={(event) =>
+                        updatePhase(currentPhase.id, { body: event.target.value })
                       }
-                      minHeight={560}
                     />
                   </EditorCard>
                 )}
