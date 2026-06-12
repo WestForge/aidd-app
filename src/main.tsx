@@ -69,6 +69,7 @@ function App() {
   const [selectedId, setSelectedId] = useState('DP-001');
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => getStoredThemeMode());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('aidd.sidebarCollapsed') === 'true');
+  const [capabilityToOpen, setCapabilityToOpen] = useState<string | null>(null);
 
   useEffect(() => {
     const applyTheme = () => {
@@ -108,9 +109,7 @@ function App() {
   const refreshProjects = async (active?: AiddTrackedProject | null) => {
     const trackedProjects = await window.aidd.listProjects();
     setProjects(trackedProjects);
-    if (active) {
-      setActiveProject(trackedProjects.find((project) => project.path === active.path || project.id === active.id) ?? active);
-    }
+    if (active) setActiveProject(active);
   };
 
   const updatePackage = (updated: DeliveryBundle) => setPackages((current) => current.map((item) => item.id === updated.id ? updated : item));
@@ -150,12 +149,12 @@ function App() {
         {screen === 'project-create' && <ProjectCreate onCreated={projectCreated} onCancel={() => setScreen('projects')} />}
         {screen === 'home' && <Home packages={packages} selectedId={selectedId} onSelectPackage={selectPackage} onCreatePackage={createPackage} activeProject={activeProject} onOpenSetup={() => setScreen('foundation')} onOpenCapabilities={() => setScreen('capabilities')} onOpenComponents={() => setScreen('components')} onOpenDelivery={() => setScreen('delivery-packages')} />}
         {screen === 'foundation' && <SetupWorkflow activeProject={activeProject} onOpenCapabilities={() => setScreen('capabilities')} onOpenComponents={() => setScreen('components')} />}
-        {screen === 'capabilities' && <Capabilities activeProject={activeProject} onDeliveryPackageCreated={openCreatedDeliveryPackage} />}
-        {screen === 'components' && <Components activeProject={activeProject} />}
+        {screen === 'capabilities' && <Capabilities activeProject={activeProject} onDeliveryPackageCreated={openCreatedDeliveryPackage} initialCapabilitySlug={capabilityToOpen} onInitialCapabilityOpened={() => setCapabilityToOpen(null)} />}
+        {screen === 'components' && <Components activeProject={activeProject} onOpenCapability={(slug) => { setCapabilityToOpen(slug); setScreen('capabilities'); }} />}
         {screen === 'delivery-packages' && <DeliveryPackages packages={packages} selectedId={selectedId} onSelectPackage={selectPackage} onCreatePackage={createPackage} activeProject={activeProject} />}
         {screen === 'bundle-editor' && <BundleEditor bundle={selectedPackage} onChange={updatePackage} onSubmitForReview={submitSelectedForReview} activeProject={activeProject} onBack={() => setScreen('delivery-packages')} />}
         {screen === 'reviews' && <Reviews bundles={packages} selectedId={selectedId} onSelectBundle={(id) => selectPackage(id, 'reviews')} bundle={selectedPackage} onChange={updatePackage} />}
-        {screen === 'validation' && <ProjectValidation activeProject={activeProject} onProjectChanged={() => refreshProjects(activeProject)} />}
+        {screen === 'validation' && <ProjectValidation activeProject={activeProject} />}
         {screen === 'settings' && <Settings activeProject={activeProject} themeMode={themeMode} onThemeModeChange={setThemeMode} />}
       </main>
     </div>

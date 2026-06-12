@@ -8,6 +8,7 @@ import {
   Database,
   Eye,
   FileText,
+  FolderOpen,
   GitBranch,
   Layers,
   Pencil,
@@ -16,6 +17,7 @@ import {
   Plus,
   Puzzle,
   Save,
+  Search,
   ShieldAlert,
   SkipForward,
   Sparkles,
@@ -443,21 +445,6 @@ function newSections() {
   }));
 }
 
-function sectionReady(section: ComponentSection) {
-  if (section.status === "skipped") return Boolean(section.skipReason?.trim());
-  return section.status === "active" || section.status === "complete";
-}
-
-function sectionContractBlocker(section: ComponentSection) {
-  if (section.status === "skipped" && !section.skipReason?.trim()) {
-    return `${section.title} is skipped but needs a reason.`;
-  }
-  if (!sectionReady(section)) {
-    return `${section.title} must be ready or skipped.`;
-  }
-  return null;
-}
-
 function contractLabel(status?: string) {
   if (!status) return "missing";
   return status.replace(/-/g, " ");
@@ -472,8 +459,10 @@ function sourceTypeLabel(type?: string) {
 
 export function Components({
   activeProject,
+  onOpenCapability,
 }: {
   activeProject?: AiddTrackedProject | null;
+  onOpenCapability?: (slug: string) => void;
 }) {
   const [setup, setSetup] = useState<AiddProjectSetupState | null>(null);
   const [view, setView] = useState<ComponentView>("list");
@@ -485,6 +474,8 @@ export function Components({
   const [selectedSourceProjects, setSelectedSourceProjects] = useState<string[]>([]);
   const [sourceDirectory, setSourceDirectory] = useState("");
   const [sourceType, setSourceType] = useState("webapp");
+  const [sourceDetection, setSourceDetection] = useState<AiddComponentSourceDetection | null>(null);
+  const [detectingSource, setDetectingSource] = useState(false);
   const [showSourceConfig, setShowSourceConfig] = useState(false);
   const [linkedCapabilities, setLinkedCapabilities] = useState<string[]>([]);
   const [contract, setContract] = useState<AiddComponentContractInfo | null>(null);
@@ -517,17 +508,11 @@ export function Components({
 
   const activeSection =
     sections.find((section) => section.key === activeSectionKey) ?? sections[0];
-  const contractBlockers = sections
-    .map(sectionContractBlocker)
-    .filter(Boolean) as string[];
-  const progress = {
-    completed: sections.filter(sectionReady).length,
-    total: sections.length,
-  };
-  const canGenerateContract = view === "edit" && Boolean(editingSlug) && contractBlockers.length === 0;
+  const canGenerateContract = view === "edit" && Boolean(editingSlug);
   const sourceConfig = {
     directory: sourceDirectory.trim(),
     type: sourceType || "other",
+    detection: sourceDetection,
   };
 
   const resetForm = () => {
@@ -539,6 +524,8 @@ export function Components({
     setSelectedSourceProjects([]);
     setSourceDirectory("");
     setSourceType("webapp");
+    setSourceDetection(null);
+    setDetectingSource(false);
     setShowSourceConfig(false);
     setLinkedCapabilities([]);
     setContract(null);
@@ -568,6 +555,8 @@ export function Components({
       setSelectedSourceProjects(component.sourceProjects || []);
       setSourceDirectory(component.source?.directory || "");
       setSourceType(component.source?.type || "webapp");
+      setSourceDetection(component.source?.detection || null);
+      setDetectingSource(false);
       setShowSourceConfig(false);
       setLinkedCapabilities(component.capabilities || []);
       setContract(component.contract || null);
@@ -666,10 +655,6 @@ export function Components({
 
   const generateComponentContract = async () => {
     if (!activeProject?.path || !editingSlug) return;
-    if (contractBlockers.length) {
-      setError(contractBlockers.join(" "));
-      return;
-    }
 
     setSaving(true);
     setError(null);
@@ -693,6 +678,7 @@ export function Components({
       setSelectedSourceProjects(component.sourceProjects || selectedSourceProjects);
       setSourceDirectory(component.source?.directory || sourceDirectory);
       setSourceType(component.source?.type || sourceType);
+      setSourceDetection(component.source?.detection || sourceDetection);
       setLinkedCapabilities(component.capabilities || linkedCapabilities);
       const nextSetup = await window.aidd.readProjectSetup(activeProject.path);
       setSetup(nextSetup);
@@ -702,6 +688,49 @@ export function Components({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const applySourceDetection = (selection: AiddComponentSourceDirectorySelection) => {
+    setSourceDirectory(selection.directory);
+    setSourceDetection(selection.detection);
+    setSourceType(selection.detection.suggestedType || "other");
+    setMessage(`Detected source as ${sourceTypeLabel(selection.detection.suggestedType)} (${selection.detection.confidence} confidence).`);
+  };
+
+  const browseSourceDirectory = async () => {
+    if (!activeProject?.path) return;
+    setDetectingSource(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const selection = await window.aidd.selectComponentSourceDirectory({
+        projectPath: activeProject.path,
+        currentDirectory: sourceDirectory,
+      });
+      if (selection) applySourceDetection(selection);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDetectingSource(false);
+    }
+  };
+
+  const detectSourceDirectory = async () => {
+    if (!activeProject?.path || !sourceDirectory.trim()) return;
+    setDetectingSource(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const selection = await window.aidd.detectComponentSourceDirectory({
+        projectPath: activeProject.path,
+        directory: sourceDirectory,
+      });
+      applySourceDetection(selection);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDetectingSource(false);
     }
   };
 
@@ -926,7 +955,7 @@ export function Components({
               variant="outline"
               onClick={generateComponentContract}
               disabled={saving || !canGenerateContract}
-              title={canGenerateContract ? "Generate versioned component.md" : contractBlockers.join(" ")}
+              title="Generate versioned component.md"
             >
               <FileText className="h-4 w-4" />
               {contract?.status === "current" ? "Regenerate component.md" : "Generate component.md"}
@@ -967,33 +996,96 @@ export function Components({
                 the component and included in the generated component contract.
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
-              <div className="space-y-1">
-                <span className="text-sm text-muted-foreground">Source directory</span>
-                <Input
-                  value={sourceDirectory}
-                  onChange={(event) => setSourceDirectory(event.target.value)}
-                  placeholder="src/components/editor-shell"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Use a path relative to the workspace code root, for example
-                  <code className="mx-1 rounded bg-muted px-1">src/components/editor-shell</code>.
-                </p>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+                <div className="space-y-1">
+                  <span className="text-sm text-muted-foreground">Source directory</span>
+                  <div className="flex gap-2">
+                    <Input
+                      value={sourceDirectory}
+                      onChange={(event) => {
+                        setSourceDirectory(event.target.value);
+                        setSourceDetection(null);
+                      }}
+                      placeholder="src/components/editor-shell"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={browseSourceDirectory}
+                      disabled={detectingSource}
+                    >
+                      <FolderOpen className="h-4 w-4" />
+                      Browse
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={detectSourceDirectory}
+                      disabled={detectingSource || !sourceDirectory.trim()}
+                    >
+                      <Search className="h-4 w-4" />
+                      {detectingSource ? "Detecting..." : "Detect"}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Select or enter the directory owned by this component. AIDD stores a path
+                    relative to the project when possible; external paths are stored as absolute references.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-sm text-muted-foreground">Source type</span>
+                  <Select
+                    className="w-full"
+                    value={sourceType}
+                    onChange={(event) => setSourceType(event.target.value)}
+                  >
+                    {componentSourceTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Select>
+                  {sourceDetection && sourceDetection.suggestedType !== sourceType && (
+                    <p className="text-xs text-muted-foreground">
+                      Auto-detected as {sourceTypeLabel(sourceDetection.suggestedType)}.
+                    </p>
+                  )}
+                </div>
               </div>
-              <div className="space-y-1">
-                <span className="text-sm text-muted-foreground">Source type</span>
-                <Select
-                  className="w-full"
-                  value={sourceType}
-                  onChange={(event) => setSourceType(event.target.value)}
-                >
-                  {componentSourceTypeOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              {sourceDetection && (
+                <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="font-medium">Detected source</span>
+                    <Badge variant="secondary">{sourceTypeLabel(sourceDetection.suggestedType)}</Badge>
+                    <Badge variant="outline">{sourceDetection.confidence} confidence</Badge>
+                    {sourceDetection.packageManager && (
+                      <Badge variant="outline">{sourceDetection.packageManager}</Badge>
+                    )}
+                  </div>
+                  {(sourceDetection.detectedFrameworks.length > 0 || sourceDetection.detectedLanguages.length > 0) && (
+                    <div className="mb-2 flex flex-wrap gap-2">
+                      {sourceDetection.detectedFrameworks.map((framework) => (
+                        <Badge key={`framework-${framework}`} variant="secondary">
+                          {framework}
+                        </Badge>
+                      ))}
+                      {sourceDetection.detectedLanguages.map((language) => (
+                        <Badge key={`language-${language}`} variant="outline">
+                          {language}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  {sourceDetection.reasons.length > 0 && (
+                    <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+                      {sourceDetection.reasons.map((reason) => (
+                        <li key={reason}>{reason}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -1130,9 +1222,9 @@ export function Components({
               </div>
               <div className="flex items-center justify-between gap-3 md:flex-col md:items-start md:justify-center">
                 <div>
-                  <span className="text-muted-foreground">Contract readiness</span>
+                  <span className="text-muted-foreground">Sections</span>
                   <div className="font-semibold">
-                    {progress.completed}/{progress.total}
+                    {sections.length} files
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1144,18 +1236,6 @@ export function Components({
               </div>
             </CardContent>
           </Card>
-          {contractBlockers.length > 0 && (
-            <Alert>
-              <AlertTitle>Component contract not ready</AlertTitle>
-              <AlertDescription>
-                <ul className="list-disc space-y-1 pl-5">
-                  {contractBlockers.map((blocker) => (
-                    <li key={blocker}>{blocker}</li>
-                  ))}
-                </ul>
-              </AlertDescription>
-            </Alert>
-          )}
           <Card className="shrink-0">
             <CardHeader>
               <CardTitle>Capabilities supported</CardTitle>
@@ -1166,15 +1246,38 @@ export function Components({
             </CardHeader>
             <CardContent>
               {linkedCapabilities.length ? (
-                <div className="flex flex-wrap gap-2">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {linkedCapabilities.map((capabilitySlug) => {
                     const capability = setup?.capabilities.find(
                       (item) => item.slug === capabilitySlug,
                     );
                     return (
-                      <Badge key={capabilitySlug} variant="secondary">
-                        {capability?.title || capabilitySlug}
-                      </Badge>
+                      <button
+                        key={capabilitySlug}
+                        type="button"
+                        className="rounded-md border bg-card p-3 text-left transition hover:border-ring hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring"
+                        onClick={() => onOpenCapability?.(capabilitySlug)}
+                        title={onOpenCapability ? "Open linked capability" : `capabilities/${capabilitySlug}/index.md`}
+                      >
+                        <div className="mb-2 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate font-medium">
+                              {capability?.title || capabilitySlug}
+                            </div>
+                            <div className="mt-1 truncate text-xs text-muted-foreground">
+                              capabilities/{capabilitySlug}/index.md
+                            </div>
+                          </div>
+                          <Badge variant="outline" className="shrink-0 capitalize">
+                            {statusLabel(capability?.status)}
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                          <span>Linked component: {title.trim() || editingSlug}</span>
+                          <span>•</span>
+                          <span>{capability?.components?.length ?? 0} component link(s)</span>
+                        </div>
+                      </button>
                     );
                   })}
                 </div>

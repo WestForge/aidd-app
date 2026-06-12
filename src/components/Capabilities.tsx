@@ -322,9 +322,13 @@ function sectionReady(section: CapabilitySection) {
 export function Capabilities({
   activeProject,
   onDeliveryPackageCreated,
+  initialCapabilitySlug,
+  onInitialCapabilityOpened,
 }: {
   activeProject?: AiddTrackedProject | null;
   onDeliveryPackageCreated?: (id: string) => void;
+  initialCapabilitySlug?: string | null;
+  onInitialCapabilityOpened?: () => void;
 }) {
   const [setup, setSetup] = useState<AiddProjectSetupState | null>(null);
   const [view, setView] = useState<CapabilityView>("list");
@@ -468,6 +472,11 @@ export function Capabilities({
       setSaving(false);
     }
   };
+
+  useEffect(() => {
+    if (!initialCapabilitySlug || !activeProject?.path) return;
+    openCapability(initialCapabilitySlug).finally(() => onInitialCapabilityOpened?.());
+  }, [initialCapabilitySlug, activeProject?.path]);
   const toggleComponent = (slug: string) =>
     setSelectedComponents((current) =>
       current.includes(slug)
