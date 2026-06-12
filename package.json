@@ -17,7 +17,10 @@
     "test:git-sync": "tsx tests/gitSync.unit.test.ts",
     "test:git-project-connection": "tsx tests/gitProjectConnector.unit.test.ts",
     "test:git-project-create-local": "tsx tests/gitProjectConnector.create-local-repo.test.ts",
-    "test:git-sync-workflow": "tsx tests/gitSyncWorkflow.unit.test.ts"
+    "test:git-sync-workflow": "tsx tests/gitSyncWorkflow.unit.test.ts",
+    "test:git-open-save-guard": "tsx tests/gitOpenSaveGuard.unit.test.ts",
+    "test:git-review-package": "tsx tests/gitReviewPackageStore.unit.test.ts",
+    "test:git-conflict-safe": "npm run test:git-open-save-guard && npm run test:git-review-package"
   },
   "dependencies": {
     "@isomorphic-git/lightning-fs": "^4.6.0",
@@ -45,10 +48,10 @@
     "electron-builder": "^25.1.8",
     "postcss": "^8.5.15",
     "tailwindcss": "^3.4.19",
+    "tsx": "^4.20.5",
     "typescript": "^5.7.2",
     "vite": "^6.0.3",
-    "wait-on": "^8.0.1",
-    "tsx": "^4.20.5"
+    "wait-on": "^8.0.1"
   },
   "build": {
     "appId": "net.westforge.aidd",
