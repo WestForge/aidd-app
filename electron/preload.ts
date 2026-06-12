@@ -53,7 +53,10 @@ contextBridge.exposeInMainWorld('aidd', {
     testConnection: (input: unknown) => ipcRenderer.invoke('gitSync:testConnection', input),
     clearToken: (projectPath: string) => ipcRenderer.invoke('gitSync:clearToken', projectPath),
     getProjectConnectionStatus: (projectPath: string) => ipcRenderer.invoke('gitSync:getProjectConnectionStatus', projectPath),
-    connectProject: (projectPath: string) => ipcRenderer.invoke('gitSync:connectProject', projectPath)
+    connectProject: (projectPath: string) => ipcRenderer.invoke('gitSync:connectProject', projectPath),
+    getSyncStatus: (projectPath: string) => ipcRenderer.invoke('gitSync:getSyncStatus', projectPath),
+    checkForUpdates: (projectPath: string) => ipcRenderer.invoke('gitSync:checkForUpdates', projectPath),
+    syncProject: (projectPath: string) => ipcRenderer.invoke('gitSync:syncProject', projectPath)
   },
   readText: (filePath: string) => ipcRenderer.invoke('fs:readText', filePath),
   writeText: (filePath: string, content: string) => ipcRenderer.invoke('fs:writeText', filePath, content)

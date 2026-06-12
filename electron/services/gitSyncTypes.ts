@@ -99,3 +99,39 @@ export interface AiddGitProjectConnectionResult {
   message: string;
   status: AiddGitProjectConnectionStatus;
 }
+
+
+export type AiddGitSyncStatusState =
+  | 'not_connected'
+  | 'ready_to_publish_first_version'
+  | 'up_to_date'
+  | 'local_changes'
+  | 'remote_updates_available'
+  | 'syncing'
+  | 'synced'
+  | 'review_needed'
+  | 'error';
+
+export interface AiddGitSyncStatus {
+  state: AiddGitSyncStatusState;
+  message: string;
+  lastSyncAt?: string;
+  lastCheckpointLabel?: string;
+}
+
+export interface AiddGitSyncResult {
+  ok: boolean;
+  code:
+    | 'OK'
+    | 'NOT_CONNECTED'
+    | 'MISSING_TOKEN'
+    | 'LOCAL_CHECKPOINT_FAILED'
+    | 'REMOTE_CHECK_FAILED'
+    | 'PULL_FAILED'
+    | 'PUSH_FAILED'
+    | 'CONFLICT_DETECTED'
+    | 'UNSAFE_REPOSITORY_STATE'
+    | 'UNKNOWN_ERROR';
+  message: string;
+  status: AiddGitSyncStatus;
+}

@@ -4,7 +4,7 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 
-function statusLabel(state: AiddGitProjectConnectionState) {
+function setupStatusLabel(state: AiddGitProjectConnectionState) {
   switch (state) {
     case 'connected':
       return 'Remote configured';
@@ -27,37 +27,81 @@ function statusLabel(state: AiddGitProjectConnectionState) {
   }
 }
 
-function badgeVariant(state: AiddGitProjectConnectionState): 'default' | 'secondary' | 'destructive' | 'outline' {
+function syncStatusLabel(state: AiddGitSyncStatusState) {
+  switch (state) {
+    case 'synced':
+      return 'Synced';
+    case 'up_to_date':
+      return 'Up to date';
+    case 'local_changes':
+      return 'Changes ready';
+    case 'remote_updates_available':
+      return 'Updates available';
+    case 'ready_to_publish_first_version':
+      return 'Ready to publish';
+    case 'review_needed':
+      return 'Review needed';
+    case 'syncing':
+      return 'Syncing';
+    case 'error':
+      return 'Error';
+    default:
+      return 'Not connected';
+  }
+}
+
+function setupBadgeVariant(state: AiddGitProjectConnectionState): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (state === 'connected') return 'default';
   if (state === 'local_ready' || state === 'remote_not_configured') return 'secondary';
   if (state === 'remote_mismatch' || state === 'needs_attention' || state === 'error' || state === 'missing_identity') return 'destructive';
   return 'outline';
 }
 
-function fallbackStatus(activeProject?: AiddTrackedProject | null): AiddGitProjectConnectionStatus {
+function syncBadgeVariant(state: AiddGitSyncStatusState): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (state === 'synced' || state === 'up_to_date') return 'default';
+  if (state === 'local_changes' || state === 'remote_updates_available' || state === 'ready_to_publish_first_version') return 'secondary';
+  if (state === 'review_needed' || state === 'error') return 'destructive';
+  return 'outline';
+}
+
+function fallbackSetupStatus(activeProject?: AiddTrackedProject | null): AiddGitProjectConnectionStatus {
   return {
     connected: false,
-    state: activeProject?.path ? 'local_not_ready' : 'local_not_ready',
+    state: 'local_not_ready',
     branch: 'main',
     hasLocalRepository: false,
     message: activeProject?.path ? 'Local Git setup has not been checked yet.' : 'No active project selected.',
   };
 }
 
+function fallbackSyncStatus(activeProject?: AiddTrackedProject | null): AiddGitSyncStatus {
+  return {
+    state: activeProject?.path ? 'not_connected' : 'not_connected',
+    message: activeProject?.path ? 'Sync status has not been checked yet.' : 'No active project selected.',
+  };
+}
+
 export function Sync({ bundles, activeProject }: { bundles: DeliveryBundle[]; activeProject?: AiddTrackedProject | null }) {
   const localChanges = bundles.filter((bundle) => bundle.status !== 'accepted').length;
-  const [status, setStatus] = useState<AiddGitProjectConnectionStatus | null>(null);
+  const [setupStatus, setSetupStatus] = useState<AiddGitProjectConnectionStatus | null>(null);
+  const [syncStatus, setSyncStatus] = useState<AiddGitSyncStatus | null>(null);
   const [message, setMessage] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<'setup' | 'check' | 'sync' | null>(null);
 
-  async function refreshConnectionStatus() {
+  async function refreshAll() {
     if (!activeProject?.path) {
-      setStatus(fallbackStatus(activeProject));
+      setSetupStatus(fallbackSetupStatus(activeProject));
+      setSyncStatus(fallbackSyncStatus(activeProject));
       return;
     }
 
-    const nextStatus = await window.aidd.gitSync.getProjectConnectionStatus(activeProject.path);
-    setStatus(nextStatus);
+    const [nextSetupStatus, nextSyncStatus] = await Promise.all([
+      window.aidd.gitSync.getProjectConnectionStatus(activeProject.path),
+      window.aidd.gitSync.getSyncStatus(activeProject.path),
+    ]);
+
+    setSetupStatus(nextSetupStatus);
+    setSyncStatus(nextSyncStatus);
   }
 
   useEffect(() => {
@@ -65,27 +109,35 @@ export function Sync({ bundles, activeProject }: { bundles: DeliveryBundle[]; ac
 
     async function load() {
       if (!activeProject?.path) {
-        setStatus(fallbackStatus(activeProject));
+        setSetupStatus(fallbackSetupStatus(activeProject));
+        setSyncStatus(fallbackSyncStatus(activeProject));
         setMessage('');
         return;
       }
 
       try {
-        const nextStatus = await window.aidd.gitSync.getProjectConnectionStatus(activeProject.path);
+        const [nextSetupStatus, nextSyncStatus] = await Promise.all([
+          window.aidd.gitSync.getProjectConnectionStatus(activeProject.path),
+          window.aidd.gitSync.getSyncStatus(activeProject.path),
+        ]);
+
         if (!cancelled) {
-          setStatus(nextStatus);
+          setSetupStatus(nextSetupStatus);
+          setSyncStatus(nextSyncStatus);
           setMessage('');
         }
       } catch (error) {
         if (!cancelled) {
-          setStatus({
+          const errorMessage = error instanceof Error ? error.message : 'Could not read sync status.';
+          setSetupStatus({
             connected: false,
             state: 'error',
             branch: 'main',
             hasLocalRepository: false,
-            message: error instanceof Error ? error.message : 'Could not read Git setup status.',
+            message: errorMessage,
           });
-          setMessage(error instanceof Error ? error.message : 'Could not read Git setup status.');
+          setSyncStatus({ state: 'error', message: errorMessage });
+          setMessage(errorMessage);
         }
       }
     }
@@ -100,16 +152,17 @@ export function Sync({ bundles, activeProject }: { bundles: DeliveryBundle[]; ac
   async function updateGitSetup() {
     if (!activeProject?.path) return;
 
-    setBusy(true);
+    setBusyAction('setup');
     setMessage('');
 
     try {
       const result = await window.aidd.gitSync.connectProject(activeProject.path);
-      setStatus(result.status);
+      setSetupStatus(result.status);
       setMessage(result.message);
+      await refreshAll();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Could not update local Git setup.';
-      setStatus({
+      setSetupStatus({
         connected: false,
         state: 'error',
         branch: 'main',
@@ -118,26 +171,56 @@ export function Sync({ bundles, activeProject }: { bundles: DeliveryBundle[]; ac
       });
       setMessage(errorMessage);
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
-  async function checkStatus() {
-    setBusy(true);
+  async function checkForUpdates() {
+    if (!activeProject?.path) return;
+
+    setBusyAction('check');
     setMessage('');
 
     try {
-      await refreshConnectionStatus();
-      setMessage('Git setup status refreshed.');
+      const result = await window.aidd.gitSync.checkForUpdates(activeProject.path);
+      setSyncStatus(result.status);
+      setMessage(result.message);
+      await refreshAll();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not refresh Git setup status.');
+      const errorMessage = error instanceof Error ? error.message : 'Could not check for shared updates.';
+      setSyncStatus({ state: 'error', message: errorMessage });
+      setMessage(errorMessage);
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
-  const currentStatus = status ?? fallbackStatus(activeProject);
+  async function syncProject() {
+    if (!activeProject?.path) return;
+
+    setBusyAction('sync');
+    setMessage('');
+    setSyncStatus({ state: 'syncing', message: 'Syncing project...' });
+
+    try {
+      const result = await window.aidd.gitSync.syncProject(activeProject.path);
+      setSyncStatus(result.status);
+      setMessage(result.message);
+      await refreshAll();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Could not sync project.';
+      setSyncStatus({ state: 'error', message: errorMessage });
+      setMessage(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  const currentSetupStatus = setupStatus ?? fallbackSetupStatus(activeProject);
+  const currentSyncStatus = syncStatus ?? fallbackSyncStatus(activeProject);
+  const busy = busyAction !== null;
   const canUpdate = Boolean(activeProject?.path) && !busy;
+  const canSync = Boolean(activeProject?.path) && currentSetupStatus.connected && !busy;
 
   return (
     <main className="screen">
@@ -145,14 +228,17 @@ export function Sync({ bundles, activeProject }: { bundles: DeliveryBundle[]; ac
         <div>
           <p className="eyebrow">Sync</p>
           <h1>Project Sync</h1>
-          <p className="muted">AIDD owns local Git setup. Remote sync is optional.</p>
+          <p className="muted">Save and share project updates without exposing Git commands.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" disabled={!activeProject?.path || busy} onClick={checkStatus}>
-            Check setup
+          <Button variant="outline" disabled={!activeProject?.path || busy} onClick={updateGitSetup}>
+            {busyAction === 'setup' ? 'Working...' : 'Update Git setup'}
           </Button>
-          <Button disabled={!canUpdate} onClick={updateGitSetup}>
-            {busy ? 'Working...' : 'Update Git setup'}
+          <Button variant="outline" disabled={!canSync} onClick={checkForUpdates}>
+            {busyAction === 'check' ? 'Checking...' : 'Check for updates'}
+          </Button>
+          <Button disabled={!canSync} onClick={syncProject}>
+            {busyAction === 'sync' ? 'Syncing...' : 'Sync project'}
           </Button>
         </div>
       </header>
@@ -162,18 +248,48 @@ export function Sync({ bundles, activeProject }: { bundles: DeliveryBundle[]; ac
           <CardHeader>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <CardTitle>Git setup</CardTitle>
-                <CardDescription>
-                  Create local Git setup first, then optionally connect a remote repository.
-                </CardDescription>
+                <CardTitle>Sync status</CardTitle>
+                <CardDescription>Checkpoint local changes and share them with the configured repository.</CardDescription>
               </div>
-              <Badge variant={badgeVariant(currentStatus.state)}>{statusLabel(currentStatus.state)}</Badge>
+              <Badge variant={syncBadgeVariant(currentSyncStatus.state)}>{syncStatusLabel(currentSyncStatus.state)}</Badge>
             </div>
           </CardHeader>
           <CardContent className="grid gap-4">
-            <p className="text-sm text-muted-foreground">{currentStatus.message}</p>
+            <p className="text-sm text-muted-foreground">{currentSyncStatus.message}</p>
 
             {message ? <div className="rounded-md border px-3 py-2 text-sm">{message}</div> : null}
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Last sync</div>
+                <div className="text-sm">{currentSyncStatus.lastSyncAt ? new Date(currentSyncStatus.lastSyncAt).toLocaleString() : 'Never'}</div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Last checkpoint</div>
+                <div className="break-all text-sm">{currentSyncStatus.lastCheckpointLabel || 'None yet'}</div>
+              </div>
+            </div>
+
+            {currentSyncStatus.state === 'review_needed' ? (
+              <div className="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive">
+                Sync stopped before making a destructive change. Review handling will be added in the conflict-safe collaboration phase.
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <CardTitle>Git setup</CardTitle>
+                <CardDescription>Local Git is mandatory. Remote repository sync is optional.</CardDescription>
+              </div>
+              <Badge variant={setupBadgeVariant(currentSetupStatus.state)}>{setupStatusLabel(currentSetupStatus.state)}</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <p className="text-sm text-muted-foreground">{currentSetupStatus.message}</p>
 
             <div className="grid gap-3 md:grid-cols-2">
               <div>
@@ -183,7 +299,7 @@ export function Sync({ bundles, activeProject }: { bundles: DeliveryBundle[]; ac
               <div>
                 <div className="text-xs uppercase tracking-wide text-muted-foreground">Author</div>
                 <div className="break-all text-sm">
-                  {currentStatus.authorName && currentStatus.authorEmail ? `${currentStatus.authorName} <${currentStatus.authorEmail}>` : 'Not configured'}
+                  {currentSetupStatus.authorName && currentSetupStatus.authorEmail ? `${currentSetupStatus.authorName} <${currentSetupStatus.authorEmail}>` : 'Not configured'}
                 </div>
               </div>
               <div>
@@ -192,33 +308,17 @@ export function Sync({ bundles, activeProject }: { bundles: DeliveryBundle[]; ac
               </div>
               <div>
                 <div className="text-xs uppercase tracking-wide text-muted-foreground">Local repository</div>
-                <div className="text-sm">{currentStatus.hasLocalRepository ? 'Initialised' : 'Not initialised yet'}</div>
+                <div className="text-sm">{currentSetupStatus.hasLocalRepository ? 'Initialised' : 'Not initialised yet'}</div>
               </div>
               <div>
                 <div className="text-xs uppercase tracking-wide text-muted-foreground">Repository URL</div>
-                <div className="break-all text-sm">{currentStatus.repoUrl || 'Optional, not configured'}</div>
+                <div className="break-all text-sm">{currentSetupStatus.repoUrl || 'Optional, not configured'}</div>
               </div>
               <div>
                 <div className="text-xs uppercase tracking-wide text-muted-foreground">Remote URL</div>
-                <div className="break-all text-sm">{currentStatus.remoteUrl ?? 'Not connected yet'}</div>
-              </div>
-              <div>
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">Last updated</div>
-                <div className="text-sm">{currentStatus.lastConnectedAt ? new Date(currentStatus.lastConnectedAt).toLocaleString() : 'Never'}</div>
+                <div className="break-all text-sm">{currentSetupStatus.remoteUrl ?? 'Not connected yet'}</div>
               </div>
             </div>
-
-            {currentStatus.state === 'missing_identity' ? (
-              <div className="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive">
-                Set your AIDD author identity in Settings, then update Git setup.
-              </div>
-            ) : null}
-
-            {currentStatus.state === 'local_ready' || currentStatus.state === 'remote_not_configured' ? (
-              <div className="rounded-md border border-yellow-500/40 bg-yellow-500/5 px-3 py-2 text-sm text-yellow-700 dark:text-yellow-300">
-                Local Git is ready. Remote sync is optional and can be added from Settings.
-              </div>
-            ) : null}
           </CardContent>
         </Card>
 

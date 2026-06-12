@@ -106,6 +106,41 @@ interface AiddGitProjectConnectionResult {
   status: AiddGitProjectConnectionStatus;
 }
 
+type AiddGitSyncStatusState =
+  | 'not_connected'
+  | 'ready_to_publish_first_version'
+  | 'up_to_date'
+  | 'local_changes'
+  | 'remote_updates_available'
+  | 'syncing'
+  | 'synced'
+  | 'review_needed'
+  | 'error';
+
+interface AiddGitSyncStatus {
+  state: AiddGitSyncStatusState;
+  message: string;
+  lastSyncAt?: string;
+  lastCheckpointLabel?: string;
+}
+
+interface AiddGitSyncResult {
+  ok: boolean;
+  code:
+    | 'OK'
+    | 'NOT_CONNECTED'
+    | 'MISSING_TOKEN'
+    | 'LOCAL_CHECKPOINT_FAILED'
+    | 'REMOTE_CHECK_FAILED'
+    | 'PULL_FAILED'
+    | 'PUSH_FAILED'
+    | 'CONFLICT_DETECTED'
+    | 'UNSAFE_REPOSITORY_STATE'
+    | 'UNKNOWN_ERROR';
+  message: string;
+  status: AiddGitSyncStatus;
+}
+
 interface AiddTrackedProject {
   id: string;
   name: string;
@@ -512,6 +547,9 @@ interface Window {
       clearToken: (projectPath: string) => Promise<AiddGitSyncSettings | null>;
       getProjectConnectionStatus: (projectPath: string) => Promise<AiddGitProjectConnectionStatus>;
       connectProject: (projectPath: string) => Promise<AiddGitProjectConnectionResult>;
+      getSyncStatus: (projectPath: string) => Promise<AiddGitSyncStatus>;
+      checkForUpdates: (projectPath: string) => Promise<AiddGitSyncResult>;
+      syncProject: (projectPath: string) => Promise<AiddGitSyncResult>;
     };
     readText: (filePath: string) => Promise<string>;
     writeText: (filePath: string, content: string) => Promise<boolean>;

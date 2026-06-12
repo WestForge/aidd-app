@@ -9,6 +9,7 @@ import { readGitSyncSettings, saveGitSyncSettings } from './services/gitSyncSett
 import { testGitRemoteConnection } from './services/gitRemoteTester';
 import { connectProjectToRepository, getProjectConnectionStatus } from './services/gitProjectConnector';
 import { readGitIdentity, requireGitIdentity, saveGitIdentity } from './services/gitIdentityStore';
+import { checkForUpdates, getSyncStatus, syncProject } from './services/gitSyncWorkflow';
 import type { AiddSaveGitIdentityInput, AiddSaveGitSyncSettingsInput, AiddGitSyncTestInput } from './services/gitSyncTypes';
 
 const isDev = process.env.NODE_ENV !== 'production';
@@ -3047,8 +3048,33 @@ ipcMain.handle('gitSync:getProjectConnectionStatus', async (_event, projectPath:
   });
 });
 
+
 ipcMain.handle('gitSync:connectProject', async (_event, projectPath: string) => {
   return connectProjectToRepository({
+    userDataPath: app.getPath('userData'),
+    projectPath,
+    credentialStore: gitCredentialStore
+  });
+});
+
+ipcMain.handle('gitSync:getSyncStatus', async (_event, projectPath: string) => {
+  return getSyncStatus({
+    userDataPath: app.getPath('userData'),
+    projectPath,
+    credentialStore: gitCredentialStore
+  });
+});
+
+ipcMain.handle('gitSync:checkForUpdates', async (_event, projectPath: string) => {
+  return checkForUpdates({
+    userDataPath: app.getPath('userData'),
+    projectPath,
+    credentialStore: gitCredentialStore
+  });
+});
+
+ipcMain.handle('gitSync:syncProject', async (_event, projectPath: string) => {
+  return syncProject({
     userDataPath: app.getPath('userData'),
     projectPath,
     credentialStore: gitCredentialStore
