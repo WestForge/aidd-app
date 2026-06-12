@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpCircle, CheckCircle2, CircleAlert, GitCommitHorizontal, RefreshCw, Wrench } from 'lucide-react';
+import { CheckCircle2, CircleAlert, GitCommitHorizontal, RefreshCw, Wrench } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -16,12 +16,14 @@ function statusLabel(status: string) {
   return status.replace(/-/g, ' ');
 }
 
-export function ProjectValidation({ activeProject }: { activeProject?: AiddTrackedProject | null }) {
+export function ProjectValidation({ activeProject, onProjectChanged }: { activeProject?: AiddTrackedProject | null; onProjectChanged?: () => Promise<void> | void }) {
   const [report, setReport] = useState<AiddProjectValidationReport | null>(null);
   const [repair, setRepair] = useState<AiddProjectRepairReport | null>(null);
   const [upgrade, setUpgrade] = useState<AiddProjectTemplateUpgradeReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const repairLogs = [...(repair?.logs ?? []), ...(upgrade?.logs ?? [])];
+  const repairLogPaths = [repair?.logPath, upgrade?.logPath].filter((value): value is string => Boolean(value));
 
   async function run() {
     if (!activeProject?.path) return;
@@ -37,7 +39,7 @@ export function ProjectValidation({ activeProject }: { activeProject?: AiddTrack
     }
   }
 
-  async function fix() {
+  async function repairIssues() {
     if (!activeProject?.path) return;
     setBusy(true);
     setError(null);
@@ -45,27 +47,13 @@ export function ProjectValidation({ activeProject }: { activeProject?: AiddTrack
     setUpgrade(null);
 
     try {
-      const result = await window.aidd.repairProject(activeProject.path);
-      setRepair(result);
-      setReport(result.validation);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
+      const repairResult = await window.aidd.repairProject(activeProject.path);
+      setRepair(repairResult);
 
-  async function upgradeTemplates() {
-    if (!activeProject?.path) return;
-    setBusy(true);
-    setError(null);
-    setRepair(null);
-    setUpgrade(null);
-
-    try {
-      const result = await window.aidd.upgradeProjectTemplates(activeProject.path);
-      setUpgrade(result);
-      setReport(result.validation);
+      const upgradeResult = await window.aidd.upgradeProjectTemplates(activeProject.path);
+      setUpgrade(upgradeResult);
+      setReport(upgradeResult.validation);
+      await onProjectChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -83,7 +71,7 @@ export function ProjectValidation({ activeProject }: { activeProject?: AiddTrack
         <Card>
           <CardHeader>
             <CardTitle>No project selected</CardTitle>
-            <CardDescription>Select a project before running the health check.</CardDescription>
+            <CardDescription>Select a project before running the AIDD integrity check.</CardDescription>
           </CardHeader>
         </Card>
       </div>
@@ -94,21 +82,17 @@ export function ProjectValidation({ activeProject }: { activeProject?: AiddTrack
     <div className="flex h-full flex-col overflow-hidden">
       <header className="flex h-16 shrink-0 items-center justify-between border-b px-6">
         <div>
-          <h1 className="text-xl font-semibold">Project health check</h1>
-          <p className="text-sm text-muted-foreground">Validate project structure, template files, front matter versions, and safe repair actions.</p>
+          <h1 className="text-xl font-semibold">AIDD integrity check</h1>
+          <p className="text-sm text-muted-foreground">Checks templates, front matter versions, missing files, corrupt JSON, and broken AIDD links. It does not score delivery readiness.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={run} disabled={busy}>
             <RefreshCw className="h-4 w-4" />
             Run check
           </Button>
-          <Button variant="outline" onClick={fix} disabled={busy}>
+          <Button onClick={repairIssues} disabled={busy}>
             <Wrench className="h-4 w-4" />
-            Fix safe issues
-          </Button>
-          <Button onClick={upgradeTemplates} disabled={busy}>
-            <ArrowUpCircle className="h-4 w-4" />
-            Upgrade templates
+            Repair issues
           </Button>
         </div>
       </header>
@@ -116,28 +100,29 @@ export function ProjectValidation({ activeProject }: { activeProject?: AiddTrack
       <main className="min-h-0 flex-1 overflow-auto p-6">
         {error && (
           <Alert variant="destructive" className="mb-4">
-            <AlertTitle>Health check error</AlertTitle>
+            <AlertTitle>Integrity check error</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
 
         {repair && (
           <Alert className="mb-4">
-            <AlertTitle>{repair.changed ? 'Repair applied' : 'No repair needed'}</AlertTitle>
-            <AlertDescription>
-              {repair.changes.length ? repair.changes.join(', ') : 'Project already matched safe repair expectations.'}
-              {repair.warnings.length ? ` Warnings: ${repair.warnings.join(', ')}` : ''}
+            <AlertTitle>{repair.changed ? 'Data repair applied' : 'No data repair needed'}</AlertTitle>
+            <AlertDescription className="space-y-2">
+              <div>{repair.changes.length ? repair.changes.join(', ') : 'Required project data already matched safe repair expectations.'}</div>
+              {repair.logPath ? <div>Data repair log: <code>{repair.logPath}</code></div> : null}
+              {repair.warnings.length ? <div className="text-yellow-700 dark:text-yellow-300">Warnings: {repair.warnings.join(', ')}</div> : null}
             </AlertDescription>
           </Alert>
         )}
 
         {upgrade && (
           <Alert className="mb-4">
-            <AlertTitle>{upgrade.changed ? 'Template upgrade complete' : 'Templates already current'}</AlertTitle>
+            <AlertTitle>{upgrade.changed ? 'Template repair complete' : 'Templates already current'}</AlertTitle>
             <AlertDescription className="space-y-3">
               <div className="space-y-1">
-                {upgrade.preUpgradeCommit ? <CommitLine label="Pre-upgrade checkpoint" oid={upgrade.preUpgradeCommit} /> : null}
-                {upgrade.upgradeCommit ? <CommitLine label="Template upgrade commit" oid={upgrade.upgradeCommit} /> : null}
+                {upgrade.preUpgradeCommit ? <CommitLine label="Pre-repair checkpoint" oid={upgrade.preUpgradeCommit} /> : null}
+                {upgrade.upgradeCommit ? <CommitLine label="Template repair commit" oid={upgrade.upgradeCommit} /> : null}
                 {!upgrade.preUpgradeCommit && !upgrade.upgradeCommit ? <div>No Git commit was created.</div> : null}
               </div>
               {upgrade.changes.length ? (
@@ -145,27 +130,31 @@ export function ProjectValidation({ activeProject }: { activeProject?: AiddTrack
                   {upgrade.changes.slice(0, 8).map((change) => <li key={change}>{change}</li>)}
                   {upgrade.changes.length > 8 ? <li>{upgrade.changes.length - 8} more change(s).</li> : null}
                 </ul>
-              ) : <div>No file changes were needed.</div>}
+              ) : <div>No template or front matter changes were needed.</div>}
+              {upgrade.logPath ? <div>Template repair log: <code>{upgrade.logPath}</code></div> : null}
               {upgrade.warnings.length ? <div className="text-yellow-700 dark:text-yellow-300">Warnings: {upgrade.warnings.join(', ')}</div> : null}
             </AlertDescription>
           </Alert>
         )}
 
+        {repairLogs.length > 0 && (
+          <RepairLogPanel logs={repairLogs} logPaths={repairLogPaths} />
+        )}
+
         {report && (
           <div className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-5">
-              <Metric label="Score" value={`${report.score}%`} />
+            <div className="grid gap-4 md:grid-cols-4">
+              <Metric label="Status" value={statusLabel(report.status)} />
+              <Metric label="Checked" value={report.summary.total} />
               <Metric label="Errors" value={report.summary.errors} />
               <Metric label="Warnings" value={report.summary.warnings} />
-              <Metric label="Template status" value={statusLabel(report.status)} />
-              <Metric label="Delivery ready" value={report.canCreateDeliveryPackage ? 'Yes' : 'No'} />
             </div>
 
             {report.nextActions.length > 0 && (
               <Card>
                 <CardHeader>
-                  <CardTitle>Next actions</CardTitle>
-                  <CardDescription>Highest priority fixes from the current health report.</CardDescription>
+                  <CardTitle>Repair actions</CardTitle>
+                  <CardDescription>Highest priority integrity fixes from the current report.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-2">
                   {report.nextActions.map((action) => (
@@ -205,6 +194,47 @@ export function ProjectValidation({ activeProject }: { activeProject?: AiddTrack
         )}
       </main>
     </div>
+  );
+}
+
+function logVariant(level: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (level === 'error') return 'destructive';
+  if (level === 'success') return 'secondary';
+  return 'outline';
+}
+
+function RepairLogPanel({ logs, logPaths }: { logs: AiddProjectRepairLogEntry[]; logPaths: string[] }) {
+  const latest = logs.slice(-25).reverse();
+
+  return (
+    <Card className="mb-4">
+      <CardHeader>
+        <CardTitle>Repair process log</CardTitle>
+        <CardDescription>Shows the exact repair stages run by the app, including template path resolution, file copy attempts, validation, and any write errors.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {logPaths.length ? (
+          <div className="text-sm text-muted-foreground">
+            Full log file{logPaths.length === 1 ? '' : 's'}: {logPaths.map((logPath) => <code key={logPath} className="mx-1">{logPath}</code>)}
+          </div>
+        ) : null}
+        <div className="space-y-2">
+          {latest.map((entry, index) => (
+            <div key={`${entry.timestamp}-${entry.stage}-${index}`} className="rounded-lg border p-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={logVariant(entry.level)}>{entry.level}</Badge>
+                <span className="font-medium">{entry.stage}</span>
+                <span className="text-xs text-muted-foreground">{new Date(entry.timestamp).toLocaleString()}</span>
+              </div>
+              <div className="mt-2">{entry.message}</div>
+              {entry.path ? <code className="mt-1 block break-all text-xs text-muted-foreground">{entry.path}</code> : null}
+              {entry.detail ? <div className="mt-1 break-words text-xs text-muted-foreground">{entry.detail}</div> : null}
+            </div>
+          ))}
+        </div>
+        {logs.length > latest.length ? <div className="text-xs text-muted-foreground">Showing the latest {latest.length} of {logs.length} log entries. Open the log file for the full trail.</div> : null}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -1,0 +1,35 @@
+{
+  "workspaceVersion": 1,
+  "templateId": "aidd-default",
+  "templateVersion": "0.8.0",
+  "docsRoot": "aidd",
+  "codeRoot": "code",
+  "project": {
+    "name": "{{PROJECT_NAME}}",
+    "description": "{{PROJECT_DESCRIPTION}}"
+  },
+  "sourceProjects": [
+    {
+      "id": "code",
+      "name": "Workspace code",
+      "path": "code",
+      "detectedType": "Workspace code folder",
+      "indicators": [],
+      "createdAt": "{{NOW}}",
+      "updatedAt": "{{NOW}}"
+    }
+  ],
+  "ai": {
+    "manageAgentsFile": true,
+    "agentsFilePath": "AGENTS.md",
+    "versionAgentsFile": false,
+    "abilities": [
+      "create-delivery-package",
+      "review-delivery-package",
+      "update-component-definition",
+      "update-capability-definition",
+      "check-source-impact",
+      "prepare-commit-summary"
+    ]
+  }
+}

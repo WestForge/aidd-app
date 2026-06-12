@@ -223,11 +223,22 @@ interface AiddProjectValidationReport {
   nextActions: string[];
 }
 
+interface AiddProjectRepairLogEntry {
+  timestamp: string;
+  level: 'info' | 'success' | 'warning' | 'error';
+  stage: string;
+  message: string;
+  path?: string;
+  detail?: string;
+}
+
 interface AiddProjectRepairReport {
   generatedAt: string;
   changed: boolean;
   changes: string[];
   warnings: string[];
+  logs: AiddProjectRepairLogEntry[];
+  logPath?: string;
   validation: AiddProjectValidationReport;
 }
 
@@ -238,6 +249,8 @@ interface AiddProjectTemplateUpgradeReport {
   upgradeCommit?: string;
   changes: string[];
   warnings: string[];
+  logs: AiddProjectRepairLogEntry[];
+  logPath?: string;
   validation: AiddProjectValidationReport;
 }
 

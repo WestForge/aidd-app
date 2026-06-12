@@ -19,6 +19,55 @@ const TEMPLATE_ID = 'aidd-default';
 const TEMPLATE_VERSION = '0.8.0';
 const AIDD_DEFAULT_BRANCH = 'main';
 
+const OBSOLETE_TEMPLATE_FILES = new Set([
+  'capability/05-non-functional-requirements.md',
+  'capability/06-data-model.md',
+  'capability/07-integrations.md',
+  'capability/08-architecture.md',
+  'capability/09-ux-ui.md',
+  'capability/10-risks.md',
+  'capability/11-validation.md',
+  'component/04-dependencies.md',
+  'component/05-architecture.md',
+  'component/06-standards.md',
+  'component/07-decisions.md',
+  'module/01-purpose.md',
+  'module/02-boundaries.md',
+  'module/03-interfaces.md',
+  'module/04-dependencies.md',
+  'module/05-architecture.md',
+  'module/06-standards.md',
+  'module/07-decisions.md',
+  'module/08-risks.md',
+  'module/index.md',
+  'module/module.json'
+]);
+
+const OBSOLETE_COMPONENT_SECTION_FILES = [
+  '04-dependencies.md',
+  '05-architecture.md',
+  '06-standards.md',
+  '07-decisions.md',
+  '05-dependencies-and-integrations.md',
+  '06-internal-design.md',
+  '07-quality-requirements.md',
+  'technical-shape.md'
+];
+
+const OBSOLETE_CAPABILITY_SECTION_FILES = [
+  '05-non-functional-requirements.md',
+  '06-data-model.md',
+  '07-integrations.md',
+  '08-architecture.md',
+  '09-ux-ui.md',
+  '10-risks.md',
+  '11-validation.md'
+];
+
+function isObsoleteTemplateFile(relativePath: string) {
+  return OBSOLETE_TEMPLATE_FILES.has(normaliseRelativePath(relativePath));
+}
+
 
 interface NotifyInput {
   title: string;
@@ -140,6 +189,15 @@ interface ProjectValidationReport {
   nextActions: string[];
 }
 
+interface ProjectRepairLogEntry {
+  timestamp: string;
+  level: 'info' | 'success' | 'warning' | 'error';
+  stage: string;
+  message: string;
+  path?: string;
+  detail?: string;
+}
+
 interface ProjectTemplateUpgradeReport {
   generatedAt: string;
   changed: boolean;
@@ -147,6 +205,8 @@ interface ProjectTemplateUpgradeReport {
   upgradeCommit?: string;
   changes: string[];
   warnings: string[];
+  logs: ProjectRepairLogEntry[];
+  logPath?: string;
   validation: ProjectValidationReport;
 }
 
@@ -423,10 +483,28 @@ async function writeProjects(projects: TrackedProject[]) {
   await fsp.writeFile(projectsStorePath(), JSON.stringify(projects, null, 2) + '\n', 'utf8');
 }
 
+function templatePathCandidates() {
+  const resourcesPath = (process as any).resourcesPath as string | undefined;
+  const candidates = [
+    path.join(process.cwd(), 'resources', 'templates', 'aidd-default'),
+    path.join(app.getAppPath(), 'resources', 'templates', 'aidd-default'),
+    resourcesPath ? path.join(resourcesPath, 'resources', 'templates', 'aidd-default') : '',
+    resourcesPath ? path.join(resourcesPath, 'templates', 'aidd-default') : '',
+    resourcesPath ? path.join(resourcesPath, 'app.asar.unpacked', 'resources', 'templates', 'aidd-default') : '',
+    resourcesPath ? path.join(resourcesPath, 'app', 'resources', 'templates', 'aidd-default') : ''
+  ].filter(Boolean);
+
+  return Array.from(new Set(candidates));
+}
+
+function resolveTemplatePath() {
+  const candidates = templatePathCandidates();
+  const selected = candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0];
+  return { selected, candidates };
+}
+
 function templatePath() {
-  const devPath = path.join(process.cwd(), 'resources', 'templates', 'aidd-default');
-  if (fs.existsSync(devPath)) return devPath;
-  return path.join(app.getAppPath(), 'resources', 'templates', 'aidd-default');
+  return resolveTemplatePath().selected;
 }
 
 function slugify(value: string) {
@@ -591,7 +669,7 @@ function inferDocumentTitle(relativePath: string, body: string, data: Record<str
 }
 
 function normalizeSetupStatus(value: unknown): SetupStepStatus {
-  const valid: SetupStepStatus[] = ['not-started', 'draft', 'in-review', 'complete', 'skipped'];
+  const valid: SetupStepStatus[] = ['not-started', 'draft', 'in-review', 'active', 'deprecated', 'complete', 'skipped'];
   return valid.includes(value as SetupStepStatus) ? value as SetupStepStatus : 'not-started';
 }
 
@@ -971,7 +1049,8 @@ async function validateTemplateFiles(projectPath: string, section: ProjectValida
     return;
   }
 
-  const expectedFiles = await collectRelativeFiles(expectedRoot);
+  const bundledFiles = await collectRelativeFiles(expectedRoot);
+  const expectedFiles = bundledFiles.filter((relativePath) => !isObsoleteTemplateFile(relativePath));
   const actualFiles = await collectRelativeFiles(actualRoot);
   const expected = new Set(expectedFiles);
   const actual = new Set(actualFiles);
@@ -1005,8 +1084,21 @@ async function validateTemplateFiles(projectPath: string, section: ProjectValida
 
   for (const relativePath of actualFiles.filter((item) => item.endsWith('.md') && expected.has(item))) {
     const raw = await fsp.readFile(path.join(actualRoot, relativePath), 'utf8');
-    const parsed = matter(raw);
-    const aidd = (parsed.data as any)?.aidd;
+    const parsed = parseMarkdownSafe(raw);
+    if (!parsed.ok) {
+      issueCount++;
+      pushValidation(section, {
+        id: `template-frontmatter-corrupt-${relativePath}`,
+        title: 'Template front matter is corrupt',
+        message: `${relativePath} could not be parsed: ${parsed.error}`,
+        severity: 'error',
+        path: `.aidd/templates/${relativePath}`,
+        action: 'Fix the YAML front matter or restore the template file from the bundled app template.'
+      });
+      continue;
+    }
+
+    const aidd = (parsed.parsed.data as any)?.aidd;
     const version = aidd?.templateVersion;
     if (!aidd || version === TEMPLATE_VERSION) continue;
     issueCount++;
@@ -1016,7 +1108,7 @@ async function validateTemplateFiles(projectPath: string, section: ProjectValida
       message: `${relativePath} uses templateVersion ${version || 'missing'}; app expects ${TEMPLATE_VERSION}.`,
       severity: 'warning',
       path: `.aidd/templates/${relativePath}`,
-      action: 'Run the template upgrade to update front matter versions.'
+      action: 'Run Repair issues to update front matter versions.'
     });
   }
 
@@ -1031,14 +1123,500 @@ async function validateTemplateFiles(projectPath: string, section: ProjectValida
   }
 }
 
+
+async function readJsonSafe<T = any>(filePath: string): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+  try {
+    return { ok: true, data: JSON.parse(await fsp.readFile(filePath, 'utf8')) as T };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function parseMarkdownSafe(content: string): { ok: true; parsed: any } | { ok: false; error: string } {
+  try {
+    return { ok: true, parsed: matter(content) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function validateJsonIntegrity(projectPath: string, relativePath: string, section: ProjectValidationSection, required = true) {
+  const filePath = path.join(projectPath, relativePath);
+  if (!(await exists(filePath))) {
+    if (required) {
+      pushValidation(section, {
+        id: `json-missing-${relativePath}`,
+        title: 'Required JSON file missing',
+        message: `${relativePath} does not exist.`,
+        severity: 'error',
+        path: relativePath,
+        action: 'Run Repair issues to restore missing AIDD data files.'
+      });
+      return false;
+    }
+    return true;
+  }
+
+  const result = await readJsonSafe(filePath);
+  if (!result.ok) {
+    pushValidation(section, {
+      id: `json-corrupt-${relativePath}`,
+      title: 'JSON file is corrupt',
+      message: `${relativePath} could not be parsed: ${result.error}`,
+      severity: 'error',
+      path: relativePath,
+      action: 'Open the file and fix the JSON syntax, or restore it from version control.'
+    });
+    return false;
+  }
+
+  return true;
+}
+
+async function validateMarkdownIntegrity(projectPath: string, relativePath: string, section: ProjectValidationSection, required = true) {
+  const filePath = path.join(projectPath, relativePath);
+  if (!(await exists(filePath))) {
+    if (required) {
+      pushValidation(section, {
+        id: `markdown-missing-${relativePath}`,
+        title: 'Required Markdown file missing',
+        message: `${relativePath} does not exist.`,
+        severity: 'error',
+        path: relativePath,
+        action: 'Run Repair issues to restore missing AIDD data files.'
+      });
+      return false;
+    }
+    return true;
+  }
+
+  const parsed = parseMarkdownSafe(await fsp.readFile(filePath, 'utf8'));
+  if (!parsed.ok) {
+    pushValidation(section, {
+      id: `markdown-corrupt-${relativePath}`,
+      title: 'Markdown front matter is corrupt',
+      message: `${relativePath} could not be parsed: ${parsed.error}`,
+      severity: 'error',
+      path: relativePath,
+      action: 'Fix the YAML front matter or restore the file from version control.'
+    });
+    return false;
+  }
+
+  return true;
+}
+
+async function validateTemplateManifest(projectPath: string, section: ProjectValidationSection) {
+  const relativePath = 'aidd.template.json';
+  const manifestPath = path.join(projectPath, relativePath);
+  if (!(await exists(manifestPath))) {
+    pushValidation(section, {
+      id: 'template-manifest-missing',
+      title: 'Template manifest missing',
+      message: 'The project does not contain aidd.template.json.',
+      severity: 'error',
+      path: relativePath,
+      action: 'Run Repair issues to recreate the AIDD template manifest.'
+    });
+    return;
+  }
+
+  const result = await readJsonSafe<any>(manifestPath);
+  if (!result.ok) {
+    pushValidation(section, {
+      id: 'template-manifest-corrupt',
+      title: 'Template manifest is corrupt',
+      message: `aidd.template.json could not be parsed: ${result.error}`,
+      severity: 'error',
+      path: relativePath,
+      action: 'Fix the JSON syntax or restore the manifest from version control.'
+    });
+    return;
+  }
+
+  const manifest = result.data;
+  if (manifest.templateId && manifest.templateId !== TEMPLATE_ID) {
+    pushValidation(section, {
+      id: 'template-id-drift',
+      title: 'Template id differs from the app template',
+      message: `Project uses ${manifest.templateId}; app expects ${TEMPLATE_ID}.`,
+      severity: 'warning',
+      path: relativePath,
+      action: 'Check whether this project is meant to use the bundled AIDD template.'
+    });
+  }
+
+  if (manifest.templateVersion !== TEMPLATE_VERSION) {
+    pushValidation(section, {
+      id: 'template-version-drift',
+      title: 'Template manifest version is out of sync',
+      message: `Project uses ${manifest.templateVersion || 'missing'}; app expects ${TEMPLATE_VERSION}.`,
+      severity: 'warning',
+      path: relativePath,
+      action: 'Run Repair issues to upgrade the template manifest version.'
+    });
+    return;
+  }
+
+  pushValidation(section, {
+    id: 'template-manifest-current',
+    title: 'Template manifest is current',
+    message: `${manifest.templateId || TEMPLATE_ID}@${manifest.templateVersion}`,
+    severity: 'success',
+    path: relativePath
+  });
+}
+
+async function validateProjectDataIntegrity(projectPath: string, section: ProjectValidationSection) {
+  const before = section.items.length;
+  const requiredDirs = [
+    '.aidd',
+    '.aidd/templates',
+    'foundation',
+    'foundation/standards',
+    'foundation/delivery-planning',
+    'capabilities',
+    'components',
+    'delivery',
+    'delivery/packages',
+    'source-code',
+    'source-code/projects'
+  ];
+
+  for (const relativePath of requiredDirs) {
+    if (await exists(path.join(projectPath, relativePath))) continue;
+    pushValidation(section, {
+      id: `dir-missing-${relativePath}`,
+      title: 'Required folder missing',
+      message: `${relativePath} does not exist.`,
+      severity: 'error',
+      path: relativePath,
+      action: 'Run Repair issues to restore the expected AIDD folder structure.'
+    });
+  }
+
+  const legacyFolders = [
+    { from: 'common', to: 'foundation' },
+    { from: 'modules', to: 'components' },
+    { from: 'bundles', to: 'delivery/packages' },
+    { from: 'delivery/bundles', to: 'delivery/packages' }
+  ];
+
+  for (const legacy of legacyFolders) {
+    if (!(await exists(path.join(projectPath, legacy.from)))) continue;
+    pushValidation(section, {
+      id: `legacy-folder-${legacy.from}`,
+      title: 'Legacy AIDD folder found',
+      message: `${legacy.from} is from an older project layout. Current projects use ${legacy.to}.`,
+      severity: 'warning',
+      path: legacy.from,
+      action: 'Run Repair issues to migrate legacy folders where it is safe.'
+    });
+  }
+
+  await validateJsonIntegrity(projectPath, 'aidd.config.json', section, false);
+  await validateJsonIntegrity(projectPath, 'aidd.template.json', section, true);
+  await validateJsonIntegrity(projectPath, 'foundation/standards/standards.json', section, false);
+  await validateJsonIntegrity(projectPath, 'delivery/roadmap.json', section, false);
+
+  const requiredMarkdown = [
+    'foundation/02-product-definition.md',
+    'foundation/03-audience-and-users.md',
+    'foundation/04-goals-and-success-metrics.md',
+    'foundation/standards/index.md',
+    'foundation/delivery-planning/index.md',
+    'capabilities/index.md',
+    'components/index.md',
+    'delivery/packages/index.md'
+  ];
+
+  for (const relativePath of requiredMarkdown) {
+    await validateMarkdownIntegrity(projectPath, relativePath, section, true);
+  }
+
+  if (section.items.length === before) {
+    pushValidation(section, {
+      id: 'project-data-present',
+      title: 'Required AIDD data files are present',
+      message: 'Required folders, JSON files, and Markdown files are present and parseable.',
+      severity: 'success'
+    });
+  }
+}
+
+interface HealthEntity {
+  kind: 'component' | 'capability' | 'source-project' | 'delivery-package';
+  rootDir: string;
+  folder: string;
+  manifestName: string;
+  relativePath: string;
+  data: any;
+  slug: string;
+  title: string;
+}
+
+async function listEntityFolders(projectPath: string, rootDir: string) {
+  const dir = path.join(projectPath, rootDir);
+  if (!(await exists(dir))) return [] as string[];
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+  return entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith('_')).map((entry) => entry.name).sort((a, b) => a.localeCompare(b));
+}
+
+async function collectHealthEntities(projectPath: string, section: ProjectValidationSection, rootDir: string, manifestName: string, kind: HealthEntity['kind']) {
+  const entities: HealthEntity[] = [];
+  const folders = await listEntityFolders(projectPath, rootDir);
+
+  for (const folder of folders) {
+    const relativePath = `${rootDir}/${folder}/${manifestName}`;
+    const filePath = path.join(projectPath, relativePath);
+    if (!(await exists(filePath))) {
+      pushValidation(section, {
+        id: `${kind}-manifest-missing-${folder}`,
+        title: 'Entity manifest missing',
+        message: `${relativePath} does not exist.`,
+        severity: 'error',
+        path: relativePath,
+        action: 'Run Repair issues if this is a legacy item, or recreate the missing manifest from version control.'
+      });
+      continue;
+    }
+
+    const result = await readJsonSafe<any>(filePath);
+    if (!result.ok) {
+      pushValidation(section, {
+        id: `${kind}-manifest-corrupt-${folder}`,
+        title: 'Entity manifest is corrupt',
+        message: `${relativePath} could not be parsed: ${result.error}`,
+        severity: 'error',
+        path: relativePath,
+        action: 'Fix the JSON syntax or restore the manifest from version control.'
+      });
+      continue;
+    }
+
+    const data = result.data;
+    const slug = String(data.slug || data.id || folder).trim();
+    const title = String(data.title || data.name || slug || folder).trim();
+    if (!slug || !title) {
+      pushValidation(section, {
+        id: `${kind}-manifest-incomplete-${folder}`,
+        title: 'Entity manifest is incomplete',
+        message: `${relativePath} should include at least a slug/id and title/name.`,
+        severity: 'warning',
+        path: relativePath,
+        action: 'Open the item and save it again so AIDD can normalise the manifest.'
+      });
+    }
+
+    if (slug && slug !== folder && kind !== 'source-project') {
+      pushValidation(section, {
+        id: `${kind}-folder-slug-mismatch-${folder}`,
+        title: 'Entity folder and slug differ',
+        message: `${relativePath} uses slug ${slug}, but the folder is ${folder}.`,
+        severity: 'warning',
+        path: relativePath,
+        action: 'Rename the folder or update the manifest slug so links remain stable.'
+      });
+    }
+
+    entities.push({ kind, rootDir, folder, manifestName, relativePath, data, slug, title });
+  }
+
+  return entities;
+}
+
+async function validateEntitySectionFiles(projectPath: string, section: ProjectValidationSection, entity: HealthEntity, templates: Array<{ fileName: string; key: string; title: string }>, expectedType: string) {
+  const entityDir = path.join(projectPath, entity.rootDir, entity.folder);
+  const configuredFiles = Array.isArray(entity.data.template?.sectionFiles)
+    ? entity.data.template.sectionFiles.map((value: unknown) => String(value))
+    : templates.map((template) => template.fileName);
+  const allowed = new Set(['index.md', ...configuredFiles]);
+
+  for (const fileName of configuredFiles) {
+    const relativePath = `${entity.rootDir}/${entity.folder}/${fileName}`;
+    const filePath = path.join(projectPath, relativePath);
+    if (!(await exists(filePath))) {
+      pushValidation(section, {
+        id: `${entity.kind}-section-missing-${entity.folder}-${fileName}`,
+        title: 'Entity section file missing',
+        message: `${entity.title} is missing ${fileName}.`,
+        severity: 'error',
+        path: relativePath,
+        action: 'Open and save the item again, or restore the missing section from version control.'
+      });
+      continue;
+    }
+
+    const raw = await fsp.readFile(filePath, 'utf8');
+    const parsed = parseMarkdownSafe(raw);
+    if (!parsed.ok) {
+      pushValidation(section, {
+        id: `${entity.kind}-section-corrupt-${entity.folder}-${fileName}`,
+        title: 'Entity section front matter is corrupt',
+        message: `${relativePath} could not be parsed: ${parsed.error}`,
+        severity: 'error',
+        path: relativePath,
+        action: 'Fix the YAML front matter or restore the file from version control.'
+      });
+      continue;
+    }
+
+    const aidd = (parsed.parsed.data as any)?.aidd;
+    if (!aidd) {
+      pushValidation(section, {
+        id: `${entity.kind}-section-frontmatter-missing-${entity.folder}-${fileName}`,
+        title: 'Entity section front matter missing',
+        message: `${relativePath} is missing AIDD front matter.`,
+        severity: 'warning',
+        path: relativePath,
+        action: 'Open and save the item again so AIDD can rebuild the section front matter.'
+      });
+    } else if (aidd.type && aidd.type !== expectedType) {
+      pushValidation(section, {
+        id: `${entity.kind}-section-type-mismatch-${entity.folder}-${fileName}`,
+        title: 'Entity section type differs from expected type',
+        message: `${relativePath} uses aidd.type ${aidd.type}; expected ${expectedType}.`,
+        severity: 'warning',
+        path: relativePath,
+        action: 'Open and save the item again so AIDD can normalise the section metadata.'
+      });
+    }
+  }
+
+  if (!(await exists(entityDir))) return;
+  for (const entry of await fsp.readdir(entityDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+    if (allowed.has(entry.name)) continue;
+    const relativePath = `${entity.rootDir}/${entity.folder}/${entry.name}`;
+    pushValidation(section, {
+      id: `${entity.kind}-unexpected-section-${entity.folder}-${entry.name}`,
+      title: 'Unexpected entity section file',
+      message: `${relativePath} is not part of the current ${entity.kind} template file list.`,
+      severity: 'warning',
+      path: relativePath,
+      action: 'Review the file. If it is obsolete, move it to an archive or merge useful content into the current sections.'
+    });
+  }
+}
+
+async function validateEntityDataIntegrity(projectPath: string, section: ProjectValidationSection) {
+  const before = section.items.length;
+  const components = await collectHealthEntities(projectPath, section, 'components', 'component.json', 'component');
+  const capabilities = await collectHealthEntities(projectPath, section, 'capabilities', 'capability.json', 'capability');
+  const sourceProjects = await collectHealthEntities(projectPath, section, 'source-code/projects', 'source-project.json', 'source-project');
+  const deliveryPackages = await collectHealthEntities(projectPath, section, 'delivery/packages', 'package.json', 'delivery-package');
+
+  const componentSlugs = new Set(components.map((component) => component.slug));
+  const sourceIds = new Set(sourceProjects.map((sourceProject) => String(sourceProject.data.id || sourceProject.slug)));
+  const capabilitySlugs = new Set(capabilities.map((capability) => capability.slug));
+
+  for (const capability of capabilities) {
+    if (Array.isArray(capability.data.modules) && !Array.isArray(capability.data.components)) {
+      pushValidation(section, {
+        id: `capability-legacy-modules-${capability.folder}`,
+        title: 'Capability uses legacy module links',
+        message: `${capability.relativePath} uses modules instead of components.`,
+        severity: 'warning',
+        path: capability.relativePath,
+        action: 'Open and save the capability to normalise links to components.'
+      });
+    }
+
+    const linkedComponents = Array.isArray(capability.data.components) ? capability.data.components : Array.isArray(capability.data.modules) ? capability.data.modules : [];
+    const missing = linkedComponents.map((value: unknown) => String(value)).filter((slug: string) => slug && !componentSlugs.has(slug));
+    if (missing.length) {
+      pushValidation(section, {
+        id: `capability-missing-component-links-${capability.folder}`,
+        title: 'Capability links to missing components',
+        message: `${capability.title} references missing components: ${missing.join(', ')}.`,
+        severity: 'error',
+        path: capability.relativePath,
+        action: 'Create the missing components or remove the broken links.'
+      });
+    }
+
+    await validateEntitySectionFiles(projectPath, section, capability, CAPABILITY_TEMPLATE_SECTIONS, 'capability-section');
+  }
+
+  for (const component of components) {
+    const mappedSources = Array.isArray(component.data.sourceProjects) ? component.data.sourceProjects : [];
+    const missingSources = mappedSources.map((value: unknown) => String(value)).filter((id: string) => id && !sourceIds.has(id));
+    if (missingSources.length) {
+      pushValidation(section, {
+        id: `component-missing-source-links-${component.folder}`,
+        title: 'Component links to missing source projects',
+        message: `${component.title} references missing source projects: ${missingSources.join(', ')}.`,
+        severity: 'error',
+        path: component.relativePath,
+        action: 'Add the missing source project references or remove the broken links.'
+      });
+    }
+
+    await validateEntitySectionFiles(projectPath, section, component, COMPONENT_TEMPLATE_SECTIONS, 'component-section');
+  }
+
+  for (const deliveryPackage of deliveryPackages) {
+    const sourceCapability = String(deliveryPackage.data.sourceCapability || deliveryPackage.data.capability || '').trim();
+    if (sourceCapability && !capabilitySlugs.has(sourceCapability)) {
+      pushValidation(section, {
+        id: `delivery-missing-capability-${deliveryPackage.folder}`,
+        title: 'Delivery package references a missing capability',
+        message: `${deliveryPackage.title} references ${sourceCapability}, but no matching capability exists.`,
+        severity: 'error',
+        path: deliveryPackage.relativePath,
+        action: 'Reconnect the delivery package to an existing capability or restore the missing capability.'
+      });
+    }
+
+    await validateMarkdownIntegrity(projectPath, `${deliveryPackage.rootDir}/${deliveryPackage.folder}/snapshot.md`, section, false);
+    await validateMarkdownIntegrity(projectPath, `${deliveryPackage.rootDir}/${deliveryPackage.folder}/implementation-strategy.md`, section, false);
+  }
+
+  const legacyModules = await listEntityFolders(projectPath, 'modules');
+  if (legacyModules.length) {
+    pushValidation(section, {
+      id: 'legacy-modules-folder',
+      title: 'Legacy module entities found',
+      message: `${legacyModules.length} module folder${legacyModules.length === 1 ? '' : 's'} still exist under modules/.`,
+      severity: 'warning',
+      path: 'modules',
+      action: 'Run Repair issues to migrate modules to components where it is safe.'
+    });
+  }
+
+  if (section.items.length === before) {
+    pushValidation(section, {
+      id: 'entity-data-parseable',
+      title: 'Entity data is parseable',
+      message: 'Component, capability, source project, and delivery package manifests and section files are readable.',
+      severity: 'success'
+    });
+  }
+}
+
+
+
 async function validateProjectFrontmatterVersions(projectPath: string, section: ProjectValidationSection) {
   const markdownFiles = await collectProjectMarkdownFiles(projectPath);
   let issueCount = 0;
 
   for (const relativePath of markdownFiles) {
     const raw = await fsp.readFile(path.join(projectPath, relativePath), 'utf8');
-    const parsed = matter(raw);
-    const aidd = (parsed.data as any)?.aidd;
+    const parsed = parseMarkdownSafe(raw);
+    if (!parsed.ok) {
+      issueCount++;
+      pushValidation(section, {
+        id: `frontmatter-corrupt-${relativePath}`,
+        title: 'AIDD front matter is corrupt',
+        message: `${relativePath} could not be parsed: ${parsed.error}`,
+        severity: 'error',
+        path: relativePath,
+        action: 'Fix the YAML front matter or restore the file from version control.'
+      });
+      continue;
+    }
+
+    const aidd = (parsed.parsed.data as any)?.aidd;
     if (!aidd) continue;
     const version = aidd.templateVersion;
     if (version === TEMPLATE_VERSION) continue;
@@ -1049,18 +1627,130 @@ async function validateProjectFrontmatterVersions(projectPath: string, section: 
       message: `${relativePath} uses templateVersion ${version || 'missing'}; app expects ${TEMPLATE_VERSION}.`,
       severity: 'warning',
       path: relativePath,
-      action: 'Run the template upgrade to update front matter versions.'
+      action: 'Run Repair issues to update front matter versions.'
     });
   }
 
   if (issueCount === 0) {
     pushValidation(section, {
       id: 'frontmatter-current',
-      title: 'Project document front matter is current',
+      title: 'AIDD front matter is current',
       message: `All AIDD Markdown files with front matter use templateVersion ${TEMPLATE_VERSION}.`,
       severity: 'success'
     });
   }
+}
+
+function buildValidationReport(sections: ProjectValidationSection[]): ProjectValidationReport {
+  const items = sections.flatMap((section) => section.items);
+  const summary = {
+    total: items.length,
+    errors: items.filter((item) => item.severity === 'error').length,
+    warnings: items.filter((item) => item.severity === 'warning').length,
+    info: items.filter((item) => item.severity === 'info').length,
+    success: items.filter((item) => item.severity === 'success').length
+  };
+  const score = summary.total ? Math.max(0, Math.round(((summary.success + summary.info * 0.5) / summary.total) * 100)) : 0;
+  const nextActions = items
+    .filter((item) => item.severity === 'error' || item.severity === 'warning')
+    .map((item) => item.action || item.title)
+    .filter((value, index, array) => value && array.indexOf(value) === index)
+    .slice(0, 5) as string[];
+
+  return {
+    generatedAt: new Date().toISOString(),
+    status: summary.errors ? 'fail' : summary.warnings ? 'warning' : 'pass',
+    score,
+    canCreateDeliveryPackage: summary.errors === 0,
+    summary,
+    sections,
+    nextActions
+  };
+}
+async function validateProject(projectPath: string): Promise<ProjectValidationReport> {
+  const manifestSection = validationSection('template-manifest', 'Template manifest');
+  const templateSection = validationSection('templates', 'Template files');
+  const frontmatterSection = validationSection('frontmatter', 'Front matter versions');
+  const dataSection = validationSection('data', 'Required data files');
+  const entitySection = validationSection('entities', 'Entity data integrity');
+
+  if (!projectPath || !(await exists(projectPath))) {
+    pushValidation(dataSection, {
+      id: 'project-path-missing',
+      title: 'Project folder not found',
+      message: `The selected project folder does not exist: ${projectPath || 'not set'}`,
+      severity: 'error',
+      action: 'Open a valid AIDD project from the Projects screen.'
+    });
+    return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection]);
+  }
+
+  await validateTemplateManifest(projectPath, manifestSection);
+  await validateTemplateFiles(projectPath, templateSection);
+  await validateProjectFrontmatterVersions(projectPath, frontmatterSection);
+  await validateProjectDataIntegrity(projectPath, dataSection);
+  await validateEntityDataIntegrity(projectPath, entitySection);
+
+  return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection]);
+}
+
+function pushRepairLog(
+  logs: ProjectRepairLogEntry[],
+  level: ProjectRepairLogEntry['level'],
+  stage: string,
+  message: string,
+  options: { path?: string; detail?: string } = {}
+) {
+  logs.push({
+    timestamp: new Date().toISOString(),
+    level,
+    stage,
+    message,
+    ...(options.path ? { path: normaliseRelativePath(options.path) } : {}),
+    ...(options.detail ? { detail: options.detail } : {})
+  });
+}
+
+function formatRepairLogEntry(entry: ProjectRepairLogEntry) {
+  const parts = [`[${entry.timestamp}]`, entry.level.toUpperCase(), entry.stage, '-', entry.message];
+  if (entry.path) parts.push(`(${entry.path})`);
+  if (entry.detail) parts.push(`— ${entry.detail}`);
+  return parts.join(' ');
+}
+
+async function writeRepairLogFile(
+  projectPath: string,
+  stamp: string,
+  title: string,
+  logs: ProjectRepairLogEntry[],
+  changes: string[],
+  warnings: string[]
+) {
+  const relativePath = `.aidd/repair-logs/${stamp}.md`;
+  const logPath = path.join(projectPath, relativePath);
+  const lines = [
+    `# ${title}`,
+    '',
+    `Project: ${projectPath}`,
+    `Generated: ${new Date().toISOString()}`,
+    '',
+    '## Process log',
+    '',
+    ...(logs.length ? logs.map((entry) => `- ${formatRepairLogEntry(entry)}`) : ['- No process log entries were recorded.']),
+    '',
+    '## Changes',
+    '',
+    ...(changes.length ? changes.map((item) => `- ${item}`) : ['- No changes recorded.']),
+    '',
+    '## Warnings',
+    '',
+    ...(warnings.length ? warnings.map((item) => `- ${item}`) : ['- No warnings.']),
+    ''
+  ];
+
+  await fsp.mkdir(path.dirname(logPath), { recursive: true });
+  await fsp.writeFile(logPath, lines.join('\n'), 'utf8');
+  return relativePath;
 }
 
 function isGitMatrixRowChanged(row: Awaited<ReturnType<typeof git.statusMatrix>>[number]) {
@@ -1139,63 +1829,206 @@ async function commitProjectChanges(projectPath: string, message: string, author
   return { created: true, changedFiles: changed.map(([filePath]) => filePath), oid };
 }
 
-async function syncBundledTemplateFiles(projectPath: string, changes: string[], warnings: string[], stamp: string) {
-  const expectedRoot = path.join(templatePath(), '.aidd', 'templates');
+async function syncBundledTemplateFiles(projectPath: string, changes: string[], warnings: string[], logs: ProjectRepairLogEntry[], stamp: string) {
+  const resolution = resolveTemplatePath();
+  const expectedRoot = path.join(resolution.selected, '.aidd', 'templates');
   const actualRoot = path.join(projectPath, '.aidd', 'templates');
 
+  pushRepairLog(logs, 'info', 'template-path', 'Resolved bundled template path.', {
+    path: resolution.selected,
+    detail: `Candidates: ${resolution.candidates.join(' | ')}`
+  });
+  pushRepairLog(logs, 'info', 'template-sync', 'Starting template file sync.', {
+    path: '.aidd/templates',
+    detail: `Expected root: ${expectedRoot}; project root: ${actualRoot}`
+  });
+
   if (!(await exists(expectedRoot))) {
-    warnings.push(`Bundled app template folder was not found: ${expectedRoot}`);
+    const message = `Bundled app template folder was not found: ${expectedRoot}`;
+    warnings.push(message);
+    pushRepairLog(logs, 'error', 'template-sync', 'Cannot restore missing template files because the bundled template root was not found.', {
+      path: expectedRoot,
+      detail: `Checked candidates: ${resolution.candidates.join(' | ')}`
+    });
     return;
   }
 
-  await fsp.mkdir(actualRoot, { recursive: true });
-  const expectedFiles = await collectRelativeFiles(expectedRoot);
+  try {
+    await fsp.mkdir(actualRoot, { recursive: true });
+    pushRepairLog(logs, 'success', 'template-sync', 'Ensured project template folder exists.', { path: '.aidd/templates' });
+  } catch (error) {
+    const message = `Could not create project template folder ${actualRoot}: ${error instanceof Error ? error.message : String(error)}`;
+    warnings.push(message);
+    pushRepairLog(logs, 'error', 'template-sync', 'Failed to create project template folder.', { path: actualRoot, detail: message });
+    return;
+  }
+
+  const bundledFiles = await collectRelativeFiles(expectedRoot);
+  const ignoredObsoleteFiles = bundledFiles.filter((relativePath) => isObsoleteTemplateFile(relativePath));
+  const expectedFiles = bundledFiles.filter((relativePath) => !isObsoleteTemplateFile(relativePath));
   const actualFiles = await collectRelativeFiles(actualRoot);
   const expected = new Set(expectedFiles);
 
+  pushRepairLog(logs, 'info', 'template-sync', 'Loaded template file inventories.', {
+    path: '.aidd/templates',
+    detail: `Bundled files: ${bundledFiles.length}; expected current files: ${expectedFiles.length}; ignored obsolete bundled files: ${ignoredObsoleteFiles.length}; project files: ${actualFiles.length}`
+  });
+  if (ignoredObsoleteFiles.length) {
+    pushRepairLog(logs, 'warning', 'template-sync', 'Ignored obsolete files found in the bundled app template.', {
+      path: '.aidd/templates',
+      detail: ignoredObsoleteFiles.join(', ')
+    });
+  }
+
+  if (expectedFiles.length === 0) {
+    const message = `Bundled template root exists but contains no files: ${expectedRoot}`;
+    warnings.push(message);
+    pushRepairLog(logs, 'warning', 'template-sync', 'No bundled template files were found to restore.', { path: expectedRoot });
+  }
+
   for (const relativePath of expectedFiles) {
     const target = path.join(actualRoot, relativePath);
-    if (await exists(target)) continue;
-    await fsp.mkdir(path.dirname(target), { recursive: true });
-    await fsp.copyFile(path.join(expectedRoot, relativePath), target);
-    changes.push(`Restored missing template file .aidd/templates/${relativePath}`);
+    if (await exists(target)) {
+      pushRepairLog(logs, 'info', 'template-sync', 'Template file already exists; leaving it in place.', { path: `.aidd/templates/${relativePath}` });
+      continue;
+    }
+
+    const source = path.join(expectedRoot, relativePath);
+    try {
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      await fsp.copyFile(source, target);
+      const sourceStat = await fsp.stat(source);
+      const targetStat = await fsp.stat(target);
+      changes.push(`Restored missing template file .aidd/templates/${relativePath}`);
+      pushRepairLog(logs, 'success', 'template-sync', 'Restored missing template file.', {
+        path: `.aidd/templates/${relativePath}`,
+        detail: `Source bytes: ${sourceStat.size}; target bytes: ${targetStat.size}`
+      });
+    } catch (error) {
+      const message = `Could not restore .aidd/templates/${relativePath}: ${error instanceof Error ? error.message : String(error)}`;
+      warnings.push(message);
+      pushRepairLog(logs, 'error', 'template-sync', 'Failed to restore missing template file.', {
+        path: `.aidd/templates/${relativePath}`,
+        detail: `Source: ${source}; target: ${target}; error: ${error instanceof Error ? error.message : String(error)}`
+      });
+    }
   }
 
   for (const relativePath of actualFiles) {
     if (expected.has(relativePath)) continue;
     const source = path.join(actualRoot, relativePath);
-    if (!(await exists(source))) continue;
+    if (!(await exists(source))) {
+      pushRepairLog(logs, 'warning', 'template-sync', 'Unexpected template file disappeared before it could be archived.', { path: `.aidd/templates/${relativePath}` });
+      continue;
+    }
+
     const archivePath = path.join(projectPath, '.aidd', 'template-archive', stamp, relativePath);
-    await fsp.mkdir(path.dirname(archivePath), { recursive: true });
-    await fsp.rename(source, archivePath);
-    changes.push(`Archived unexpected template file .aidd/templates/${relativePath}`);
+    try {
+      await fsp.mkdir(path.dirname(archivePath), { recursive: true });
+      await fsp.rename(source, archivePath);
+      changes.push(`Archived unexpected template file .aidd/templates/${relativePath}`);
+      pushRepairLog(logs, 'success', 'template-sync', 'Archived unexpected template file.', {
+        path: `.aidd/templates/${relativePath}`,
+        detail: `Archive: ${normaliseRelativePath(path.relative(projectPath, archivePath))}`
+      });
+    } catch (error) {
+      const message = `Could not archive unexpected template file .aidd/templates/${relativePath}: ${error instanceof Error ? error.message : String(error)}`;
+      warnings.push(message);
+      pushRepairLog(logs, 'error', 'template-sync', 'Failed to archive unexpected template file.', {
+        path: `.aidd/templates/${relativePath}`,
+        detail: message
+      });
+    }
+  }
+
+  const remainingMissing: string[] = [];
+  for (const relativePath of expectedFiles) {
+    if (!(await exists(path.join(actualRoot, relativePath)))) remainingMissing.push(relativePath);
+  }
+
+  if (remainingMissing.length) {
+    const message = `${remainingMissing.length} expected template file${remainingMissing.length === 1 ? '' : 's'} still missing after sync.`;
+    warnings.push(message);
+    pushRepairLog(logs, 'error', 'template-sync', message, {
+      path: '.aidd/templates',
+      detail: remainingMissing.slice(0, 25).join(', ') + (remainingMissing.length > 25 ? `, and ${remainingMissing.length - 25} more` : '')
+    });
+  } else {
+    pushRepairLog(logs, 'success', 'template-sync', 'All expected template files exist after sync.', { path: '.aidd/templates' });
   }
 }
 
-async function upgradeMarkdownFrontmatterVersions(projectPath: string, changes: string[], now: string) {
+async function upgradeMarkdownFrontmatterVersions(projectPath: string, changes: string[], warnings: string[], logs: ProjectRepairLogEntry[], now: string) {
   const markdownFiles = await collectProjectMarkdownFiles(projectPath);
+  pushRepairLog(logs, 'info', 'frontmatter', 'Scanning Markdown files for AIDD front matter versions.', {
+    detail: `Markdown files found: ${markdownFiles.length}`
+  });
+
+  let updated = 0;
+  let skippedWithoutAidd = 0;
+  let alreadyCurrent = 0;
 
   for (const relativePath of markdownFiles) {
     const filePath = path.join(projectPath, relativePath);
-    const raw = await fsp.readFile(filePath, 'utf8');
-    const parsed = matter(raw);
-    const data = (parsed.data || {}) as any;
-    if (!data.aidd) continue;
-    if (data.aidd.templateVersion === TEMPLATE_VERSION) continue;
+    let parsed: any;
+    try {
+      parsed = matter(await fsp.readFile(filePath, 'utf8'));
+    } catch (error) {
+      const message = `Could not update front matter in ${relativePath}: ${error instanceof Error ? error.message : String(error)}`;
+      warnings.push(message);
+      pushRepairLog(logs, 'error', 'frontmatter', 'Failed to parse Markdown front matter.', { path: relativePath, detail: message });
+      continue;
+    }
 
-    data.aidd = {
-      ...data.aidd,
-      templateVersion: TEMPLATE_VERSION,
-      updatedAt: now
-    };
-    await fsp.writeFile(filePath, matter.stringify(parsed.content.replace(/^\s*\n/, ''), data), 'utf8');
-    changes.push(`Updated front matter version in ${relativePath}`);
+    const data = (parsed.data || {}) as any;
+    if (!data.aidd) {
+      skippedWithoutAidd++;
+      continue;
+    }
+    if (data.aidd.templateVersion === TEMPLATE_VERSION) {
+      alreadyCurrent++;
+      continue;
+    }
+
+    try {
+      const previousVersion = data.aidd.templateVersion || 'missing';
+      data.aidd = {
+        ...data.aidd,
+        templateVersion: TEMPLATE_VERSION,
+        updatedAt: now
+      };
+      await fsp.writeFile(filePath, matter.stringify(parsed.content.replace(/^\s*\n/, ''), data), 'utf8');
+      changes.push(`Updated front matter version in ${relativePath}`);
+      updated++;
+      pushRepairLog(logs, 'success', 'frontmatter', 'Updated AIDD front matter template version.', {
+        path: relativePath,
+        detail: `${previousVersion} -> ${TEMPLATE_VERSION}`
+      });
+    } catch (error) {
+      const message = `Could not write updated front matter in ${relativePath}: ${error instanceof Error ? error.message : String(error)}`;
+      warnings.push(message);
+      pushRepairLog(logs, 'error', 'frontmatter', 'Failed to write updated Markdown front matter.', { path: relativePath, detail: message });
+    }
   }
+
+  pushRepairLog(logs, 'info', 'frontmatter', 'Completed Markdown front matter version scan.', {
+    detail: `Updated: ${updated}; already current: ${alreadyCurrent}; skipped without AIDD front matter: ${skippedWithoutAidd}`
+  });
 }
 
-async function upgradeTemplateManifest(projectPath: string, changes: string[], now: string) {
+async function upgradeTemplateManifest(projectPath: string, changes: string[], warnings: string[], logs: ProjectRepairLogEntry[], now: string) {
   const manifestPath = path.join(projectPath, 'aidd.template.json');
-  const manifest = await exists(manifestPath) ? await readJson<any>(manifestPath) : {};
+  let manifest: any = {};
+
+  try {
+    manifest = await exists(manifestPath) ? await readJson<any>(manifestPath) : {};
+  } catch (error) {
+    const message = `Could not parse aidd.template.json before upgrade: ${error instanceof Error ? error.message : String(error)}`;
+    warnings.push(message);
+    pushRepairLog(logs, 'error', 'template-manifest', 'Failed to parse template manifest; leaving it unchanged.', { path: 'aidd.template.json', detail: message });
+    return;
+  }
+
   const next = {
     ...manifest,
     templateId: manifest.templateId || TEMPLATE_ID,
@@ -1203,9 +2036,23 @@ async function upgradeTemplateManifest(projectPath: string, changes: string[], n
     upgradedAt: now
   };
 
-  if (JSON.stringify(manifest) === JSON.stringify(next)) return;
-  await writeJson(manifestPath, next);
-  changes.push('Updated aidd.template.json to the current template version');
+  if (JSON.stringify(manifest) === JSON.stringify(next)) {
+    pushRepairLog(logs, 'info', 'template-manifest', 'Template manifest already uses the current version.', { path: 'aidd.template.json' });
+    return;
+  }
+
+  try {
+    await writeJson(manifestPath, next);
+    changes.push('Updated aidd.template.json to the current template version');
+    pushRepairLog(logs, 'success', 'template-manifest', 'Updated template manifest version.', {
+      path: 'aidd.template.json',
+      detail: `${manifest.templateVersion || 'missing'} -> ${TEMPLATE_VERSION}`
+    });
+  } catch (error) {
+    const message = `Could not write aidd.template.json: ${error instanceof Error ? error.message : String(error)}`;
+    warnings.push(message);
+    pushRepairLog(logs, 'error', 'template-manifest', 'Failed to write template manifest.', { path: 'aidd.template.json', detail: message });
+  }
 }
 
 async function upgradeProjectTemplates(projectPath: string): Promise<ProjectTemplateUpgradeReport> {
@@ -1213,35 +2060,99 @@ async function upgradeProjectTemplates(projectPath: string): Promise<ProjectTemp
 
   const changes: string[] = [];
   const warnings: string[] = [];
+  const logs: ProjectRepairLogEntry[] = [];
   const now = new Date().toISOString();
   const stamp = now.replace(/[:.]/g, '-');
   const gitAvailable = await exists(path.join(projectPath, '.git'));
   let author: { name: string; email: string } | null = null;
   let preUpgradeCommit: string | undefined;
   let upgradeCommit: string | undefined;
+  let logPath: string | undefined;
+
+  pushRepairLog(logs, 'info', 'repair-start', 'Starting AIDD template/front matter repair.', { path: projectPath });
 
   if (gitAvailable) {
-    author = await getProjectGitAuthor(projectPath);
-    const preCommit = await commitProjectChanges(projectPath, 'chore(project): checkpoint before AIDD template upgrade', author);
-    if (preCommit.created) {
-      preUpgradeCommit = preCommit.oid;
-      changes.push(`Committed ${preCommit.changedFiles.length} outstanding file${preCommit.changedFiles.length === 1 ? '' : 's'} before template upgrade.`);
+    pushRepairLog(logs, 'info', 'git-checkpoint', 'Git repository detected; attempting a pre-repair checkpoint if there are outstanding changes.', { path: '.git' });
+    try {
+      author = await getProjectGitAuthor(projectPath);
+      const preCommit = await commitProjectChanges(projectPath, 'chore(project): checkpoint before AIDD template upgrade', author);
+      if (preCommit.created) {
+        preUpgradeCommit = preCommit.oid;
+        changes.push(`Committed ${preCommit.changedFiles.length} outstanding file${preCommit.changedFiles.length === 1 ? '' : 's'} before template upgrade.`);
+        pushRepairLog(logs, 'success', 'git-checkpoint', 'Created pre-repair Git checkpoint.', {
+          path: '.git',
+          detail: `${preCommit.oid}; files: ${preCommit.changedFiles.join(', ')}`
+        });
+      } else {
+        pushRepairLog(logs, 'info', 'git-checkpoint', 'No outstanding Git changes needed a pre-repair checkpoint.', { path: '.git' });
+      }
+    } catch (error) {
+      const message = `Could not create a pre-upgrade Git checkpoint: ${error instanceof Error ? error.message : String(error)}`;
+      warnings.push(message);
+      pushRepairLog(logs, 'warning', 'git-checkpoint', 'Pre-repair Git checkpoint failed; repair will continue without automatic commits.', { path: '.git', detail: message });
+      author = null;
     }
   } else {
-    warnings.push('No local Git repository was found, so the upgrade could not create before/after commits. Initialise Git before team use.');
+    warnings.push('No local Git repository was found, so the template repair ran without before/after commits.');
+    pushRepairLog(logs, 'info', 'git-checkpoint', 'No local Git repository found; repair will run without automatic commits.', { path: '.git' });
   }
 
-  await syncBundledTemplateFiles(projectPath, changes, warnings, stamp);
-  await upgradeMarkdownFrontmatterVersions(projectPath, changes, now);
-  await upgradeTemplateManifest(projectPath, changes, now);
+  try {
+    await syncBundledTemplateFiles(projectPath, changes, warnings, logs, stamp);
+  } catch (error) {
+    const message = `Template file sync failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`;
+    warnings.push(message);
+    pushRepairLog(logs, 'error', 'template-sync', 'Template sync failed unexpectedly.', { detail: message });
+  }
+
+  try {
+    await upgradeMarkdownFrontmatterVersions(projectPath, changes, warnings, logs, now);
+  } catch (error) {
+    const message = `Front matter upgrade failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`;
+    warnings.push(message);
+    pushRepairLog(logs, 'error', 'frontmatter', 'Front matter upgrade failed unexpectedly.', { detail: message });
+  }
+
+  try {
+    await upgradeTemplateManifest(projectPath, changes, warnings, logs, now);
+  } catch (error) {
+    const message = `Template manifest upgrade failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`;
+    warnings.push(message);
+    pushRepairLog(logs, 'error', 'template-manifest', 'Template manifest upgrade failed unexpectedly.', { detail: message });
+  }
+
+  pushRepairLog(logs, 'info', 'validation', 'Running validation after repair.');
+  const validation = await validateProject(projectPath);
+  pushRepairLog(logs, validation.summary.errors ? 'error' : validation.summary.warnings ? 'warning' : 'success', 'validation', 'Completed validation after repair.', {
+    detail: `Errors: ${validation.summary.errors}; warnings: ${validation.summary.warnings}`
+  });
+  logValidationIssues(logs, validation, 'validation-issues');
+
+  try {
+    logPath = await writeRepairLogFile(projectPath, `template-repair-${stamp}`, 'AIDD Template Repair Log', logs, changes, warnings);
+    changes.push(`Wrote ${logPath}`);
+  } catch (error) {
+    warnings.push(`Could not write repair log: ${error instanceof Error ? error.message : String(error)}`);
+  }
 
   if (gitAvailable && author) {
-    const postCommit = await commitProjectChanges(projectPath, 'chore(project): upgrade AIDD template front matter', author);
-    if (postCommit.created) {
-      upgradeCommit = postCommit.oid;
-      changes.push(`Committed ${postCommit.changedFiles.length} template upgrade file${postCommit.changedFiles.length === 1 ? '' : 's'}.`);
-    } else {
-      changes.push('No template upgrade file changes were needed after the pre-upgrade checkpoint.');
+    try {
+      const postCommit = await commitProjectChanges(projectPath, 'chore(project): upgrade AIDD templates and front matter', author);
+      if (postCommit.created) {
+        upgradeCommit = postCommit.oid;
+        changes.push(`Committed ${postCommit.changedFiles.length} template repair file${postCommit.changedFiles.length === 1 ? '' : 's'}.`);
+        pushRepairLog(logs, 'success', 'git-checkpoint', 'Created template repair Git commit.', {
+          path: '.git',
+          detail: `${postCommit.oid}; files: ${postCommit.changedFiles.join(', ')}`
+        });
+      } else {
+        changes.push('No template repair file changes were needed after the pre-upgrade checkpoint.');
+        pushRepairLog(logs, 'info', 'git-checkpoint', 'No template repair changes needed a post-repair commit.', { path: '.git' });
+      }
+    } catch (error) {
+      const message = `Could not create the template repair Git commit: ${error instanceof Error ? error.message : String(error)}`;
+      warnings.push(message);
+      pushRepairLog(logs, 'warning', 'git-checkpoint', 'Template repair Git commit failed.', { path: '.git', detail: message });
     }
   }
 
@@ -1252,207 +2163,13 @@ async function upgradeProjectTemplates(projectPath: string): Promise<ProjectTemp
     upgradeCommit,
     changes,
     warnings,
-    validation: await validateProject(projectPath)
+    logs,
+    logPath,
+    validation
   };
 }
 
-async function validateProject(projectPath: string): Promise<ProjectValidationReport> {
-  const structure = validationSection('structure', 'Project structure');
-  const templateSection = validationSection('templates', 'Template files');
-  const frontmatterSection = validationSection('frontmatter', 'Template front matter');
-  const foundationSection = validationSection('foundation', 'Foundation');
-  const modelSection = validationSection('model', 'Capabilities and components');
-  const sourceSection = validationSection('source-code', 'Source code references');
-  const deliverySection = validationSection('delivery', 'Delivery packages');
 
-  if (!(await exists(projectPath))) {
-    pushValidation(structure, {
-      id: 'project-path-missing',
-      title: 'Project folder not found',
-      message: `The selected project folder does not exist: ${projectPath}`,
-      severity: 'error',
-      action: 'Open a valid AIDD project from the Projects screen.'
-    });
-  }
-
-  const manifestPath = path.join(projectPath, 'aidd.template.json');
-  if (await exists(manifestPath)) {
-    const manifest = await readJson<any>(manifestPath);
-    pushValidation(structure, {
-      id: 'template-manifest',
-      title: 'Template manifest found',
-      message: `${manifest.templateId || 'unknown'}@${manifest.templateVersion || 'unknown'}`,
-      severity: 'success',
-      path: 'aidd.template.json'
-    });
-    if (manifest.templateVersion && manifest.templateVersion !== TEMPLATE_VERSION) {
-      pushValidation(structure, {
-        id: 'template-version-drift',
-        title: 'Template version differs from app version',
-        message: `Project uses ${manifest.templateVersion}; app expects ${TEMPLATE_VERSION}.`,
-        severity: 'warning',
-        path: 'aidd.template.json',
-        action: 'A project upgrade/repair flow should be run when available.'
-      });
-    }
-  } else {
-    pushValidation(structure, {
-      id: 'template-manifest-missing',
-      title: 'Template manifest missing',
-      message: 'The project does not contain aidd.template.json.',
-      severity: 'error',
-      action: 'Open an AIDD project or repair the project structure.'
-    });
-  }
-
-  if (await exists(path.join(projectPath, '.git'))) {
-    pushValidation(structure, { id: 'git-present', title: 'Git repository found', message: 'Local Git versioning is initialised.', severity: 'success', path: '.git' });
-    await validateGitWorkingTree(projectPath, structure);
-  } else {
-    pushValidation(structure, { id: 'git-missing', title: 'Git repository missing', message: 'This project is not currently versioned with Git.', severity: 'error', action: 'Initialise Git versioning before team use.' });
-  }
-
-  await validateTemplateFiles(projectPath, templateSection);
-  await validateProjectFrontmatterVersions(projectPath, frontmatterSection);
-
-  const foundation = await readFoundationDocuments(projectPath);
-  for (const doc of foundation) {
-    const useful = bodyLooksUseful(doc.body);
-    if (doc.status === 'complete' && useful) {
-      pushValidation(foundationSection, { id: `foundation-${doc.id}`, title: `${doc.title} complete`, message: 'Marked complete and contains useful content.', severity: 'success', path: `foundation/${doc.fileName}` });
-    } else if (doc.required !== false) {
-      pushValidation(foundationSection, { id: `foundation-${doc.id}`, title: `${doc.title} is not ready`, message: `Status is ${doc.status.replace(/-/g, ' ')}${useful ? '' : ' and content looks incomplete'}.`, severity: 'error', path: `foundation/${doc.fileName}`, action: 'Complete this Foundation document before creating delivery packages.' });
-    } else {
-      pushValidation(foundationSection, { id: `foundation-${doc.id}`, title: `${doc.title} optional`, message: `Status is ${doc.status.replace(/-/g, ' ')}.`, severity: 'info', path: `foundation/${doc.fileName}` });
-    }
-  }
-
-  const standardsPath = path.join(projectPath, 'foundation', 'standards', 'index.md');
-  if (await exists(standardsPath)) {
-    const standards = parseFrontmatter(await fsp.readFile(standardsPath, 'utf8'));
-    const useful = bodyLooksUseful(standards.body);
-    pushValidation(foundationSection, {
-      id: 'standards',
-      title: standards.status === 'complete' && useful ? 'Standards complete' : 'Standards not ready',
-      message: standards.status === 'complete' && useful ? 'Project standards are complete.' : `Status is ${standards.status.replace(/-/g, ' ')}${useful ? '' : ' and content looks incomplete'}.`,
-      severity: standards.status === 'complete' && useful ? 'success' : 'error',
-      path: 'foundation/standards/index.md',
-      action: standards.status === 'complete' && useful ? undefined : 'Complete Standards before creating delivery packages.'
-    });
-  } else {
-    pushValidation(foundationSection, { id: 'standards-missing', title: 'Standards file missing', message: 'foundation/standards/index.md does not exist.', severity: 'error', action: 'Define Standards in the Foundation workflow.' });
-  }
-
-  const deliveryPlanningPath = path.join(projectPath, 'foundation', 'delivery-planning', 'index.md');
-  if (await exists(deliveryPlanningPath)) {
-    const deliveryPlanning = parseFrontmatter(await fsp.readFile(deliveryPlanningPath, 'utf8'));
-    pushValidation(foundationSection, {
-      id: 'delivery-planning',
-      title: deliveryPlanning.status === 'complete' ? 'Delivery planning profile complete' : 'Delivery planning profile is not complete',
-      message: `Status is ${deliveryPlanning.status.replace(/-/g, ' ')}.`,
-      severity: deliveryPlanning.status === 'complete' ? 'success' : 'warning',
-      path: 'foundation/delivery-planning/index.md'
-    });
-  } else {
-    pushValidation(foundationSection, { id: 'delivery-planning-missing', title: 'Delivery planning profile not configured', message: 'Delivery planning will define how capabilities are broken down, implemented, tested, and reviewed.', severity: 'warning', action: 'Add Delivery Planning to Foundation after Standards.' });
-  }
-
-  const components = (await readEntities(projectPath, 'components', 'component.json')).concat(await readEntities(projectPath, 'modules', 'module.json'));
-  const capabilities = (await readEntities(projectPath, 'capabilities', 'capability.json')).map((cap: any) => ({ ...cap, components: cap.components || cap.modules || [] }));
-  const componentSlugs = new Set(components.map((component: any) => component.slug));
-
-  if (!capabilities.length) {
-    pushValidation(modelSection, { id: 'no-capabilities', title: 'No capabilities defined', message: 'At least one capability is needed before delivery packages can be planned.', severity: 'warning', action: 'Create a capability.' });
-  }
-  if (!components.length) {
-    pushValidation(modelSection, { id: 'no-components', title: 'No components defined', message: 'Components help map capabilities to the system parts and source code they touch.', severity: 'warning', action: 'Create or link a component.' });
-  }
-
-  for (const capability of capabilities) {
-    const linkedComponents = Array.isArray(capability.components) ? capability.components : [];
-    const missing = linkedComponents.filter((slug: string) => !componentSlugs.has(slug));
-    if (missing.length) {
-      pushValidation(modelSection, { id: `capability-${capability.slug}-missing-components`, title: `${capability.title} has missing component links`, message: `Missing components: ${missing.join(', ')}`, severity: 'error', path: `capabilities/${capability.slug}/capability.json`, action: 'Fix the component mappings for this capability.' });
-    } else if (!linkedComponents.length) {
-      pushValidation(modelSection, { id: `capability-${capability.slug}-no-components`, title: `${capability.title} has no components linked`, message: 'This is allowed early, but delivery planning is stronger when the touched components are known.', severity: 'warning', path: `capabilities/${capability.slug}/capability.json` });
-    } else {
-      pushValidation(modelSection, { id: `capability-${capability.slug}-components`, title: `${capability.title} has component mappings`, message: `${linkedComponents.length} component${linkedComponents.length === 1 ? '' : 's'} linked.`, severity: 'success', path: `capabilities/${capability.slug}/capability.json` });
-    }
-  }
-
-  const sourceProjects = await readSourceProjects(projectPath);
-  const sourceIds = new Set(sourceProjects.map((project) => project.id));
-  if (!sourceProjects.length) {
-    pushValidation(sourceSection, { id: 'no-source-projects', title: 'No source code projects referenced', message: 'Source references are needed if AI will review source code against a capability.', severity: 'warning', action: 'Add at least one Source Code project.' });
-  }
-  for (const sourceProject of sourceProjects) {
-    const pathExists = await exists(sourceProject.path);
-    pushValidation(sourceSection, {
-      id: `source-${sourceProject.id}`,
-      title: pathExists ? `${sourceProject.name} is reachable` : `${sourceProject.name} path is missing`,
-      message: pathExists ? `${sourceProject.detectedType} · ${sourceProject.path}` : `Could not access ${sourceProject.path}`,
-      severity: pathExists ? 'success' : 'error',
-      path: `source-code/projects/${sourceProject.id}/source-project.json`,
-      action: pathExists ? undefined : 'Update or remove this source reference.'
-    });
-    if (sourceProject.detectedType.startsWith('Unknown')) {
-      pushValidation(sourceSection, { id: `source-${sourceProject.id}-unknown`, title: `${sourceProject.name} type could not be identified`, message: 'The source scanner did not find strong project indicators.', severity: 'warning', path: `source-code/projects/${sourceProject.id}/source-project.json` });
-    }
-  }
-  for (const component of components) {
-    const mappedSources = Array.isArray(component.sourceProjects) ? component.sourceProjects : [];
-    const missing = mappedSources.filter((id: string) => !sourceIds.has(id));
-    if (missing.length) {
-      pushValidation(sourceSection, { id: `component-${component.slug}-missing-source`, title: `${component.title} has missing source mappings`, message: `Missing source projects: ${missing.join(', ')}`, severity: 'error', path: `components/${component.slug}/component.json` });
-    } else if (!mappedSources.length) {
-      pushValidation(sourceSection, { id: `component-${component.slug}-no-source`, title: `${component.title} has no source project mapped`, message: 'This is fine for conceptual components, but source-backed components should be mapped.', severity: 'info', path: `components/${component.slug}/component.json` });
-    }
-  }
-
-  const deliveryPackages = await readEntities(projectPath, 'delivery/packages', 'package.json');
-  if (!deliveryPackages.length) {
-    pushValidation(deliverySection, { id: 'no-delivery-packages', title: 'No delivery packages created yet', message: 'Delivery packages can be created once Foundation and Standards are complete.', severity: 'info' });
-  }
-  for (const pkg of deliveryPackages) {
-    const pkgDir = path.join(projectPath, 'delivery', 'packages', pkg.id);
-    const snapshotExists = await exists(path.join(pkgDir, 'snapshot.md'));
-    const strategyExists = await exists(path.join(pkgDir, 'implementation-strategy.md'));
-    if (snapshotExists && strategyExists) {
-      pushValidation(deliverySection, { id: `package-${pkg.id}`, title: `${pkg.id} files are present`, message: 'Snapshot and implementation strategy files exist.', severity: 'success', path: `delivery/packages/${pkg.id}` });
-    } else {
-      pushValidation(deliverySection, { id: `package-${pkg.id}-missing-files`, title: `${pkg.id} is missing required files`, message: `${snapshotExists ? '' : 'snapshot.md missing. '}${strategyExists ? '' : 'implementation-strategy.md missing.'}`.trim(), severity: 'error', path: `delivery/packages/${pkg.id}`, action: 'Repair or recreate this delivery package.' });
-    }
-  }
-
-  const sections = [structure, templateSection, frontmatterSection, foundationSection, modelSection, sourceSection, deliverySection];
-  const items = sections.flatMap((section) => section.items);
-  const summary = {
-    total: items.length,
-    errors: items.filter((item) => item.severity === 'error').length,
-    warnings: items.filter((item) => item.severity === 'warning').length,
-    info: items.filter((item) => item.severity === 'info').length,
-    success: items.filter((item) => item.severity === 'success').length
-  };
-  const blockingIds = new Set(['git-missing', 'standards', 'standards-missing']);
-  const foundationErrors = foundationSection.items.filter((item) => item.severity === 'error').length;
-  const canCreateDeliveryPackage = foundationErrors === 0 && !(structure.items.some((item) => item.severity === 'error' && blockingIds.has(item.id)));
-  const score = summary.total ? Math.max(0, Math.round(((summary.success + summary.info * 0.5) / summary.total) * 100)) : 0;
-  const nextActions = items
-    .filter((item) => item.severity === 'error' || item.severity === 'warning')
-    .map((item) => item.action || item.title)
-    .filter((value, index, array) => value && array.indexOf(value) === index)
-    .slice(0, 5) as string[];
-
-  return {
-    generatedAt: new Date().toISOString(),
-    status: summary.errors ? 'fail' : summary.warnings ? 'warning' : 'pass',
-    score,
-    canCreateDeliveryPackage,
-    summary,
-    sections,
-    nextActions
-  };
-}
 
 
 interface ProjectRepairReport {
@@ -1460,6 +2177,8 @@ interface ProjectRepairReport {
   changed: boolean;
   changes: string[];
   warnings: string[];
+  logs: ProjectRepairLogEntry[];
+  logPath?: string;
   validation: ProjectValidationReport;
 }
 
@@ -1479,17 +2198,464 @@ function buildWorkflowMarkdown(type: string, id: string, title: string, status: 
   return `---\naidd:\n  type: ${type}\n  id: ${id}\n  title: ${title}\n  status: ${status}\n  required: ${required}\n  templateVersion: ${TEMPLATE_VERSION}\n  updatedAt: ${new Date().toISOString()}\n---\n\n${body.trim()}\n`;
 }
 
+function logValidationIssues(logs: ProjectRepairLogEntry[], validation: ProjectValidationReport, stage: string) {
+  const issues = validation.sections
+    .flatMap((section) => section.items)
+    .filter((item) => item.severity === 'error' || item.severity === 'warning');
+
+  if (!issues.length) {
+    pushRepairLog(logs, 'success', stage, 'Validation found no remaining errors or warnings.');
+    return;
+  }
+
+  for (const item of issues.slice(0, 100)) {
+    pushRepairLog(logs, item.severity, stage, `${item.title}: ${item.message}`, {
+      path: item.path,
+      detail: `Category: ${item.category}${item.action ? `; action: ${item.action}` : ''}`
+    });
+  }
+
+  if (issues.length > 100) {
+    pushRepairLog(logs, 'warning', stage, `Validation produced ${issues.length - 100} more issue${issues.length - 100 === 1 ? '' : 's'} not shown in this log.`, {
+      detail: 'Open the Health Check screen for the full issue list.'
+    });
+  }
+}
+
+async function archiveObsoleteEntitySectionFiles(
+  projectPath: string,
+  rootDir: string,
+  folder: string,
+  obsoleteFiles: string[],
+  stamp: string,
+  changes: string[],
+  logs: ProjectRepairLogEntry[]
+) {
+  for (const fileName of obsoleteFiles) {
+    const source = path.join(projectPath, rootDir, folder, fileName);
+    if (!(await exists(source))) continue;
+    const archivePath = path.join(projectPath, '_archive', 'aidd-repair', stamp, rootDir, folder, fileName);
+    await fsp.mkdir(path.dirname(archivePath), { recursive: true });
+    await fsp.rename(source, archivePath);
+    changes.push(`Archived obsolete ${rootDir}/${folder}/${fileName}`);
+    pushRepairLog(logs, 'success', 'entity-repair', 'Archived obsolete entity section file.', {
+      path: `${rootDir}/${folder}/${fileName}`,
+      detail: `Archive: ${normaliseRelativePath(path.relative(projectPath, archivePath))}`
+    });
+  }
+}
+
+
+function titleFromSlug(slug: string) {
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ') || slug;
+}
+
+function firstMarkdownHeading(content: string) {
+  return content.match(/^#\s+(.+)$/m)?.[1]?.trim();
+}
+
+async function readEntityIndexMetadata(projectPath: string, rootDir: string, folder: string) {
+  const indexPath = path.join(projectPath, rootDir, folder, 'index.md');
+  if (!(await exists(indexPath))) return { title: titleFromSlug(folder), status: 'draft' as SetupStepStatus, sourceProjects: [] as string[] };
+  const raw = await fsp.readFile(indexPath, 'utf8');
+  const parsed = parseMarkdownSafe(raw);
+  const aidd = parsed.ok ? ((parsed.parsed.data as any)?.aidd || {}) : {};
+  const title = String(aidd.title || firstMarkdownHeading(raw) || titleFromSlug(folder)).trim();
+  const status = String(aidd.status || (contentLooksComplete(raw) ? 'complete' : 'draft')) as SetupStepStatus;
+  const sourceProjects = Array.isArray(aidd.sourceProjects) ? aidd.sourceProjects.map(String).filter(Boolean) : [];
+  return { title, status, sourceProjects };
+}
+
+async function capabilitySlugsReferencingComponent(projectPath: string, componentSlug: string) {
+  const capabilities = await readEntities(projectPath, 'capabilities', 'capability.json');
+  const out: string[] = [];
+  for (const capability of capabilities) {
+    const linkedComponents = Array.isArray(capability.components)
+      ? capability.components
+      : Array.isArray(capability.modules)
+        ? capability.modules
+        : [];
+    if (!linkedComponents.map(String).includes(componentSlug)) continue;
+    const slug = String(capability.slug || capability.id || slugify(String(capability.title || ''))).trim();
+    if (slug) out.push(slug);
+  }
+  return Array.from(new Set(out));
+}
+
+async function ensureComponentManifestForFolder(projectPath: string, folder: string, changes: string[], logs: ProjectRepairLogEntry[]) {
+  const manifestPath = path.join(projectPath, 'components', folder, 'component.json');
+  if (await exists(manifestPath)) return false;
+
+  const { title, status, sourceProjects } = await readEntityIndexMetadata(projectPath, 'components', folder);
+  const linkedCapabilities = await capabilitySlugsReferencingComponent(projectPath, folder);
+  await writeJson(manifestPath, {
+    slug: folder,
+    title,
+    kind: 'component',
+    status,
+    lifecycle: status,
+    sourceProjects,
+    createdAt: new Date().toISOString(),
+    repairedAt: new Date().toISOString(),
+    supportsCapabilities: linkedCapabilities,
+    capabilitiesSupported: linkedCapabilities,
+    dependsOn: [],
+    exposes: [],
+    dataOwned: [],
+    template: {
+      type: 'component',
+      sectionFiles: COMPONENT_TEMPLATE_SECTIONS.map((section) => section.fileName),
+      templateVersion: TEMPLATE_VERSION
+    }
+  });
+  changes.push(`Rebuilt missing component manifest for components/${folder}`);
+  pushRepairLog(logs, 'success', 'entity-repair', 'Rebuilt missing component manifest.', {
+    path: `components/${folder}/component.json`,
+    detail: `Title: ${title}; linked capabilities: ${linkedCapabilities.length ? linkedCapabilities.join(', ') : 'none'}`
+  });
+  return true;
+}
+
+async function archivePathForRepair(projectPath: string, stamp: string, relativePath: string) {
+  return path.join(projectPath, '_archive', 'aidd-repair', stamp, relativePath);
+}
+
+
+function markdownBodyWithoutFrontmatter(content: string) {
+  const parsed = parseMarkdownSafe(content);
+  if (parsed.ok) return String(parsed.parsed.content || '').replace(/^\s*\n/, '').trim();
+  return content.replace(/^---[\s\S]*?---\s*/m, '').trim();
+}
+
+function markdownContentScore(body: string) {
+  return body
+    .replace(/^#\s+.*$/gm, '')
+    .replace(/TODO:?/gi, '')
+    .replace(/Describe what this system is and what product context every delivery package should inherit\.?/gi, '')
+    .replace(/Describe what the system is, what it should make possible, and the product context every delivery package should inherit\.?/gi, '')
+    .replace(/Describe who uses the system, who maintains it, and what outcomes matter to them\.?/gi, '')
+    .replace(/Describe the measurable goals, outcomes, or success signals this project should optimise for\.?/gi, '')
+    .replace(/No active .+ yet\.?/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .length;
+}
+
+function hasUsefulMarkdownBody(body: string) {
+  return markdownContentScore(body) > 24;
+}
+
+function markdownStatus(content: string): SetupStepStatus {
+  const parsed = parseMarkdownSafe(content);
+  const data = parsed.ok ? ((parsed.parsed.data || {}) as Record<string, any>) : {};
+  return normalizeSetupStatus(data?.aidd?.status || data?.status || (contentLooksComplete(content) ? 'draft' : 'not-started'));
+}
+
+function strongestStatus(a: SetupStepStatus, b: SetupStepStatus): SetupStepStatus {
+  const rank: Record<SetupStepStatus, number> = {
+    'not-started': 0,
+    draft: 1,
+    skipped: 1,
+    'in-review': 2,
+    active: 3,
+    complete: 4,
+    deprecated: 5
+  };
+  return rank[b] > rank[a] ? b : a;
+}
+
+function mergeMarkdownIntoExistingFrontmatter(existingRaw: string, body: string, status: SetupStepStatus) {
+  const parsed = parseMarkdownSafe(existingRaw);
+  const data: Record<string, any> = parsed.ok ? { ...(parsed.parsed.data || {}) } : {};
+  data.aidd = {
+    ...(data.aidd || {}),
+    status,
+    templateVersion: data.aidd?.templateVersion || TEMPLATE_VERSION,
+    updatedAt: new Date().toISOString()
+  };
+  return matter.stringify(body.trim() + '\n', data);
+}
+
+async function mergeLegacyMarkdownConflict(
+  projectPath: string,
+  stamp: string,
+  oldRelative: string,
+  newRelative: string,
+  changes: string[],
+  logs: ProjectRepairLogEntry[]
+) {
+  if (!oldRelative.toLowerCase().endsWith('.md') || !newRelative.toLowerCase().endsWith('.md')) return false;
+
+  const oldPath = path.join(projectPath, oldRelative);
+  const newPath = path.join(projectPath, newRelative);
+  if (!(await exists(oldPath)) || !(await exists(newPath))) return false;
+
+  const legacyRaw = await fsp.readFile(oldPath, 'utf8');
+  const currentRaw = await fsp.readFile(newPath, 'utf8');
+  const legacyBody = markdownBodyWithoutFrontmatter(legacyRaw);
+  if (!hasUsefulMarkdownBody(legacyBody)) return false;
+
+  const currentBody = markdownBodyWithoutFrontmatter(currentRaw);
+  const currentHasUsefulContent = hasUsefulMarkdownBody(currentBody);
+  const legacyStatus = markdownStatus(legacyRaw);
+  const currentStatus = markdownStatus(currentRaw);
+  let nextBody = currentBody;
+
+  if (!currentHasUsefulContent) {
+    nextBody = legacyBody;
+  } else if (!currentBody.includes(legacyBody.trim())) {
+    nextBody = `${currentBody.trim()}\n\n## Migrated legacy content\n\n${legacyBody.trim()}`;
+  }
+
+  const nextStatus = strongestStatus(currentHasUsefulContent ? currentStatus : 'not-started', legacyStatus);
+  await fsp.writeFile(newPath, mergeMarkdownIntoExistingFrontmatter(currentRaw, nextBody, nextStatus), 'utf8');
+
+  const archivePath = await archivePathForRepair(projectPath, stamp, oldRelative);
+  await fsp.mkdir(path.dirname(archivePath), { recursive: true });
+  await fsp.rename(oldPath, archivePath);
+
+  changes.push(`Merged legacy ${oldRelative} into ${newRelative}`);
+  pushRepairLog(logs, 'success', 'data-repair', 'Merged legacy Markdown content before archiving legacy file.', {
+    path: newRelative,
+    detail: `${oldRelative} -> ${newRelative}; archive: ${normaliseRelativePath(path.relative(projectPath, archivePath))}`
+  });
+  return true;
+}
+
+function summaryFromMarkdownBody(body: string) {
+  return body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#') && !/^[-*]\s*TODO:?/i.test(line) && !/^TODO:?/i.test(line))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 320);
+}
+
+function descriptionIsMissingOrPlaceholder(value: unknown) {
+  const text = String(value || '').trim();
+  if (!text) return true;
+  return /^no description provided\.?$/i.test(text) || /^describe what/i.test(text) || /^todo:?$/i.test(text);
+}
+
+async function refreshProjectSummaryMetadata(projectPath: string, changes: string[], logs: ProjectRepairLogEntry[]) {
+  const productDefinitionPath = path.join(projectPath, 'foundation', '02-product-definition.md');
+  if (!(await exists(productDefinitionPath))) return;
+
+  const productBody = markdownBodyWithoutFrontmatter(await fsp.readFile(productDefinitionPath, 'utf8'));
+  const summary = summaryFromMarkdownBody(productBody);
+  if (!summary || descriptionIsMissingOrPlaceholder(summary)) return;
+
+  const manifestPath = path.join(projectPath, 'aidd.template.json');
+  const manifest = await readJsonSafe<any>(manifestPath);
+  if (manifest.ok && descriptionIsMissingOrPlaceholder(manifest.data?.project?.description)) {
+    manifest.data.project = { ...(manifest.data.project || {}), description: summary };
+    await writeJson(manifestPath, manifest.data);
+    changes.push('Updated project summary metadata from Product Definition');
+    pushRepairLog(logs, 'success', 'data-repair', 'Updated project manifest summary from Product Definition.', { path: 'aidd.template.json' });
+  }
+
+  const projects = await readProjects();
+  let changedTrackedProject = false;
+  const nextProjects = projects.map((project) => {
+    if (project.path !== projectPath || !descriptionIsMissingOrPlaceholder(project.description)) return project;
+    changedTrackedProject = true;
+    return { ...project, description: summary };
+  });
+  if (changedTrackedProject) {
+    await writeProjects(nextProjects);
+    changes.push('Updated tracked project summary from Product Definition');
+    pushRepairLog(logs, 'success', 'data-repair', 'Updated tracked project summary from Product Definition.', { path: projectsStorePath() });
+  }
+}
+
+async function moveOrArchiveLegacyEntry(
+  projectPath: string,
+  stamp: string,
+  oldRelative: string,
+  newRelative: string,
+  changes: string[],
+  logs: ProjectRepairLogEntry[]
+) {
+  const oldPath = path.join(projectPath, oldRelative);
+  const newPath = path.join(projectPath, newRelative);
+  if (!(await exists(oldPath))) return;
+
+  if (!(await exists(newPath))) {
+    await fsp.mkdir(path.dirname(newPath), { recursive: true });
+    await fsp.rename(oldPath, newPath);
+    changes.push(`Migrated ${oldRelative} to ${newRelative}`);
+    pushRepairLog(logs, 'success', 'data-repair', 'Migrated legacy path.', {
+      path: newRelative,
+      detail: `${oldRelative} -> ${newRelative}`
+    });
+    return;
+  }
+
+  if (await mergeLegacyMarkdownConflict(projectPath, stamp, oldRelative, newRelative, changes, logs)) return;
+
+  const archivePath = await archivePathForRepair(projectPath, stamp, oldRelative);
+  await fsp.mkdir(path.dirname(archivePath), { recursive: true });
+  await fsp.rename(oldPath, archivePath);
+  changes.push(`Archived legacy ${oldRelative}`);
+  pushRepairLog(logs, 'success', 'data-repair', 'Archived legacy path that conflicted with current layout.', {
+    path: oldRelative,
+    detail: `Archive: ${normaliseRelativePath(path.relative(projectPath, archivePath))}`
+  });
+}
+
+async function migrateLegacyFolderContents(
+  projectPath: string,
+  stamp: string,
+  oldRelative: string,
+  newRelative: string,
+  changes: string[],
+  logs: ProjectRepairLogEntry[]
+) {
+  const oldPath = path.join(projectPath, oldRelative);
+  if (!(await exists(oldPath))) return;
+
+  const newPath = path.join(projectPath, newRelative);
+  await fsp.mkdir(newPath, { recursive: true });
+
+  for (const entry of await fsp.readdir(oldPath, { withFileTypes: true })) {
+    await moveOrArchiveLegacyEntry(
+      projectPath,
+      stamp,
+      `${oldRelative}/${entry.name}`,
+      `${newRelative}/${entry.name}`,
+      changes,
+      logs
+    );
+  }
+
+  try {
+    await fsp.rm(oldPath, { recursive: true, force: true });
+    changes.push(`Removed legacy folder ${oldRelative}`);
+    pushRepairLog(logs, 'success', 'data-repair', 'Removed legacy folder after migration/archive.', { path: oldRelative });
+  } catch (error) {
+    pushRepairLog(logs, 'warning', 'data-repair', 'Could not remove legacy folder after migration/archive.', {
+      path: oldRelative,
+      detail: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+async function repairEntitySectionDocuments(projectPath: string, stamp: string, changes: string[], warnings: string[], logs: ProjectRepairLogEntry[]) {
+  pushRepairLog(logs, 'info', 'entity-repair', 'Checking capability and component section files.');
+
+  let repaired = 0;
+
+  for (const folder of await listEntityFolders(projectPath, 'components')) {
+    try {
+      await ensureComponentManifestForFolder(projectPath, folder, changes, logs);
+      const component = await readComponent({ projectPath, slug: folder });
+      const missing = component.sections
+        .map((section: any) => section.fileName)
+        .filter((fileName: string) => !fs.existsSync(path.join(projectPath, 'components', folder, fileName)));
+      const obsoletePresent = OBSOLETE_COMPONENT_SECTION_FILES.filter((fileName) => fs.existsSync(path.join(projectPath, 'components', folder, fileName)));
+      const manifestPath = path.join(projectPath, 'components', folder, 'component.json');
+      const manifest = await readJsonSafe<any>(manifestPath);
+      const configuredFiles = manifest.ok && Array.isArray(manifest.data.template?.sectionFiles)
+        ? manifest.data.template.sectionFiles.map((value: unknown) => String(value))
+        : [];
+      const expectedFiles = COMPONENT_TEMPLATE_SECTIONS.map((section) => section.fileName);
+      const manifestOutOfSync = expectedFiles.some((fileName) => !configuredFiles.includes(fileName)) || configuredFiles.some((fileName: string) => !expectedFiles.includes(fileName));
+
+      if (!missing.length && !obsoletePresent.length && !manifestOutOfSync) continue;
+
+      await updateComponent({
+        projectPath,
+        slug: folder,
+        title: component.title,
+        status: component.status as SetupStepStatus,
+        sourceProjects: component.sourceProjects,
+        capabilities: component.capabilities,
+        sections: component.sections
+      });
+      await archiveObsoleteEntitySectionFiles(projectPath, 'components', folder, obsoletePresent, stamp, changes, logs);
+      changes.push(`Normalised component section files for components/${folder}`);
+      repaired++;
+      pushRepairLog(logs, 'success', 'entity-repair', 'Normalised component section files.', {
+        path: `components/${folder}`,
+        detail: `Missing restored: ${missing.length ? missing.join(', ') : 'none'}; obsolete archived: ${obsoletePresent.length ? obsoletePresent.join(', ') : 'none'}; manifest updated: ${manifestOutOfSync ? 'yes' : 'no'}`
+      });
+    } catch (error) {
+      const message = `Could not repair component section files for ${folder}: ${error instanceof Error ? error.message : String(error)}`;
+      warnings.push(message);
+      pushRepairLog(logs, 'error', 'entity-repair', 'Failed to normalise component section files.', { path: `components/${folder}`, detail: message });
+    }
+  }
+
+  for (const folder of await listEntityFolders(projectPath, 'capabilities')) {
+    try {
+      const capability = await readCapability({ projectPath, slug: folder });
+      const missing = capability.sections
+        .map((section: any) => section.fileName)
+        .filter((fileName: string) => !fs.existsSync(path.join(projectPath, 'capabilities', folder, fileName)));
+      const obsoletePresent = OBSOLETE_CAPABILITY_SECTION_FILES.filter((fileName) => fs.existsSync(path.join(projectPath, 'capabilities', folder, fileName)));
+      const manifestPath = path.join(projectPath, 'capabilities', folder, 'capability.json');
+      const manifest = await readJsonSafe<any>(manifestPath);
+      const configuredFiles = manifest.ok && Array.isArray(manifest.data.template?.sectionFiles)
+        ? manifest.data.template.sectionFiles.map((value: unknown) => String(value))
+        : [];
+      const expectedFiles = CAPABILITY_TEMPLATE_SECTIONS.map((section) => section.fileName);
+      const manifestOutOfSync = expectedFiles.some((fileName) => !configuredFiles.includes(fileName)) || configuredFiles.some((fileName: string) => !expectedFiles.includes(fileName));
+
+      if (!missing.length && !obsoletePresent.length && !manifestOutOfSync && !Array.isArray((manifest.ok ? manifest.data.modules : undefined))) continue;
+
+      await updateCapability({
+        projectPath,
+        slug: folder,
+        title: capability.title,
+        description: capability.description,
+        outcome: capability.outcome,
+        notes: capability.notes,
+        status: capability.status as SetupStepStatus,
+        componentSlugs: capability.components,
+        sections: capability.sections
+      });
+      await archiveObsoleteEntitySectionFiles(projectPath, 'capabilities', folder, obsoletePresent, stamp, changes, logs);
+      changes.push(`Normalised capability section files for capabilities/${folder}`);
+      repaired++;
+      pushRepairLog(logs, 'success', 'entity-repair', 'Normalised capability section files.', {
+        path: `capabilities/${folder}`,
+        detail: `Missing restored: ${missing.length ? missing.join(', ') : 'none'}; obsolete archived: ${obsoletePresent.length ? obsoletePresent.join(', ') : 'none'}; manifest updated: ${manifestOutOfSync ? 'yes' : 'no'}`
+      });
+    } catch (error) {
+      const message = `Could not repair capability section files for ${folder}: ${error instanceof Error ? error.message : String(error)}`;
+      warnings.push(message);
+      pushRepairLog(logs, 'error', 'entity-repair', 'Failed to normalise capability section files.', { path: `capabilities/${folder}`, detail: message });
+    }
+  }
+
+  if (repaired === 0) {
+    pushRepairLog(logs, 'info', 'entity-repair', 'No capability or component section files needed repair.');
+  }
+}
+
 async function repairProject(projectPath: string): Promise<ProjectRepairReport> {
   if (!projectPath || !(await exists(projectPath))) throw new Error(`Project path does not exist: ${projectPath}`);
   const changes: string[] = [];
   const warnings: string[] = [];
+  const logs: ProjectRepairLogEntry[] = [];
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  let logPath: string | undefined;
   const rel = (target: string) => path.relative(projectPath, target).split('\\').join('/');
+
+  pushRepairLog(logs, 'info', 'repair-start', 'Starting safe AIDD data repair.', { path: projectPath });
 
   async function ensureDir(relativePath: string) {
     const target = path.join(projectPath, relativePath);
     if (!(await exists(target))) {
       await fsp.mkdir(target, { recursive: true });
       changes.push(`Created directory ${relativePath}`);
+      pushRepairLog(logs, 'success', 'data-repair', 'Created missing directory.', { path: relativePath });
     }
   }
 
@@ -1498,6 +2664,7 @@ async function repairProject(projectPath: string): Promise<ProjectRepairReport> 
     await fsp.mkdir(path.dirname(target), { recursive: true });
     await fsp.writeFile(target, content, 'utf8');
     changes.push(`Wrote ${relativePath}`);
+    pushRepairLog(logs, 'success', 'data-repair', 'Wrote repair file.', { path: relativePath });
   }
 
   async function migrateFolder(oldRelative: string, newRelative: string) {
@@ -1507,6 +2674,7 @@ async function repairProject(projectPath: string): Promise<ProjectRepairReport> 
       await fsp.mkdir(path.dirname(newPath), { recursive: true });
       await fsp.rename(oldPath, newPath);
       changes.push(`Renamed ${oldRelative} to ${newRelative}`);
+      pushRepairLog(logs, 'success', 'data-repair', 'Migrated legacy folder.', { path: newRelative, detail: `${oldRelative} -> ${newRelative}` });
     }
   }
 
@@ -1518,8 +2686,10 @@ async function repairProject(projectPath: string): Promise<ProjectRepairReport> 
     }
     try {
       JSON.parse(await fsp.readFile(target, 'utf8'));
-    } catch {
-      warnings.push(`${relativePath} exists but is not valid JSON. It was left unchanged.`);
+    } catch (error) {
+      const message = `${relativePath} exists but is not valid JSON. It was left unchanged.`;
+      warnings.push(message);
+      pushRepairLog(logs, 'warning', 'data-repair', message, { path: relativePath, detail: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -1533,6 +2703,7 @@ async function repairProject(projectPath: string): Promise<ProjectRepairReport> 
     if (!hasWorkflowFrontmatter(current)) {
       const status: SetupStepStatus = contentLooksComplete(current) ? 'complete' : 'draft';
       await writeRepairFile(relativePath, buildWorkflowMarkdown(type, id, title, status, current.trim() || body, required));
+      pushRepairLog(logs, 'success', 'data-repair', 'Added missing AIDD front matter to Markdown file.', { path: relativePath });
     }
   }
 
@@ -1540,20 +2711,74 @@ async function repairProject(projectPath: string): Promise<ProjectRepairReport> 
     const target = path.join(projectPath, relativePath);
     if (!(await exists(target))) return;
     const content = await fsp.readFile(target, 'utf8');
-    const userContent = content.replace(/^---[\s\S]*?---\s*/m, '').replace(/^#.*$/m, '').trim();
-    if (!userContent || /^TODO:/i.test(userContent)) {
-      const archivePath = path.join(projectPath, '_archive', relativePath);
+    const body = markdownBodyWithoutFrontmatter(content);
+    if (!hasUsefulMarkdownBody(body)) {
+      const archivePath = await archivePathForRepair(projectPath, stamp, relativePath);
       await fsp.mkdir(path.dirname(archivePath), { recursive: true });
       await fsp.rename(target, archivePath);
       changes.push(`Archived obsolete empty file ${relativePath}`);
+      pushRepairLog(logs, 'success', 'data-repair', 'Archived obsolete empty file.', { path: relativePath, detail: `Archive: ${rel(archivePath)}` });
     } else {
-      warnings.push(`${relativePath} is obsolete but contains content. Review it manually before archiving.`);
+      const message = `${relativePath} is obsolete but contains content. It was left in place so summary/context is not lost.`;
+      warnings.push(message);
+      pushRepairLog(logs, 'warning', 'data-repair', message, { path: relativePath });
+    }
+  }
+
+
+  async function findArchivedRepairFiles(relativePath: string) {
+    const candidates: string[] = [];
+    const repairArchiveRoot = path.join(projectPath, '_archive', 'aidd-repair');
+    if (await exists(repairArchiveRoot)) {
+      const entries = await fsp.readdir(repairArchiveRoot, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const candidate = path.join(repairArchiveRoot, entry.name, relativePath);
+        if (await exists(candidate)) candidates.push(candidate);
+      }
+    }
+
+    const directArchive = path.join(projectPath, '_archive', relativePath);
+    if (await exists(directArchive)) candidates.push(directArchive);
+
+    return candidates.sort((a, b) => b.localeCompare(a));
+  }
+
+  async function restoreArchivedSummaryContent(archiveRelative: string, targetRelative: string) {
+    const targetPath = path.join(projectPath, targetRelative);
+    if (!(await exists(targetPath))) return;
+
+    for (const archivePath of await findArchivedRepairFiles(archiveRelative)) {
+      const archivedRaw = await fsp.readFile(archivePath, 'utf8');
+      const archivedBody = markdownBodyWithoutFrontmatter(archivedRaw);
+      if (!hasUsefulMarkdownBody(archivedBody)) continue;
+
+      const currentRaw = await fsp.readFile(targetPath, 'utf8');
+      const currentBody = markdownBodyWithoutFrontmatter(currentRaw);
+      if (currentBody.includes(archivedBody.trim())) return;
+
+      const currentHasUsefulContent = hasUsefulMarkdownBody(currentBody);
+      const nextBody = currentHasUsefulContent
+        ? `${currentBody.trim()}\n\n## Restored archived summary content\n\n${archivedBody.trim()}`
+        : archivedBody;
+      const nextStatus = strongestStatus(currentHasUsefulContent ? markdownStatus(currentRaw) : 'not-started', markdownStatus(archivedRaw));
+      await fsp.writeFile(targetPath, mergeMarkdownIntoExistingFrontmatter(currentRaw, nextBody, nextStatus), 'utf8');
+      changes.push(`Restored archived ${archiveRelative} into ${targetRelative}`);
+      pushRepairLog(logs, 'success', 'data-repair', 'Restored archived summary/context content.', {
+        path: targetRelative,
+        detail: `${normaliseRelativePath(path.relative(projectPath, archivePath))} -> ${targetRelative}`
+      });
+      return;
     }
   }
 
   await migrateFolder('common', 'foundation');
   await migrateFolder('modules', 'components');
   await migrateFolder('bundles', 'delivery/packages');
+  await migrateLegacyFolderContents(projectPath, stamp, 'common', 'foundation', changes, logs);
+  await migrateLegacyFolderContents(projectPath, stamp, 'modules', 'components', changes, logs);
+  await migrateLegacyFolderContents(projectPath, stamp, 'bundles', 'delivery/packages', changes, logs);
+  await migrateLegacyFolderContents(projectPath, stamp, 'delivery/bundles', 'delivery/packages', changes, logs);
 
   for (const dir of ['foundation', 'foundation/standards', 'foundation/delivery-planning', 'capabilities', 'components', 'delivery', 'delivery/packages', 'source-code', 'source-code/projects', '.aidd']) {
     await ensureDir(dir);
@@ -1606,25 +2831,50 @@ async function repairProject(projectPath: string): Promise<ProjectRepairReport> 
     '# Delivery Planning\n\n## Breakdown Approach\n\nDefine how capabilities should be broken into delivery packages.\n\n## Source Code Review\n\nDefine how mapped source code should be reviewed before implementation planning.\n\n## Implementation Strategy\n\nDefine how implementation plans should be created.\n\n## Testing Strategy\n\nDefine how standards influence testing and verification.\n\n## AI Review Criteria\n\nDefine how AI output should be reviewed against source code, capabilities, components, and standards.\n\n## Required Evidence\n\nDefine what evidence is required before a delivery package can be accepted.'
   );
 
+
+  await ensureMarkdown(
+    'capabilities/index.md',
+    'capabilities-index',
+    'capabilities-index',
+    'Capabilities',
+    '# Capabilities\n\nCapabilities describe things the system can do. They are user-value focused and may touch one or many components.\n\n## Active capabilities\n\nNo active capabilities yet.'
+  );
+
+  await ensureMarkdown(
+    'components/index.md',
+    'components-index',
+    'components-index',
+    'Components',
+    '# Components\n\nComponents are reusable implementation units, services, plugins, workflows, tools, data stores, or subsystems that help deliver capabilities.\n\n## Active components\n\nNo active components yet.'
+  );
+
+  await ensureMarkdown(
+    'delivery/packages/index.md',
+    'delivery-packages-index',
+    'delivery-packages-index',
+    'Delivery Packages',
+    '# Delivery Packages\n\nDelivery packages are focused implementation slices that connect capability intent, component context, source code, acceptance checks, and handoff evidence.\n\n## Active delivery packages\n\nNo active delivery packages yet.'
+  );
+
+  await restoreArchivedSummaryContent('common/01-project-overview.md', 'foundation/02-product-definition.md');
+  await restoreArchivedSummaryContent('common/02-product-definition.md', 'foundation/02-product-definition.md');
+  await restoreArchivedSummaryContent('common/03-audience-and-users.md', 'foundation/03-audience-and-users.md');
+  await restoreArchivedSummaryContent('foundation/01-project-overview.md', 'foundation/02-product-definition.md');
+  await mergeLegacyMarkdownConflict(projectPath, stamp, 'foundation/01-project-overview.md', 'foundation/02-product-definition.md', changes, logs);
   await archiveObsoleteFoundation('foundation/01-project-overview.md');
   await archiveObsoleteFoundation('foundation/04-decisions.md');
   await archiveObsoleteFoundation('foundation/05-decision-ledger.md');
   await archiveObsoleteFoundation('foundation/06-delivery-rules.md');
+  await refreshProjectSummaryMetadata(projectPath, changes, logs);
 
-  if (!(await exists(path.join(projectPath, '.git')))) {
-    try {
-      const identity = await readGitIdentity(app.getPath('userData'));
+  await repairEntitySectionDocuments(projectPath, stamp, changes, warnings, logs);
 
-      if (!identity) {
-        warnings.push('Could not initialise Git automatically because AIDD author identity has not been set.');
-      } else {
-        await initialiseGit(projectPath, path.basename(projectPath), identity);
-        changes.push('Initialised local Git repository');
-      }
-    } catch (error) {
-      warnings.push(`Could not initialise Git automatically: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
+  pushRepairLog(logs, 'info', 'validation', 'Running validation after safe data repair.');
+  const validation = await validateProject(projectPath);
+  pushRepairLog(logs, validation.summary.errors ? 'error' : validation.summary.warnings ? 'warning' : 'success', 'validation', 'Completed validation after safe data repair.', {
+    detail: `Errors: ${validation.summary.errors}; warnings: ${validation.summary.warnings}`
+  });
+  logValidationIssues(logs, validation, 'validation-issues');
 
   const reportText = [
     '# AIDD Repair Report',
@@ -1646,12 +2896,21 @@ async function repairProject(projectPath: string): Promise<ProjectRepairReport> 
   await fsp.writeFile(path.join(projectPath, '.aidd', 'repair-report.md'), reportText, 'utf8');
   if (!changes.includes('Wrote .aidd/repair-report.md')) changes.push('Wrote .aidd/repair-report.md');
 
+  try {
+    logPath = await writeRepairLogFile(projectPath, `data-repair-${stamp}`, 'AIDD Data Repair Log', logs, changes, warnings);
+    changes.push(`Wrote ${logPath}`);
+  } catch (error) {
+    warnings.push(`Could not write data repair log: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   return {
     generatedAt: new Date().toISOString(),
     changed: changes.length > 0,
     changes,
     warnings,
-    validation: await validateProject(projectPath)
+    logs,
+    logPath,
+    validation
   };
 }
 
@@ -2150,9 +3409,9 @@ Describe how this capability will be checked before it is considered ready.
   }
 ];
 const COMPONENT_LEGACY_SECTION_FILES: Record<string, string[]> = {
-  dependencies: ['05-dependencies-and-integrations.md'],
-  architecture: ['06-internal-design.md'],
-  standards: ['07-quality-requirements.md']
+  dependencies: ['04-dependencies.md', '05-dependencies-and-integrations.md'],
+  architecture: ['05-architecture.md', '06-internal-design.md', 'technical-shape.md'],
+  standards: ['06-standards.md', '07-quality-requirements.md']
 };
 
 const CAPABILITY_LEGACY_SECTION_FILES: Record<string, string[]> = {
