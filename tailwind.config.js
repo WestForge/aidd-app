@@ -18,7 +18,15 @@ module.exports = {
         popover: { DEFAULT: 'hsl(var(--popover))', foreground: 'hsl(var(--popover-foreground))' },
         card: { DEFAULT: 'hsl(var(--card))', foreground: 'hsl(var(--card-foreground))' }
       },
-      borderRadius: { lg: 'var(--radius)', md: 'calc(var(--radius) - 2px)', sm: 'calc(var(--radius) - 4px)' }
+      borderRadius: {
+        sm: '2px',
+        DEFAULT: '2px',
+        md: '2px',
+        lg: '3px',
+        xl: '3px',
+        '2xl': '4px',
+        full: '9999px'
+      }
     }
   },
   plugins: []
