@@ -32,7 +32,7 @@ async function pathExists(filePath: string) {
 
 async function ensureProjectGitIgnore(projectPath: string) {
   const gitignorePath = path.join(projectPath, '.gitignore');
-  const requiredEntries = ['.aidd-app/', 'node_modules/', 'dist/'];
+  const requiredEntries = ['.aidd-app/', '.aidd/drag-files/', 'node_modules/', 'dist/'];
 
   let existing = '';
   if (await pathExists(gitignorePath)) {

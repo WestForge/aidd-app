@@ -39,6 +39,7 @@ type GitStatusMatrixRow = GitStatusMatrix[number];
 const SKIPPED_PATH_PREFIXES = [
   '.git/',
   '.aidd-app/',
+  '.aidd/drag-files/',
   'node_modules/',
   'dist/',
   'build/',

@@ -9,7 +9,7 @@ import { readGitSyncSettings, saveGitSyncSettings } from './services/gitSyncSett
 import { testGitRemoteConnection } from './services/gitRemoteTester';
 import { connectProjectToRepository, getProjectConnectionStatus } from './services/gitProjectConnector';
 import { readGitIdentity, requireGitIdentity, saveGitIdentity } from './services/gitIdentityStore';
-import { checkForUpdates, getSyncStatus, syncProject } from './services/gitSyncWorkflow';
+import { checkForUpdates, createCheckpointIfNeeded, getSyncStatus, syncProject } from './services/gitSyncWorkflow';
 import type { AiddSaveGitIdentityInput, AiddSaveGitSyncSettingsInput, AiddGitSyncTestInput } from './services/gitSyncTypes';
 
 const isDev = process.env.NODE_ENV !== 'production';
@@ -2603,7 +2603,7 @@ async function createDecisionRecord(input: DecisionInput) {
 
 async function ensureProjectGitIgnore(projectPath: string) {
   const gitignorePath = path.join(projectPath, '.gitignore');
-  const requiredEntries = ['.aidd-app/', 'node_modules/', 'dist/'];
+  const requiredEntries = ['.aidd-app/', '.aidd/drag-files/', 'node_modules/', 'dist/'];
 
   let existing = '';
   if (await exists(gitignorePath)) {
@@ -2896,7 +2896,9 @@ ipcMain.handle('project:setup', async (_event, projectPath: string) => readProje
 
 ipcMain.handle('project:workflowDocuments', async (_event, projectPath: string) => readWorkflowDocuments(projectPath));
 
-ipcMain.handle('project:saveWorkflowDocument', async (_event, input: SaveWorkflowDocumentInput) => saveWorkflowDocument(input));
+ipcMain.handle('project:saveWorkflowDocument', async (_event, input: SaveWorkflowDocumentInput) => {
+  return withProjectSaveSync(input.projectPath, () => saveWorkflowDocument(input));
+});
 
 ipcMain.handle('project:saveFoundationDocument', async (_event, input: SaveFoundationInput) => {
   const docs = await readFoundationDocuments(input.projectPath);
@@ -2909,6 +2911,7 @@ ipcMain.handle('project:saveFoundationDocument', async (_event, input: SaveFound
     required: existing.required,
     body: input.body
   }), 'utf8');
+  await checkpointAndShareProjectAfterSave(input.projectPath);
   return readProjectSetup(input.projectPath);
 });
 
@@ -2917,12 +2920,14 @@ ipcMain.handle('project:defineStandards', async (_event, input: DefineStandardsI
   await fsp.mkdir(standardsDir, { recursive: true });
   await fsp.writeFile(path.join(standardsDir, 'index.md'), buildStandardsMarkdown(input.status, input.body), 'utf8');
   await writeJson(path.join(standardsDir, 'standards.json'), { profiles: input.status === 'complete' ? ['project-defined'] : [], updatedAt: new Date().toISOString() });
+  await checkpointAndShareProjectAfterSave(input.projectPath);
   return readProjectSetup(input.projectPath);
 });
 
 ipcMain.handle('project:createComponent', async (_event, input: CreateComponentInput) => {
   if (!input.title.trim()) throw new Error('Component title is required.');
   await createComponent(input.projectPath, input.title.trim(), input.description, input.status || 'draft', input.sourceProjects || []);
+  await checkpointAndShareProjectAfterSave(input.projectPath);
   return readProjectSetup(input.projectPath);
 });
 
@@ -2933,12 +2938,13 @@ ipcMain.handle('project:readComponent', async (_event, input: ReadComponentInput
 
 ipcMain.handle('project:updateComponent', async (_event, input: UpdateComponentInput) => {
   if (!input.projectPath || !input.slug || !input.title?.trim()) throw new Error('Project path, component slug, and title are required.');
-  return updateComponent(input);
+  return withProjectSaveSync(input.projectPath, () => updateComponent(input));
 });
 
 ipcMain.handle('project:createCapability', async (_event, input: CreateCapabilityInput) => {
   if (!input.title.trim()) throw new Error('Capability title is required.');
   await createCapability(input.projectPath, input);
+  await checkpointAndShareProjectAfterSave(input.projectPath);
   return readProjectSetup(input.projectPath);
 });
 
@@ -2949,25 +2955,33 @@ ipcMain.handle('project:readCapability', async (_event, input: ReadCapabilityInp
 
 ipcMain.handle('project:updateCapability', async (_event, input: UpdateCapabilityInput) => {
   if (!input.projectPath || !input.slug || !input.title?.trim()) throw new Error('Project path, capability slug, and title are required.');
-  return updateCapability(input);
+  return withProjectSaveSync(input.projectPath, () => updateCapability(input));
 });
 
 ipcMain.handle('project:createDeliveryPackageFromCapability', async (_event, input: CreateDeliveryPackageFromCapabilityInput) => {
   if (!input.projectPath || !input.capabilitySlug) throw new Error('Project path and capability slug are required.');
-  return createDeliveryPackageFromCapability(input);
+  return withProjectSaveSync(input.projectPath, () => createDeliveryPackageFromCapability(input));
 });
 
 ipcMain.handle('project:readDeliveryPackages', async (_event, projectPath: string) => readDeliveryPackages(projectPath));
 ipcMain.handle('project:readDeliveryPackage', async (_event, input: { projectPath: string; id: string }) => readDeliveryPackage(input));
-ipcMain.handle('project:saveDeliveryPackage', async (_event, input: SaveDeliveryPackageInput) => saveDeliveryPackage(input));
-ipcMain.handle('project:createDeliveryPackagePhase', async (_event, input: CreateDeliveryPackagePhaseInput) => createDeliveryPackagePhase(input));
+ipcMain.handle('project:saveDeliveryPackage', async (_event, input: SaveDeliveryPackageInput) => {
+  return withProjectSaveSync(input.projectPath, () => saveDeliveryPackage(input));
+});
+ipcMain.handle('project:createDeliveryPackagePhase', async (_event, input: CreateDeliveryPackagePhaseInput) => {
+  return withProjectSaveSync(input.projectPath, () => createDeliveryPackagePhase(input));
+});
 ipcMain.handle('project:assembleDeliveryPackage', async (_event, input: { projectPath: string; packageId: string }) => assembleDeliveryPackage(input));
 
-ipcMain.handle('project:deleteDeliveryPackage', async (_event, input: DeleteDeliveryPackageInput) => deleteDeliveryPackage(input));
+ipcMain.handle('project:deleteDeliveryPackage', async (_event, input: DeleteDeliveryPackageInput) => {
+  return withProjectSaveSync(input.projectPath, () => deleteDeliveryPackage(input));
+});
 
 ipcMain.handle('project:readDecisions', async (_event, projectPath: string) => readDecisions(projectPath));
 
-ipcMain.handle('project:createDecision', async (_event, input: DecisionInput) => createDecisionRecord(input));
+ipcMain.handle('project:createDecision', async (_event, input: DecisionInput) => {
+  return withProjectSaveSync(input.projectPath, () => createDecisionRecord(input));
+});
 
 ipcMain.handle('project:readSourceReference', async (_event, projectPath: string) => readSourceReference(projectPath));
 
@@ -2976,17 +2990,118 @@ ipcMain.handle('project:readSourceProjects', async (_event, projectPath: string)
 ipcMain.handle('project:addSourceProject', async (_event, projectPath: string) => {
   const result = await dialog.showOpenDialog({ title: 'Select source code project directory', properties: ['openDirectory'] });
   if (result.canceled || result.filePaths.length === 0) return null;
-  return writeSourceProject(projectPath, result.filePaths[0]);
+  return withProjectSaveSync(projectPath, () => writeSourceProject(projectPath, result.filePaths[0]));
 });
 
 ipcMain.handle('project:selectSourceDirectory', async (_event, projectPath: string) => {
   const result = await dialog.showOpenDialog({ title: 'Select source code directory', properties: ['openDirectory'] });
   if (result.canceled || result.filePaths.length === 0) return null;
-  return writeSourceReference(projectPath, result.filePaths[0]);
+  return withProjectSaveSync(projectPath, () => writeSourceReference(projectPath, result.filePaths[0]));
 });
 
 
 const gitCredentialStore = createKeytarCredentialStore();
+
+function isLocalOnlySyncFailureAfterSave(code: string) {
+  return code === 'NOT_CONNECTED' || code === 'MISSING_TOKEN';
+}
+
+function shouldSkipSaveCheckpointPath(filePath: string) {
+  const normalised = path.resolve(filePath || '').replace(/\\/g, '/');
+
+  return (
+    normalised.includes('/.git/') ||
+    normalised.includes('/.aidd-app/') ||
+    normalised.includes('/.aidd/drag-files/') ||
+    normalised.endsWith('/.env') ||
+    normalised.includes('/node_modules/') ||
+    normalised.includes('/dist/') ||
+    normalised.includes('/build/')
+  );
+}
+
+async function findAiddProjectRootForSavedFile(filePath: string) {
+  const resolved = path.resolve(filePath || '');
+
+  if (!resolved || shouldSkipSaveCheckpointPath(resolved)) {
+    return null;
+  }
+
+  let current = path.dirname(resolved);
+
+  while (true) {
+    if (await exists(path.join(current, 'aidd.config.json'))) {
+      return current;
+    }
+
+    if (await exists(path.join(current, '.git'))) {
+      return current;
+    }
+
+    const next = path.dirname(current);
+    if (next === current) {
+      break;
+    }
+
+    current = next;
+  }
+
+  return null;
+}
+
+async function checkpointAndShareProjectAfterSave(projectPath: string) {
+  if (!projectPath) {
+    return;
+  }
+
+  const options = {
+    userDataPath: app.getPath('userData'),
+    projectPath,
+    credentialStore: gitCredentialStore,
+  };
+
+  try {
+    const syncResult = await syncProject(options);
+
+    if (syncResult.ok) {
+      console.log(`[AIDD save-sync] Saved, checkpointed and shared: ${syncResult.message}`);
+      return;
+    }
+
+    const checkpoint = await createCheckpointIfNeeded(options);
+
+    if (checkpoint.created) {
+      console.log(`[AIDD save-sync] Saved and checkpointed locally: ${checkpoint.label}`);
+    }
+
+    if (isLocalOnlySyncFailureAfterSave(syncResult.code)) {
+      console.log(`[AIDD save-sync] Remote share skipped: ${syncResult.message}`);
+      return;
+    }
+
+    console.warn(`[AIDD save-sync] Remote share needs attention: ${syncResult.message}`);
+  } catch (error) {
+    try {
+      const checkpoint = await createCheckpointIfNeeded(options);
+
+      if (checkpoint.created) {
+        console.warn(`[AIDD save-sync] Saved and checkpointed locally after share failed: ${checkpoint.label}`);
+        return;
+      }
+    } catch (checkpointError) {
+      console.warn(`[AIDD save-sync] Checkpoint failed after save: ${checkpointError instanceof Error ? checkpointError.message : String(checkpointError)}`);
+    }
+
+    console.warn(`[AIDD save-sync] Saved, but checkpoint/share did not complete: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function withProjectSaveSync<T>(projectPath: string, work: () => Promise<T>): Promise<T> {
+  const result = await work();
+  await checkpointAndShareProjectAfterSave(projectPath);
+  return result;
+}
+
 
 
 ipcMain.handle('gitIdentity:read', async () => {
@@ -3086,5 +3201,12 @@ ipcMain.handle('fs:readText', async (_event, filePath: string) => fsp.readFile(f
 ipcMain.handle('fs:writeText', async (_event, filePath: string, content: string) => {
   await fsp.mkdir(path.dirname(filePath), { recursive: true });
   await fsp.writeFile(filePath, content, 'utf8');
+
+  const projectPath = await findAiddProjectRootForSavedFile(filePath);
+
+  if (projectPath) {
+    await checkpointAndShareProjectAfterSave(projectPath);
+  }
+
   return true;
 });
