@@ -380,12 +380,14 @@ interface AiddComponentContractInfo {
 }
 
 type AiddComponentSourceDetectionConfidence = 'high' | 'medium' | 'low';
+type AiddComponentSourcePathMode = 'workspace-relative' | 'absolute';
 
 interface AiddComponentSourceDetection {
   suggestedType: string;
   confidence: AiddComponentSourceDetectionConfidence;
   detectedLanguages: string[];
   detectedFrameworks: string[];
+  detectedMarkers: string[];
   packageManager?: string;
   reasons: string[];
 }
@@ -393,6 +395,10 @@ interface AiddComponentSourceDetection {
 interface AiddComponentSourceConfig {
   directory: string;
   type: string;
+  pathMode: AiddComponentSourcePathMode;
+  isInsideWorkspace: boolean;
+  absolutePath?: string;
+  warning?: string;
   detection?: AiddComponentSourceDetection | null;
 }
 
@@ -405,6 +411,9 @@ interface AiddComponentSourceDirectoryInput {
 interface AiddComponentSourceDirectorySelection {
   directory: string;
   absolutePath: string;
+  pathMode: AiddComponentSourcePathMode;
+  isInsideWorkspace: boolean;
+  warning?: string;
   detection: AiddComponentSourceDetection;
 }
 
@@ -692,6 +701,15 @@ interface AiddComponentReviewPackageResult {
   entryCount: number;
 }
 
+interface AiddCapabilityReviewPackageResult {
+  filePath: string;
+  fileName: string;
+  capabilityCount: number;
+  capabilityFileCount: number;
+  foundationFileCount: number;
+  entryCount: number;
+}
+
 interface AiddFoundationReviewPackageResult {
   filePath: string;
   fileName: string;
@@ -762,6 +780,28 @@ interface AiddComponentReviewPackageImportResult {
   importedFiles: string[];
   skippedFiles: string[];
   componentCount: number;
+  importedComponents: string[];
+  reviewIncluded: boolean;
+  reviewMarkdown?: string;
+}
+
+interface AiddPackageCapabilityForReviewInput {
+  projectPath: string;
+  slug: string;
+}
+
+interface AiddImportCapabilityReviewPackageInput {
+  projectPath: string;
+  zipPath: string;
+}
+
+interface AiddCapabilityReviewPackageImportResult {
+  accepted: boolean;
+  zipPath: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  capabilityCount: number;
+  importedCapabilities: string[];
   reviewIncluded: boolean;
   reviewMarkdown?: string;
 }
@@ -800,6 +840,9 @@ interface Window {
     packageComponentsForReview: (projectPath: string) => Promise<AiddComponentReviewPackageResult>;
     packageComponentForReview: (input: AiddPackageComponentForReviewInput) => Promise<AiddComponentReviewPackageResult>;
     importComponentReviewPackage: (input: AiddImportComponentReviewPackageInput) => Promise<AiddComponentReviewPackageImportResult>;
+    packageCapabilitiesForReview: (projectPath: string) => Promise<AiddCapabilityReviewPackageResult>;
+    packageCapabilityForReview: (input: AiddPackageCapabilityForReviewInput) => Promise<AiddCapabilityReviewPackageResult>;
+    importCapabilityReviewPackage: (input: AiddImportCapabilityReviewPackageInput) => Promise<AiddCapabilityReviewPackageImportResult>;
     createComponentReviewBundle: (projectPath: string) => Promise<AiddComponentReviewPackageResult>;
     prepareFoundationDragFile: (input: AiddPrepareFoundationDragFileInput) => Promise<string>;
     prepareStandardSectionDragFile: (input: AiddPrepareStandardSectionDragFileInput) => Promise<string>;

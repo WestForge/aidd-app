@@ -342,6 +342,8 @@ export function Capabilities({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sectionDragFiles, setSectionDragFiles] = useState<Record<string, string>>({});
+  const [reviewPackage, setReviewPackage] = useState<AiddCapabilityReviewPackageResult | null>(null);
+  const [reviewPackageDragFilePath, setReviewPackageDragFilePath] = useState<string | null>(null);
   const [dragError, setDragError] = useState<string | null>(null);
   const load = async () => {
     if (!activeProject?.path) return;
@@ -374,6 +376,7 @@ export function Capabilities({
     foundationReady &&
     (status === "active" || status === "complete") &&
     allSectionsReady;
+  const canCreateReviewPackage = Boolean(activeProject?.path && selectedSlug && title.trim());
 
   const prepareCapabilitySectionDragFile = async (section: CapabilitySection) => {
     if (!activeProject?.path) return null;
@@ -449,6 +452,8 @@ export function Capabilities({
     setActiveSectionKey("outcomes");
     setMessage(null);
     setDragError(null);
+    setReviewPackage(null);
+    setReviewPackageDragFilePath(null);
   };
   const openCapability = async (slug: string) => {
     if (!activeProject?.path) return;
@@ -465,6 +470,8 @@ export function Capabilities({
       setSelectedComponents(detail.components || []);
       setSections(detail.sections?.length ? detail.sections : newSections());
       setActiveSectionKey(detail.sections?.[0]?.key || "outcomes");
+      setReviewPackage(null);
+      setReviewPackageDragFilePath(null);
       setView("edit");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -566,6 +573,106 @@ export function Capabilities({
       setSaving(false);
     }
   };
+
+
+  const droppedZipPathFromEvent = (event: React.DragEvent<HTMLButtonElement>) => {
+    const file = event.dataTransfer.files?.[0];
+    if (file) {
+      const nativePath = window.aidd.getDroppedFilePath(file);
+      if (nativePath) return nativePath;
+      const fallbackPath = (file as File & { path?: string }).path;
+      if (fallbackPath) return fallbackPath;
+    }
+    return event.dataTransfer.getData("text/plain");
+  };
+
+  const createCapabilityReviewPackage = async () => {
+    if (!activeProject?.path || !selectedSlug) {
+      setDragError("Save the capability before creating a review package.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setDragError(null);
+    try {
+      await window.aidd.updateCapability({
+        projectPath: activeProject.path,
+        slug: selectedSlug,
+        title,
+        componentSlugs: selectedComponents,
+        status,
+        sections,
+      });
+      const bundle = await window.aidd.packageCapabilityForReview({
+        projectPath: activeProject.path,
+        slug: selectedSlug,
+      });
+      setReviewPackage(bundle);
+      setReviewPackageDragFilePath(bundle.filePath);
+      void window.aidd.notify({
+        title: "Capability review package ready",
+        body: `${bundle.capabilityFileCount} capability file(s) packaged. Drag the review package tile out when ready.`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startCapabilityReviewPackageDrag = (event: React.DragEvent<HTMLButtonElement>) => {
+    if (!reviewPackageDragFilePath) {
+      event.preventDefault();
+      setDragError("Click the review package tile before dragging it.");
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("text/plain", reviewPackageDragFilePath);
+    event.preventDefault();
+    window.aidd.startNativeFileDrag(reviewPackageDragFilePath);
+  };
+
+  const importCapabilityReviewPackage = async (event: React.DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!activeProject?.path) return;
+
+    const zipPath = droppedZipPathFromEvent(event);
+    if (!zipPath) {
+      setDragError("Drop a returned capability review .zip onto this tile.");
+      return;
+    }
+    if (!zipPath.toLowerCase().endsWith(".zip")) {
+      setDragError("Review response rejected: drop a .zip file.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setDragError(null);
+    try {
+      const result = await window.aidd.importCapabilityReviewPackage({
+        projectPath: activeProject.path,
+        zipPath,
+      });
+      setReviewPackage(null);
+      setReviewPackageDragFilePath(null);
+      await load();
+      const importedSlug = result.importedCapabilities?.length === 1 ? result.importedCapabilities[0] : selectedSlug;
+      if (importedSlug) await openCapability(importedSlug);
+      void window.aidd.notify({
+        title: "Capability review imported",
+        body: `${result.importedFiles.length} file(s) imported from ${result.capabilityCount} capability/capabilities.`,
+      });
+    } catch (err) {
+      setDragError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (!activeProject)
     return (
       <div className="flex h-full items-center justify-center p-6">
@@ -766,6 +873,41 @@ export function Capabilities({
             </button>
           );
         })}
+        <button
+          type="button"
+          draggable={Boolean(reviewPackageDragFilePath)}
+          className={cn(
+            "relative flex h-16 w-36 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent",
+            reviewPackageDragFilePath && "cursor-grab active:cursor-grabbing",
+            !reviewPackageDragFilePath && canCreateReviewPackage && "cursor-pointer",
+            !canCreateReviewPackage && !reviewPackageDragFilePath && "opacity-70",
+          )}
+          onClick={() => {
+            if (canCreateReviewPackage) void createCapabilityReviewPackage();
+            else setDragError("Save the capability before creating a review package. You can still drop a returned capability review zip here.");
+          }}
+          onDragStart={startCapabilityReviewPackageDrag}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+          }}
+          onDrop={importCapabilityReviewPackage}
+          title={reviewPackageDragFilePath ? "Review package is ready. Drag this zip out, or drop a returned review zip here." : "Create a capability review package zip, or drop a returned review zip here."}
+        >
+          <StatusIcon
+            status={reviewPackageDragFilePath ? "complete" : "not-started"}
+            className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
+          />
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <Archive className={cn("h-4 w-4", reviewPackageDragFilePath && "text-green-400")} />
+          </div>
+          <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
+            Review package
+          </span>
+          <span className="line-clamp-1 text-[10px] text-muted-foreground">
+            {saving ? "Working..." : reviewPackage ? "Ready to drag/drop" : "Create/drop zip"}
+          </span>
+        </button>
       </div>
       {dragError && (
         <div className="shrink-0 px-6 pt-2 text-xs text-destructive">

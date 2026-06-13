@@ -332,12 +332,14 @@ interface ComponentContractInfo {
 }
 
 type ComponentSourceDetectionConfidence = 'high' | 'medium' | 'low';
+type ComponentSourcePathMode = 'workspace-relative' | 'absolute';
 
 interface ComponentSourceDetection {
   suggestedType: string;
   confidence: ComponentSourceDetectionConfidence;
   detectedLanguages: string[];
   detectedFrameworks: string[];
+  detectedMarkers: string[];
   packageManager?: string;
   reasons: string[];
 }
@@ -345,6 +347,10 @@ interface ComponentSourceDetection {
 interface ComponentSourceConfig {
   directory: string;
   type: string;
+  pathMode: ComponentSourcePathMode;
+  isInsideWorkspace: boolean;
+  absolutePath?: string;
+  warning?: string;
   detection?: ComponentSourceDetection | null;
 }
 
@@ -357,6 +363,9 @@ interface ComponentSourceDirectoryInput {
 interface ComponentSourceDirectorySelection {
   directory: string;
   absolutePath: string;
+  pathMode: ComponentSourcePathMode;
+  isInsideWorkspace: boolean;
+  warning?: string;
   detection: ComponentSourceDetection;
 }
 
@@ -433,6 +442,37 @@ interface ComponentReviewPackageImportResult {
   importedFiles: string[];
   skippedFiles: string[];
   componentCount: number;
+  importedComponents: string[];
+  reviewIncluded: boolean;
+  reviewMarkdown?: string;
+}
+
+interface CapabilityReviewPackageResult {
+  filePath: string;
+  fileName: string;
+  capabilityCount: number;
+  capabilityFileCount: number;
+  foundationFileCount: number;
+  entryCount: number;
+}
+
+interface PackageCapabilityReviewInput {
+  projectPath: string;
+  slug: string;
+}
+
+interface ImportCapabilityReviewPackageInput {
+  projectPath: string;
+  zipPath: string;
+}
+
+interface CapabilityReviewPackageImportResult {
+  accepted: boolean;
+  zipPath: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  capabilityCount: number;
+  importedCapabilities: string[];
   reviewIncluded: boolean;
   reviewMarkdown?: string;
 }
@@ -623,6 +663,41 @@ interface SaveStandardSectionInput {
   body: string;
 }
 
+interface PrepareStandardSectionDragFileInput {
+  projectPath: string;
+  fileName: string;
+  title?: string;
+  status?: SetupStepStatus;
+  body: string;
+}
+
+interface StandardsReviewPackageResult {
+  filePath: string;
+  fileName: string;
+  standardsFileCount: number;
+  entryCount: number;
+}
+
+interface ImportStandardsReviewPackageInput {
+  projectPath: string;
+  zipPath: string;
+}
+
+interface ImportStandardSectionUpdateInput {
+  projectPath: string;
+  fileName: string;
+  updateFilePath: string;
+}
+
+interface StandardsReviewPackageImportResult {
+  accepted: boolean;
+  zipPath: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  reviewIncluded: boolean;
+  reviewMarkdown?: string;
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
@@ -685,6 +760,16 @@ async function updateTrackedProject(projectIdOrPath: string, updater: (project: 
   projects[index] = updated;
   await writeProjects(projects);
   return updated;
+}
+
+async function readTrackedProjectByPath(projectPath: string) {
+  const resolvedProjectPath = normaliseDiskPath(projectPath);
+  return (await readProjects()).find((project) => normaliseDiskPath(project.path) === resolvedProjectPath) || null;
+}
+
+async function readWorkspacePathForProject(projectPath: string) {
+  const trackedProject = await readTrackedProjectByPath(projectPath);
+  return trackedProject?.workspacePath?.trim() || '';
 }
 
 function templatePathCandidates() {
@@ -903,6 +988,24 @@ async function readStandardSections(projectPath: string): Promise<StandardSectio
   return sections;
 }
 
+async function writeStandardsManifest(projectPath: string, sections?: StandardSection[]) {
+  const standardsDir = path.join(projectPath, 'foundation', 'standards');
+  const standardSections = sections ?? await readStandardSections(projectPath);
+  const overallStatus = deriveStandardsStatus(standardSections);
+  await fsp.mkdir(standardsDir, { recursive: true });
+  await writeJson(path.join(standardsDir, 'standards.json'), {
+    profiles: overallStatus === 'complete' ? ['project-defined'] : [],
+    sections: standardSections.map((section) => ({
+      id: section.id,
+      fileName: section.fileName,
+      title: section.title,
+      status: section.status,
+      required: section.required
+    })),
+    updatedAt: new Date().toISOString()
+  });
+}
+
 async function fileStatus(filePath: string): Promise<SetupStepStatus> {
   if (!(await exists(filePath))) return 'not-started';
   const parsed = parseFrontmatter(await fsp.readFile(filePath, 'utf8'));
@@ -1040,7 +1143,7 @@ async function readProjectSetup(projectPath: string): Promise<ProjectSetupState>
   return {
     foundation: await readFoundationDocuments(projectPath),
     standards: { status: standardsStatus, filePath: standardsPath, body: combineStandardsBody(standardsSections), profiles, sections: standardsSections },
-    components: (await readEntities(projectPath, 'components', 'component.json')).concat(await readEntities(projectPath, 'modules', 'module.json')),
+    components: (await readEntities(projectPath, 'components', 'component.json')).concat(await readEntities(projectPath, 'modules', 'module.json')).map((component: any) => ({ ...component, source: normaliseComponentSource(component.source) })),
     capabilities: (await readEntities(projectPath, 'capabilities', 'capability.json')).map((cap: any) => ({ ...cap, components: cap.components || cap.modules || [] })),
     gitInitialized: await exists(path.join(projectPath, '.git'))
   };
@@ -1534,8 +1637,15 @@ function componentSourceReferenceLines(component: any) {
   const source = normaliseComponentSource(component.source);
   const lines: string[] = [];
   if (componentSourceIsConfigured(source)) {
-    lines.push(`- Source directory: \`${source.directory}\``);
+    lines.push(`- Source path: \`${source.directory}\``);
+    lines.push(`- Path mode: \`${source.pathMode}\``);
+    lines.push(`- Portable: \`${source.isInsideWorkspace ? 'yes' : 'no'}\``);
     lines.push(`- Source type: \`${source.type || 'other'}\``);
+    if (source.warning) lines.push(`- Source warning: ${source.warning}`);
+    const detection = normaliseComponentSourceDetection(source.detection);
+    if (detection?.detectedMarkers.length) lines.push(`- Detected markers: ${detection.detectedMarkers.map((item) => `\`${item}\``).join(', ')}`);
+    if (detection?.detectedFrameworks.length) lines.push(`- Detected frameworks: ${detection.detectedFrameworks.map((item) => `\`${item}\``).join(', ')}`);
+    if (detection?.detectedLanguages.length) lines.push(`- Detected languages: ${detection.detectedLanguages.map((item) => `\`${item}\``).join(', ')}`);
   }
   const sourceProjects: string[] = Array.isArray(component.sourceProjects) ? component.sourceProjects.map(String).filter(Boolean) : [];
   if (sourceProjects.length) lines.push(`- Source projects: ${sourceProjects.map((item) => `\`${item}\``).join(', ')}`);
@@ -2800,6 +2910,141 @@ async function validateWorkspacePublishing(projectPath: string, section: Project
   });
 }
 
+
+async function validateComponentSourceLocations(projectPath: string, section: ProjectValidationSection) {
+  const workspacePath = await readWorkspacePathForProject(projectPath);
+  const components = (await readEntities(projectPath, 'components', 'component.json')).concat(await readEntities(projectPath, 'modules', 'module.json'));
+
+  if (!components.length) {
+    pushValidation(section, {
+      id: 'component-source-no-components',
+      title: 'No components to validate',
+      message: 'Component source locations can be added after components are created.',
+      severity: 'info'
+    });
+    return;
+  }
+
+  let configuredCount = 0;
+  let issueCount = 0;
+
+  for (const component of components) {
+    const slug = String(component.slug || component.id || '').trim() || 'component';
+    const title = String(component.title || slug);
+    const source = normaliseComponentSource(component.source);
+    if (!componentSourceIsConfigured(source)) continue;
+    configuredCount += 1;
+
+    const absolutePath = resolveComponentSourceDirectory(projectPath, source.directory, workspacePath);
+    const insideWorkspace = Boolean(workspacePath && isSameOrInsideDiskPath(absolutePath, workspacePath));
+
+    if (!workspacePath) {
+      issueCount += 1;
+      pushValidation(section, {
+        id: `component-source-${slug}-workspace-missing`,
+        title: `${title} source cannot be checked against workspace`,
+        message: 'Set the source workspace on Home so AIDD can store component source paths relative to the workspace.',
+        severity: 'warning',
+        path: source.directory,
+        action: 'Open Home and choose the implementation/source-code workspace.'
+      });
+    }
+
+    if (!(await exists(absolutePath))) {
+      issueCount += 1;
+      pushValidation(section, {
+        id: `component-source-${slug}-missing`,
+        title: `${title} source location was not found`,
+        message: `The configured component source path does not exist: ${source.directory}`,
+        severity: 'warning',
+        path: source.directory,
+        action: 'Open Components and choose the current source directory for this component.'
+      });
+      continue;
+    }
+
+    const stat = await fsp.stat(absolutePath);
+    if (!stat.isDirectory()) {
+      issueCount += 1;
+      pushValidation(section, {
+        id: `component-source-${slug}-not-directory`,
+        title: `${title} source location is not a directory`,
+        message: `The configured component source path is not a directory: ${source.directory}`,
+        severity: 'warning',
+        path: source.directory,
+        action: 'Open Components and choose a directory for this component source location.'
+      });
+      continue;
+    }
+
+    if (workspacePath && !insideWorkspace) {
+      issueCount += 1;
+      pushValidation(section, {
+        id: `component-source-${slug}-outside-workspace`,
+        title: `${title} source location is outside the workspace`,
+        message: `The source path is stored as an absolute path and may break for other users: ${source.directory}`,
+        severity: 'warning',
+        path: source.directory,
+        action: 'Prefer a directory inside the configured source workspace when this component belongs to the project.'
+      });
+    }
+
+    if (source.pathMode === 'absolute') {
+      issueCount += 1;
+      pushValidation(section, {
+        id: `component-source-${slug}-absolute`,
+        title: `${title} source location is not portable`,
+        message: 'This component source location is stored as an absolute path. It can be kept, but it may not work for other users or agents on another machine.',
+        severity: 'warning',
+        path: source.directory,
+        action: 'Choose a source location inside the workspace to save a workspace-relative path.'
+      });
+    }
+
+    const detection = normaliseComponentSourceDetection(source.detection);
+    if (!detection) {
+      issueCount += 1;
+      pushValidation(section, {
+        id: `component-source-${slug}-undetected`,
+        title: `${title} source type has not been detected`,
+        message: 'Run Detect in the component source card so AIDD can publish useful source type, language, and framework hints for agents.',
+        severity: 'warning',
+        path: source.directory,
+        action: 'Open Components, configure source, then click Detect.'
+      });
+    } else if (detection.confidence === 'low') {
+      pushValidation(section, {
+        id: `component-source-${slug}-low-confidence`,
+        title: `${title} source type detection is low confidence`,
+        message: `Detected ${detection.suggestedType}, but with low confidence. Evidence: ${detection.reasons.slice(0, 2).join(' ')}`,
+        severity: 'info',
+        path: source.directory,
+        action: 'Review the component source type if this looks wrong.'
+      });
+    }
+  }
+
+  if (configuredCount === 0) {
+    pushValidation(section, {
+      id: 'component-source-none-configured',
+      title: 'No component source locations configured',
+      message: 'Source locations are optional, but adding them helps AGENTS.md point agents at the right source directories without broad scanning.',
+      severity: 'info',
+      action: 'Open Components and add source locations for the components agents are likely to modify.'
+    });
+    return;
+  }
+
+  if (issueCount === 0) {
+    pushValidation(section, {
+      id: 'component-source-ready',
+      title: 'Component source locations are usable',
+      message: `${configuredCount} component source location${configuredCount === 1 ? '' : 's'} configured and portable inside the source workspace.`,
+      severity: 'success'
+    });
+  }
+}
+
 function buildValidationReport(sections: ProjectValidationSection[]): ProjectValidationReport {
   const items = sections.flatMap((section) => section.items);
   const summary = {
@@ -2833,6 +3078,7 @@ async function validateProject(projectPath: string): Promise<ProjectValidationRe
   const dataSection = validationSection('data', 'Required data files');
   const entitySection = validationSection('entities', 'Entity data integrity');
   const workspaceSection = validationSection('workspace', 'Source workspace configuration');
+  const componentSourceSection = validationSection('component-source-locations', 'Component source locations');
   const publishSection = validationSection('workspace-publishing', 'Workspace publishing');
 
   if (!projectPath || !(await exists(projectPath))) {
@@ -2843,7 +3089,7 @@ async function validateProject(projectPath: string): Promise<ProjectValidationRe
       severity: 'error',
       action: 'Open a valid AIDD project from the Projects screen.'
     });
-    return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection, workspaceSection, publishSection]);
+    return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection, workspaceSection, componentSourceSection, publishSection]);
   }
 
   await validateTemplateManifest(projectPath, manifestSection);
@@ -2852,9 +3098,10 @@ async function validateProject(projectPath: string): Promise<ProjectValidationRe
   await validateProjectDataIntegrity(projectPath, dataSection);
   await validateEntityDataIntegrity(projectPath, entitySection);
   await validateWorkspaceConfiguration(projectPath, workspaceSection);
+  await validateComponentSourceLocations(projectPath, componentSourceSection);
   await validateWorkspacePublishing(projectPath, publishSection);
 
-  return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection, workspaceSection, publishSection]);
+  return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection, workspaceSection, componentSourceSection, publishSection]);
 }
 
 function pushRepairLog(
@@ -4555,14 +4802,16 @@ function normaliseComponentSourceDetection(input?: Partial<ComponentSourceDetect
   const reasons = Array.isArray(input.reasons) ? input.reasons.map(String).map((item) => item.trim()).filter(Boolean) : [];
   const detectedLanguages = Array.isArray(input.detectedLanguages) ? input.detectedLanguages.map(String).map((item) => item.trim()).filter(Boolean) : [];
   const detectedFrameworks = Array.isArray(input.detectedFrameworks) ? input.detectedFrameworks.map(String).map((item) => item.trim()).filter(Boolean) : [];
+  const detectedMarkers = Array.isArray((input as any).detectedMarkers) ? (input as any).detectedMarkers.map(String).map((item: string) => item.trim()).filter(Boolean) : [];
   const suggestedType = normaliseComponentSourceType(input.suggestedType);
   const confidence = input.confidence === 'high' || input.confidence === 'medium' || input.confidence === 'low' ? input.confidence : 'low';
-  if (!reasons.length && !detectedLanguages.length && !detectedFrameworks.length && suggestedType === 'other') return null;
+  if (!reasons.length && !detectedLanguages.length && !detectedFrameworks.length && !detectedMarkers.length && suggestedType === 'other') return null;
   return {
     suggestedType,
     confidence,
     detectedLanguages: Array.from(new Set(detectedLanguages)),
     detectedFrameworks: Array.from(new Set(detectedFrameworks)),
+    detectedMarkers: Array.from(new Set(detectedMarkers)),
     ...(input.packageManager ? { packageManager: String(input.packageManager) } : {}),
     reasons
   };
@@ -4573,10 +4822,28 @@ function normaliseComponentSourceType(value?: string | null) {
   return COMPONENT_SOURCE_TYPES.has(normalised) ? normalised : 'other';
 }
 
+function normaliseComponentSourcePathMode(value: unknown, directory: string): ComponentSourcePathMode {
+  if (value === 'absolute') return 'absolute';
+  if (value === 'workspace-relative') return 'workspace-relative';
+  return directory && path.isAbsolute(directory) ? 'absolute' : 'workspace-relative';
+}
+
 function normaliseComponentSource(input?: Partial<ComponentSourceConfig> | null): ComponentSourceConfig {
+  const directory = String(input?.directory || '').trim().replace(/\\/g, '/');
+  const pathMode = normaliseComponentSourcePathMode((input as any)?.pathMode, directory);
+  const absolutePath = String((input as any)?.absolutePath || '').trim().replace(/\\/g, '/');
+  const isInsideWorkspace = typeof (input as any)?.isInsideWorkspace === 'boolean'
+    ? Boolean((input as any).isInsideWorkspace)
+    : pathMode === 'workspace-relative';
+  const warning = String((input as any)?.warning || '').trim();
+
   return {
-    directory: String(input?.directory || '').trim().replace(/\\/g, '/'),
+    directory,
     type: normaliseComponentSourceType(input?.type),
+    pathMode,
+    isInsideWorkspace,
+    ...(pathMode === 'absolute' && (absolutePath || directory) ? { absolutePath: absolutePath || directory } : {}),
+    ...(warning ? { warning } : {}),
     detection: normaliseComponentSourceDetection((input as any)?.detection)
   };
 }
@@ -4589,13 +4856,18 @@ function componentSourceDisplay(source: ComponentSourceConfig) {
   if (!componentSourceIsConfigured(source)) return 'Source location has not been configured for this component.';
   const detection = normaliseComponentSourceDetection(source.detection);
   const lines = [
-    `- Type: \`${source.type || 'other'}\``,
-    `- Directory: \`${source.directory}\``
+    `- Path: \`${source.directory}\``,
+    `- Path mode: \`${source.pathMode}\``,
+    `- Portable: \`${source.isInsideWorkspace ? 'yes' : 'no'}\``,
+    `- Source type: \`${source.type || 'other'}\``
   ];
+  if (source.absolutePath && source.pathMode === 'absolute') lines.push(`- Absolute path: \`${source.absolutePath}\``);
+  if (source.warning) lines.push(`- Warning: ${source.warning}`);
   if (detection) {
     lines.push(`- Detection confidence: \`${detection.confidence}\``);
     lines.push(`- Suggested type: \`${detection.suggestedType}\``);
     if (detection.packageManager) lines.push(`- Package manager: \`${detection.packageManager}\``);
+    if (detection.detectedMarkers.length) lines.push(`- Detected markers: ${detection.detectedMarkers.map((item) => `\`${item}\``).join(', ')}`);
     if (detection.detectedFrameworks.length) lines.push(`- Detected frameworks: ${detection.detectedFrameworks.map((item) => `\`${item}\``).join(', ')}`);
     if (detection.detectedLanguages.length) lines.push(`- Detected languages: ${detection.detectedLanguages.map((item) => `\`${item}\``).join(', ')}`);
     if (detection.reasons.length) {
@@ -4606,19 +4878,37 @@ function componentSourceDisplay(source: ComponentSourceConfig) {
   return lines.join('\n');
 }
 
-function componentSourceDirectoryToStoredPath(projectPath: string, absolutePath: string) {
-  const relative = path.relative(projectPath, absolutePath);
-  if (relative === '') return '.';
-  if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
-    return normaliseRelativePath(relative);
-  }
-  return path.resolve(absolutePath).replace(/\\/g, '/');
+function componentSourcePathInfo(projectPath: string, absolutePath: string, workspacePath?: string | null) {
+  const resolved = path.resolve(absolutePath);
+  const workspace = String(workspacePath || '').trim();
+  const isInsideWorkspace = Boolean(workspace && isSameOrInsideDiskPath(resolved, workspace));
+  const directory = isInsideWorkspace
+    ? (path.relative(workspace, resolved) || '.')
+    : resolved;
+  const pathMode: ComponentSourcePathMode = isInsideWorkspace ? 'workspace-relative' : 'absolute';
+  const warning = !workspace
+    ? 'No source workspace is configured, so this source location is stored as an absolute path and may break for other users.'
+    : isInsideWorkspace
+      ? ''
+      : 'This source location is outside the configured workspace and is stored as an absolute path. It may break for other users.';
+
+  return {
+    directory: normaliseRelativePath(directory),
+    absolutePath: resolved.replace(/\\/g, '/'),
+    pathMode,
+    isInsideWorkspace,
+    ...(warning ? { warning } : {})
+  };
 }
 
-function resolveComponentSourceDirectory(projectPath: string, sourceDirectory?: string | null) {
+function componentSourceDirectoryToStoredPath(projectPath: string, absolutePath: string, workspacePath?: string | null) {
+  return componentSourcePathInfo(projectPath, absolutePath, workspacePath).directory;
+}
+
+function resolveComponentSourceDirectory(projectPath: string, sourceDirectory?: string | null, workspacePath?: string | null) {
   const value = String(sourceDirectory || '').trim();
-  if (!value) return projectPath;
-  return path.isAbsolute(value) ? value : path.resolve(projectPath, value);
+  if (!value) return String(workspacePath || '').trim() || projectPath;
+  return path.isAbsolute(value) ? value : path.resolve(String(workspacePath || '').trim() || projectPath, value);
 }
 
 async function collectSourceFileEvidence(root: string, maxDepth = 5, maxFiles = 2500) {
@@ -4698,11 +4988,30 @@ async function detectComponentSourceDirectory(directoryPath: string): Promise<Co
   const frameworks = new Set<string>();
   const languages = topLanguages(extensionCounts);
   const packageManager = detectPackageManager(fileSet);
+  const markers = new Set<string>();
+  const addMarker = (marker: string, condition: boolean) => { if (condition) markers.add(marker); };
 
   const hasFile = (fileName: string) => fileSet.has(fileName.toLowerCase()) || basenames.has(fileName.toLowerCase());
   const hasAnyFile = (...fileNames: string[]) => fileNames.some(hasFile);
   const hasDep = (...names: string[]) => names.some((name) => deps.has(name));
   const hasRelativeMatch = (predicate: (file: string) => boolean) => files.some((file) => predicate(file.toLowerCase()));
+
+  addMarker('package.json', Boolean(packageJson));
+  addMarker('tsconfig.json', hasAnyFile('tsconfig.json'));
+  addMarker('vite.config', hasAnyFile('vite.config.js', 'vite.config.mjs', 'vite.config.ts'));
+  addMarker('next.config', hasAnyFile('next.config.js', 'next.config.mjs', 'next.config.ts'));
+  addMarker('astro.config', hasAnyFile('astro.config.js', 'astro.config.mjs', 'astro.config.ts'));
+  addMarker('angular.json', hasAnyFile('angular.json'));
+  addMarker('.sln', hasRelativeMatch((file) => file.endsWith('.sln')));
+  addMarker('.csproj', hasRelativeMatch((file) => file.endsWith('.csproj')));
+  addMarker('.uproject', hasRelativeMatch((file) => file.endsWith('.uproject')));
+  addMarker('.uplugin', hasRelativeMatch((file) => file.endsWith('.uplugin')));
+  addMarker('.Build.cs', hasRelativeMatch((file) => file.endsWith('.build.cs')));
+  addMarker('pyproject.toml', hasAnyFile('pyproject.toml'));
+  addMarker('requirements.txt', hasAnyFile('requirements.txt'));
+  addMarker('go.mod', hasAnyFile('go.mod'));
+  addMarker('Cargo.toml', hasAnyFile('cargo.toml'));
+  addMarker('Dockerfile', hasAnyFile('dockerfile'));
 
   let suggestedType = 'other';
   let confidence: ComponentSourceDetectionConfidence = 'low';
@@ -4720,7 +5029,10 @@ async function detectComponentSourceDirectory(directoryPath: string): Promise<Co
   };
 
   if (packageJson) reasons.push('package.json found.');
-  if (packageManager) reasons.push(`${packageManager} lockfile found.`);
+  if (packageManager) {
+    reasons.push(`${packageManager} lockfile found.`);
+    markers.add(`${packageManager} lockfile`);
+  }
 
   if (hasAnyFile('tauri.conf.json') || hasRelativeMatch((file) => file.endsWith('/tauri.conf.json'))) {
     frameworks.add('Tauri');
@@ -4810,37 +5122,41 @@ async function detectComponentSourceDirectory(directoryPath: string): Promise<Co
     confidence,
     detectedLanguages: languages,
     detectedFrameworks: Array.from(frameworks).sort(),
+    detectedMarkers: Array.from(markers).sort(),
     ...(packageManager ? { packageManager } : {}),
     reasons: Array.from(new Set(reasons)).slice(0, 12)
   };
 }
 
 async function selectComponentSourceDirectory(input: ComponentSourceDirectoryInput): Promise<ComponentSourceDirectorySelection | null> {
+  const workspacePath = await readWorkspacePathForProject(input.projectPath);
   const currentDirectory = input.currentDirectory || input.directory || '';
-  const defaultPath = currentDirectory ? resolveComponentSourceDirectory(input.projectPath, currentDirectory) : input.projectPath;
+  const fallbackPath = workspacePath || input.projectPath;
+  const defaultPath = currentDirectory ? resolveComponentSourceDirectory(input.projectPath, currentDirectory, workspacePath) : fallbackPath;
   const result = await dialog.showOpenDialog({
     title: 'Select component source directory',
-    defaultPath: await exists(defaultPath) ? defaultPath : input.projectPath,
+    defaultPath: await exists(defaultPath) ? defaultPath : fallbackPath,
     properties: ['openDirectory']
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const absolutePath = path.resolve(result.filePaths[0]);
+  const sourcePathInfo = componentSourcePathInfo(input.projectPath, absolutePath, workspacePath);
   const detection = await detectComponentSourceDirectory(absolutePath);
   return {
-    directory: componentSourceDirectoryToStoredPath(input.projectPath, absolutePath),
-    absolutePath: absolutePath.replace(/\\/g, '/'),
+    ...sourcePathInfo,
     detection
   };
 }
 
 async function detectStoredComponentSourceDirectory(input: ComponentSourceDirectoryInput): Promise<ComponentSourceDirectorySelection> {
   if (!input.directory?.trim()) throw new Error('Source directory is required.');
-  const absolutePath = resolveComponentSourceDirectory(input.projectPath, input.directory);
+  const workspacePath = await readWorkspacePathForProject(input.projectPath);
+  const absolutePath = resolveComponentSourceDirectory(input.projectPath, input.directory, workspacePath);
   if (!(await exists(absolutePath))) throw new Error(`Source directory does not exist: ${input.directory}`);
+  const sourcePathInfo = componentSourcePathInfo(input.projectPath, absolutePath, workspacePath);
   const detection = await detectComponentSourceDirectory(absolutePath);
   return {
-    directory: componentSourceDirectoryToStoredPath(input.projectPath, absolutePath),
-    absolutePath: absolutePath.replace(/\\/g, '/'),
+    ...sourcePathInfo,
     detection
   };
 }
@@ -5764,6 +6080,178 @@ function isSafeComponentReviewReturnPath(relativePath: string) {
   return true;
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const COMPONENT_REVIEW_TITLE_SUFFIXES = Array.from(new Set([
+  ...COMPONENT_TEMPLATE_SECTIONS.map((section) => section.title),
+  ...COMPONENT_TEMPLATE_SECTIONS.map((section) => section.key.split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ')),
+  'Purpose',
+  'Boundaries',
+  'Interfaces',
+  'Data And State',
+  'Data & State',
+  'Dependencies',
+  'Dependencies & Integrations',
+  'Architecture',
+  'Internal Design',
+  'Standards',
+  'Quality Requirements',
+  'Risks'
+])).sort((a, b) => b.length - a.length);
+
+function componentTitleCandidateFromReviewTitle(rawTitle: string, slug: string) {
+  let title = String(rawTitle || '').trim().replace(/\s+/g, ' ');
+  if (!title) return '';
+
+  for (const suffix of COMPONENT_REVIEW_TITLE_SUFFIXES) {
+    const re = new RegExp(`(?:\\s+[-–—:]?\\s*)${escapeRegExp(suffix)}$`, 'i');
+    title = title.replace(re, '').trim();
+  }
+
+  if (!title || slugify(title) === slugify(slug)) return title || titleFromSlug(slug);
+  return title;
+}
+
+async function readComponentReviewSectionMetadata(projectPath: string, slug: string) {
+  const dir = path.join(projectPath, 'components', slug);
+  const titleCandidates: string[] = [];
+  const sourceProjects = new Set<string>();
+  const capabilities = new Set<string>();
+  const sections: ComponentSectionInput[] = [];
+
+  for (const template of COMPONENT_TEMPLATE_SECTIONS) {
+    const filePath = path.join(dir, template.fileName);
+    if (!(await exists(filePath))) continue;
+
+    const raw = await fsp.readFile(filePath, 'utf8');
+    const parsed = parseMarkdownSafe(raw);
+    const aidd = parsed.ok ? ((parsed.parsed.data as any)?.aidd || {}) : {};
+    const body = sectionBodyFromMarkdown(raw);
+    const heading = firstMarkdownHeading(raw);
+    const aiddTitle = String(aidd.title || '').trim();
+
+    if (aiddTitle) titleCandidates.push(componentTitleCandidateFromReviewTitle(aiddTitle, slug));
+    if (heading) titleCandidates.push(componentTitleCandidateFromReviewTitle(heading, slug));
+
+    if (Array.isArray(aidd.sourceProjects)) {
+      for (const item of aidd.sourceProjects) {
+        const value = String(item || '').trim();
+        if (value) sourceProjects.add(value);
+      }
+    }
+    if (Array.isArray(aidd.capabilitiesSupported)) {
+      for (const item of aidd.capabilitiesSupported) {
+        const value = String(item || '').trim();
+        if (value) capabilities.add(value);
+      }
+    }
+
+    const status = String(aidd.status || (contentLooksComplete(raw) ? 'complete' : 'draft')) as SetupStepStatus;
+    sections.push({
+      key: template.key,
+      fileName: template.fileName,
+      title: template.title,
+      body,
+      status,
+      skipReason: aidd.skipReason ? String(aidd.skipReason) : ''
+    });
+  }
+
+  const title = titleCandidates.find((candidate) => candidate.trim()) || titleFromSlug(slug);
+  const status = sections.length && sections.every((section) => section.status === 'complete' || section.status === 'skipped')
+    ? 'complete'
+    : 'draft';
+
+  return {
+    title,
+    status: status as SetupStepStatus,
+    sourceProjects: Array.from(sourceProjects),
+    capabilities: Array.from(capabilities),
+    sections: normaliseComponentSections(sections, {})
+  };
+}
+
+async function reconcileComponentAfterReviewImport(projectPath: string, slug: string) {
+  const canonicalSlug = slugify(slug);
+  const dir = path.join(projectPath, 'components', canonicalSlug);
+  const manifestPath = path.join(dir, 'component.json');
+  const indexPath = path.join(dir, 'index.md');
+  const metadata = await readComponentReviewSectionMetadata(projectPath, canonicalSlug);
+  const linkedCapabilities = await capabilitySlugsReferencingComponent(projectPath, canonicalSlug);
+  const capabilities = Array.from(new Set([...metadata.capabilities, ...linkedCapabilities]));
+  const source = normaliseComponentSource();
+  const createdManifest = !(await exists(manifestPath));
+
+  await fsp.mkdir(dir, { recursive: true });
+
+  if (createdManifest) {
+    await writeJson(manifestPath, {
+      slug: canonicalSlug,
+      title: metadata.title,
+      kind: 'component',
+      status: metadata.status,
+      lifecycle: metadata.status,
+      sourceProjects: metadata.sourceProjects,
+      source,
+      createdAt: new Date().toISOString(),
+      importedAt: new Date().toISOString(),
+      supportsCapabilities: capabilities,
+      capabilitiesSupported: capabilities,
+      dependsOn: [],
+      exposes: [],
+      dataOwned: [],
+      sections: metadata.sections.map((section) => ({
+        key: section.key,
+        title: section.title,
+        fileName: section.fileName,
+        status: section.status || 'not-started',
+        required: true,
+        ...(section.status === 'skipped' ? { skipReason: section.skipReason?.trim() || '' } : {})
+      })),
+      contract: {
+        path: 'component.md',
+        version: 0,
+        sourceHash: '',
+        status: componentContractBlockers(metadata.sections).length ? 'blocked' : 'missing',
+        blockers: componentContractBlockers(metadata.sections)
+      },
+      template: {
+        type: 'component',
+        sectionFiles: COMPONENT_TEMPLATE_SECTIONS.map((section) => section.fileName),
+        templateVersion: TEMPLATE_VERSION
+      }
+    });
+  }
+
+  if (!(await exists(indexPath))) {
+    await fsp.writeFile(indexPath, buildComponentIndexMarkdown({
+      slug: canonicalSlug,
+      title: metadata.title,
+      status: metadata.status,
+      sourceProjects: metadata.sourceProjects,
+      source,
+      capabilities,
+      sections: metadata.sections
+    }), 'utf8');
+  }
+
+  const component = await readComponent({ projectPath, slug: canonicalSlug });
+  await updateComponent({
+    projectPath,
+    slug: canonicalSlug,
+    title: component.title,
+    status: component.status as SetupStepStatus,
+    sourceProjects: component.sourceProjects,
+    source: component.source,
+    capabilities: component.capabilities,
+    sections: component.sections
+  });
+
+  return { slug: canonicalSlug, createdManifest };
+}
+
 async function importComponentReviewPackage(input: ImportComponentReviewPackageInput): Promise<ComponentReviewPackageImportResult> {
   if (!input.projectPath) throw new Error('Project path is required.');
   if (!input.zipPath) throw new Error('Review response zip path is required.');
@@ -5809,13 +6297,23 @@ async function importComponentReviewPackage(input: ImportComponentReviewPackageI
     importedFiles.push(relativePath);
   }
 
-  const componentSlugs = new Set(importedFiles.map((file) => file.split('/')[1]).filter(Boolean));
+  const componentSlugs = Array.from(new Set(importedFiles.map((file) => file.split('/')[1]).filter(Boolean).map((slug) => slugify(slug)))).sort((a, b) => a.localeCompare(b));
+  const importedComponents: string[] = [];
+
+  for (const slug of componentSlugs) {
+    const result = await reconcileComponentAfterReviewImport(root, slug);
+    importedComponents.push(result.slug);
+  }
+
+  await refreshComponentsIndex(root);
+
   return {
     accepted: true,
     zipPath,
     importedFiles: importedFiles.sort((a, b) => a.localeCompare(b)),
     skippedFiles: skippedFiles.sort((a, b) => a.localeCompare(b)),
-    componentCount: componentSlugs.size,
+    componentCount: componentSlugs.length,
+    importedComponents: Array.from(new Set(importedComponents)).sort((a, b) => a.localeCompare(b)),
     reviewIncluded: Boolean(reviewMarkdown),
     ...(reviewMarkdown ? { reviewMarkdown } : {})
   };
@@ -6184,6 +6682,315 @@ async function importFoundationDocumentUpdate(input: ImportFoundationDocumentUpd
   return readProjectSetup(input.projectPath);
 }
 
+
+const STANDARDS_REVIEW_FILES = new Set(
+  STANDARD_SECTION_DEFINITIONS.map((section) => `foundation/standards/${section.fileName}`)
+);
+
+function buildStandardsReviewPackageReadme(input: { projectName: string; standardsFileCount: number }) {
+  return `# AIDD Standards Review Package
+
+This zip was generated by AIDD for Standards review.
+
+## Review scope
+
+You are reviewing **only the Standards files included in this package**.
+
+Do not review or modify Foundation, components, capabilities, delivery packages, source code, generated files, or project structure.
+
+Focus your review on:
+
+- clarity of coding style expectations
+- security expectations and review checks
+- testing and evidence requirements
+- architectural principles and decision rules
+- hosting/platform constraints
+- usefulness for future components, capabilities, delivery packages, and AI agents
+
+## Your task
+
+Review the Markdown files under \`foundation/standards/\` and improve them so they are clearer, more complete, and easier for humans and AI agents to follow.
+
+## Allowed changes
+
+You may update only known Standards Markdown files under:
+
+- \`foundation/standards/\`
+
+You must return a zip containing only:
+
+- updated Markdown files under \`foundation/standards/\`
+- \`REVIEW.md\`
+
+The included \`REVIEW.md\` is a template. Complete it and return it with the updated Standards files.
+
+## Do not return
+
+Do not return:
+
+- \`README.md\`
+- \`MANIFEST.json\`
+- source code
+- foundation files outside \`foundation/standards/\`
+- components
+- capabilities
+- delivery packages
+- files outside \`foundation/standards/\`
+- any unknown Standards files
+
+## Required return shape
+
+\`\`\`txt
+foundation/
+  standards/
+    index.md
+    01-coding-style.md
+    02-security.md
+    03-testing.md
+    04-architecture.md
+    05-hosting-platform.md
+REVIEW.md
+\`\`\`
+
+AIDD will accept a returned zip only when it contains a \`foundation/standards/\` directory.
+
+## REVIEW.md must include
+
+- Summary of changes
+- Pros: what is already strong or useful
+- Cons: gaps, inconsistencies, weak areas, or risks
+- Files changed
+- Assumptions made
+- Questions or unresolved issues
+
+## Excluding files from future review packages
+
+To exclude a Markdown file from future review packages, add this to its front matter:
+
+\`\`\`yaml
+aidd:
+  includeInReviewBundle: false
+\`\`\`
+
+## Package summary
+
+- Project: ${input.projectName}
+- Standards files included: ${input.standardsFileCount}
+`;
+}
+
+function buildStandardsReviewTemplate(input: { projectName: string }) {
+  return `# Standards Review
+
+Project: ${input.projectName}
+
+## Summary of changes
+
+- TODO
+
+## Pros
+
+- TODO
+
+## Cons
+
+- TODO
+
+## Files changed
+
+- TODO
+
+## Assumptions made
+
+- TODO
+
+## Questions or unresolved issues
+
+- TODO
+`;
+}
+
+async function collectStandardsReviewEntries(projectPath: string) {
+  const sections = await readStandardSections(projectPath);
+  const entries: ZipEntryInput[] = [];
+  const includedFiles: string[] = [];
+
+  for (const section of sections) {
+    const relativePath = `foundation/standards/${section.fileName}`;
+    if (!STANDARDS_REVIEW_FILES.has(relativePath)) continue;
+    if (!(await exists(section.filePath))) continue;
+    const raw = await fsp.readFile(section.filePath, 'utf8');
+    if (!shouldIncludeInReviewBundle(raw)) continue;
+    entries.push({ name: relativePath, data: Buffer.from(raw, 'utf8') });
+    includedFiles.push(relativePath);
+  }
+
+  return { entries, includedFiles: includedFiles.sort((a, b) => a.localeCompare(b)) };
+}
+
+async function createStandardsReviewPackage(projectPath: string): Promise<StandardsReviewPackageResult> {
+  if (!projectPath) throw new Error('Project path is required.');
+  const root = path.resolve(projectPath);
+  if (!(await exists(root))) throw new Error(`Project path does not exist: ${projectPath}`);
+
+  const projectName = await readProjectName(root);
+  const createdAt = new Date().toISOString();
+  const stamp = createdAt.replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const fileName = `${slugify(projectName)}-standards-review-${stamp}.zip`;
+  const outputDir = path.join(app.getPath('userData'), 'review-packages', slugify(projectName), 'standards');
+  const filePath = path.join(outputDir, fileName);
+
+  const standards = await collectStandardsReviewEntries(root);
+  if (!standards.includedFiles.length) {
+    throw new Error('No Standards files were available to package for review.');
+  }
+
+  const manifest = {
+    bundleType: 'standards-review',
+    schemaVersion: 1,
+    projectName,
+    createdAt,
+    generatedBy: 'AIDD',
+    outputIsOutsideProject: true,
+    allowedReturnPaths: [
+      ...Array.from(STANDARDS_REVIEW_FILES),
+      'REVIEW.md'
+    ],
+    disallowedReturnPaths: [
+      'README.md',
+      'MANIFEST.json',
+      'foundation/*.md',
+      'components/**',
+      'capabilities/**',
+      'delivery/**',
+      'code/**',
+      'source-code/**'
+    ],
+    standardsFiles: standards.includedFiles,
+    returnInstructions: {
+      zipMustContain: ['foundation/standards/<updated-standards-files>.md', 'REVIEW.md'],
+      reviewTemplateIncluded: true,
+      onlyReturnKnownStandardsFiles: true
+    }
+  };
+
+  const zipEntries: ZipEntryInput[] = [
+    { name: 'README.md', data: Buffer.from(buildStandardsReviewPackageReadme({ projectName, standardsFileCount: standards.includedFiles.length }), 'utf8') },
+    { name: 'REVIEW.md', data: Buffer.from(buildStandardsReviewTemplate({ projectName }), 'utf8') },
+    { name: 'MANIFEST.json', data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8') },
+    ...standards.entries
+  ];
+
+  await writeZipFile(filePath, zipEntries);
+  return {
+    filePath,
+    fileName,
+    standardsFileCount: standards.includedFiles.length,
+    entryCount: zipEntries.length
+  };
+}
+
+function isSafeStandardsReviewReturnPath(relativePath: string) {
+  const normalised = safeZipReadEntryName(relativePath);
+  if (!normalised || !normalised.startsWith('foundation/standards/')) return false;
+  if (!normalised.toLowerCase().endsWith('.md')) return false;
+  return STANDARDS_REVIEW_FILES.has(normalised);
+}
+
+async function importStandardsReviewPackage(input: ImportStandardsReviewPackageInput): Promise<StandardsReviewPackageImportResult> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.zipPath) throw new Error('Review response zip path is required.');
+  const root = path.resolve(input.projectPath);
+  const zipPath = path.resolve(input.zipPath);
+  if (!(await exists(root))) throw new Error(`Project path does not exist: ${input.projectPath}`);
+  if (!(await exists(zipPath))) throw new Error(`Review response zip does not exist: ${input.zipPath}`);
+  if (path.extname(zipPath).toLowerCase() !== '.zip') throw new Error('Review response must be a .zip file.');
+
+  const entries = await readZipFile(zipPath);
+  const hasStandardsDirectory = entries.some((entry) => {
+    const name = normaliseRelativePath(entry.name).replace(/^\/+/, '');
+    return name === 'foundation/standards/' || name.startsWith('foundation/standards/');
+  });
+  if (!hasStandardsDirectory) {
+    throw new Error('Review response rejected: the zip must contain a foundation/standards/ directory.');
+  }
+
+  const importedFiles: string[] = [];
+  const skippedFiles: string[] = [];
+  let reviewMarkdown: string | undefined;
+
+  for (const entry of entries) {
+    const relativePath = safeZipReadEntryName(entry.name);
+    if (!relativePath || entry.directory) continue;
+    if (relativePath === 'REVIEW.md') {
+      reviewMarkdown = entry.data.toString('utf8');
+      continue;
+    }
+    if (!isSafeStandardsReviewReturnPath(relativePath)) {
+      skippedFiles.push(relativePath);
+      continue;
+    }
+
+    const target = path.resolve(root, relativePath);
+    if (!target.startsWith(`${root}${path.sep}`)) {
+      skippedFiles.push(relativePath);
+      continue;
+    }
+
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.writeFile(target, entry.data, 'utf8');
+    importedFiles.push(relativePath);
+  }
+
+  await writeStandardsManifest(root);
+
+  return {
+    accepted: true,
+    zipPath,
+    importedFiles: importedFiles.sort((a, b) => a.localeCompare(b)),
+    skippedFiles: skippedFiles.sort((a, b) => a.localeCompare(b)),
+    reviewIncluded: Boolean(reviewMarkdown),
+    ...(reviewMarkdown ? { reviewMarkdown } : {})
+  };
+}
+
+async function importStandardSectionUpdate(input: ImportStandardSectionUpdateInput): Promise<ProjectSetupState> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.fileName) throw new Error('Standards file name is required.');
+  if (!input.updateFilePath) throw new Error('Dropped Markdown update path is required.');
+  if (path.basename(input.fileName) !== input.fileName || path.extname(input.fileName).toLowerCase() !== '.md') {
+    throw new Error(`Invalid Standards file name: ${input.fileName}`);
+  }
+
+  const definition = STANDARD_SECTION_DEFINITIONS.find((section) => section.fileName === input.fileName);
+  if (!definition) throw new Error(`Unknown Standards section: ${input.fileName}`);
+
+  const updateFilePath = path.resolve(input.updateFilePath);
+  if (!(await exists(updateFilePath))) throw new Error(`Dropped Markdown file does not exist: ${input.updateFilePath}`);
+  if (path.extname(updateFilePath).toLowerCase() !== '.md') throw new Error('Standards updates must be Markdown .md files.');
+
+  const sections = await readStandardSections(input.projectPath);
+  const existing = sections.find((section) => section.fileName === input.fileName);
+  if (!existing) throw new Error(`Unknown Standards section: ${input.fileName}`);
+
+  const raw = await fsp.readFile(updateFilePath, 'utf8');
+  const parsed = matter(raw);
+  const incomingStatus = normalizeSetupStatus(parsed.data?.aidd?.status || parsed.data?.status || existing.status);
+  const body = parsed.content ?? raw;
+
+  await fsp.mkdir(path.dirname(existing.filePath), { recursive: true });
+  await fsp.writeFile(existing.filePath, buildStandardSectionMarkdown({
+    id: existing.id || definition.id,
+    title: existing.title || definition.title,
+    status: incomingStatus,
+    required: existing.required,
+    body
+  }), 'utf8');
+
+  await writeStandardsManifest(input.projectPath);
+  return readProjectSetup(input.projectPath);
+}
+
 async function buildProjectFoundationReviewMarkdown(projectPath: string) {
   const foundationRoot = path.join(projectPath, 'foundation');
   const files = await collectMarkdownFiles(foundationRoot);
@@ -6488,6 +7295,448 @@ async function createComponentReviewBundle(projectPath: string, componentSlug?: 
     fileName,
     componentCount: components.componentCount,
     componentFileCount: components.includedFiles.length,
+    foundationFileCount: foundation.includedFiles.length,
+    entryCount: zipEntries.length
+  };
+}
+
+
+function isSafeCapabilityReviewReturnPath(relativePath: string) {
+  const normalised = safeZipReadEntryName(relativePath);
+  if (!normalised || !normalised.startsWith('capabilities/')) return false;
+  const parts = normalised.split('/');
+  if (parts.length < 3) return false;
+  if (!normalised.toLowerCase().endsWith('.md')) return false;
+  const base = path.basename(normalised).toLowerCase();
+  if (base === 'index.md') return false;
+  return true;
+}
+
+async function collectCapabilityReviewEntries(projectPath: string, capabilitySlug?: string) {
+  const capabilitiesRoot = path.join(projectPath, 'capabilities');
+  const entries: ZipEntryInput[] = [];
+  const includedFiles: string[] = [];
+  const requestedSlug = capabilitySlug ? slugify(capabilitySlug) : null;
+  let capabilityCount = 0;
+
+  if (!(await exists(capabilitiesRoot))) {
+    return { entries, includedFiles, capabilityCount };
+  }
+
+  for (const capabilityDirEntry of await fsp.readdir(capabilitiesRoot, { withFileTypes: true })) {
+    if (!capabilityDirEntry.isDirectory() || capabilityDirEntry.name.startsWith('_')) continue;
+
+    const slug = capabilityDirEntry.name;
+    if (requestedSlug && slug !== requestedSlug) continue;
+    const capabilityDir = path.join(capabilitiesRoot, slug);
+    const manifestPath = path.join(capabilityDir, 'capability.json');
+    if (!(await exists(manifestPath))) continue;
+    capabilityCount += 1;
+
+    let sectionFiles = CAPABILITY_TEMPLATE_SECTIONS.map((section) => section.fileName);
+    try {
+      const manifest = await readJson<any>(manifestPath);
+      const manifestSectionFiles = Array.isArray(manifest?.template?.sectionFiles)
+        ? manifest.template.sectionFiles.map(String)
+        : Array.isArray(manifest?.sections)
+          ? manifest.sections.map((section: any) => String(section.fileName || '')).filter(Boolean)
+          : [];
+      if (manifestSectionFiles.length) sectionFiles = manifestSectionFiles;
+    } catch {}
+
+    const existingMarkdown = (await collectMarkdownFiles(capabilityDir)).filter((relativeFile) => {
+      const base = path.basename(relativeFile).toLowerCase();
+      return base !== 'index.md';
+    });
+
+    const candidateFiles = Array.from(new Set([...sectionFiles, ...existingMarkdown])).filter((fileName) => {
+      const normalised = normaliseRelativePath(fileName);
+      const base = path.basename(normalised).toLowerCase();
+      const unsafe = path.isAbsolute(fileName) || normalised.split('/').some((part) => part === '..' || part === '.');
+      return !unsafe && normalised.toLowerCase().endsWith('.md') && base !== 'index.md';
+    });
+
+    for (const relativeFile of candidateFiles) {
+      const full = path.join(capabilityDir, relativeFile);
+      if (!(await exists(full))) continue;
+      const raw = await fsp.readFile(full, 'utf8');
+      if (!shouldIncludeInReviewBundle(raw)) continue;
+      const zipPath = `capabilities/${slug}/${normaliseRelativePath(relativeFile)}`;
+      entries.push({ name: zipPath, data: Buffer.from(raw, 'utf8') });
+      includedFiles.push(zipPath);
+    }
+  }
+
+  return { entries, includedFiles: includedFiles.sort((a, b) => a.localeCompare(b)), capabilityCount };
+}
+
+function buildCapabilityReviewBundleReadme(input: { projectName: string; capabilityCount: number; capabilityFileCount: number; foundationFileCount: number; targetCapability?: string | null }) {
+  const targetCapability = input.targetCapability || '<included-capability-id>';
+  return `# AIDD Capability Review Package
+
+This zip was generated by AIDD for capability review.
+
+## Review scope
+
+You are reviewing **only the capability included in this package**.
+
+Target capability: \`${targetCapability}\`
+
+Do not review or modify components, delivery packages, source code, or project structure unless explicitly required to understand this capability.
+
+\`PROJECT.md\` is **context only**.
+
+Focus your review on:
+
+- clarity of outcomes
+- scope boundaries
+- user journeys
+- functional and quality requirements
+- UX expectations
+- risks and edge cases
+- validation and acceptance checks
+- suitability for implementation planning
+
+## Your task
+
+Review the included capability section files under \`capabilities/${targetCapability}/\` and improve them so they are clearer, more complete, and more useful for delivery planning.
+
+Use \`PROJECT.md\` only as background context.
+
+## Allowed changes
+
+You may update files only under:
+
+- \`capabilities/${targetCapability}/\`
+
+You must return a zip containing only:
+
+- updated Markdown files under \`capabilities/${targetCapability}/\`
+- \`REVIEW.md\`
+
+The included \`REVIEW.md\` is a template. Complete it and return it with the updated capability files.
+
+## Do not return
+
+Do not return:
+
+- \`PROJECT.md\`
+- \`README.md\`
+- \`MANIFEST.json\`
+- capability \`index.md\` files
+- source code
+- components
+- files outside \`capabilities/${targetCapability}/\`
+- unrelated capabilities
+
+## Required return shape
+
+\`\`\`txt
+capabilities/
+  ${targetCapability}/
+    <updated-section-files>.md
+REVIEW.md
+\`\`\`
+
+AIDD will accept a returned zip only when it contains a \`capabilities/\` directory.
+
+## REVIEW.md must include
+
+- Summary of changes
+- Pros: what is already strong or useful
+- Cons: gaps, inconsistencies, weak areas, or risks
+- Capabilities reviewed
+- Files changed
+- Assumptions made
+- Questions or unresolved issues
+
+## Excluding files from future review bundles
+
+To exclude a Markdown file from future review bundles, add this to its front matter:
+
+\`\`\`yaml
+aidd:
+  includeInReviewBundle: false
+\`\`\`
+
+## Package summary
+
+- Project: ${input.projectName}
+- Target capability: ${targetCapability}
+- Foundation files included: ${input.foundationFileCount}
+- Capabilities found: ${input.capabilityCount}
+- Capability files included: ${input.capabilityFileCount}
+`;
+}
+
+function buildCapabilityReviewTemplate(input: { projectName: string; targetCapability?: string | null }) {
+  return `# Capability Review
+
+Project: ${input.projectName}
+Target capability: ${input.targetCapability || '<included-capability-id>'}
+
+## Summary of changes
+
+- TODO
+
+## Pros
+
+- TODO
+
+## Cons
+
+- TODO
+
+## Capabilities reviewed
+
+- TODO
+
+## Files changed
+
+- TODO
+
+## Assumptions made
+
+- TODO
+
+## Questions or unresolved issues
+
+- TODO
+`;
+}
+
+async function readCapabilityReviewSectionMetadata(projectPath: string, slug: string) {
+  const dir = path.join(projectPath, 'capabilities', slug);
+  const titleCandidates: string[] = [];
+  const components = new Set<string>();
+  const sections: CapabilitySectionInput[] = [];
+
+  for (const template of CAPABILITY_TEMPLATE_SECTIONS) {
+    const filePath = path.join(dir, template.fileName);
+    if (!(await exists(filePath))) continue;
+
+    const raw = await fsp.readFile(filePath, 'utf8');
+    const parsed = parseMarkdownSafe(raw);
+    const aidd = parsed.ok ? ((parsed.parsed.data as any)?.aidd || {}) : {};
+    const body = sectionBodyFromMarkdown(raw);
+    const heading = firstMarkdownHeading(raw);
+    const aiddTitle = String(aidd.title || '').trim();
+
+    if (aiddTitle) titleCandidates.push(aiddTitle.replace(new RegExp(`${escapeRegExp(template.title)}$`, 'i'), '').trim());
+    if (heading) titleCandidates.push(heading.replace(new RegExp(`${escapeRegExp(template.title)}$`, 'i'), '').trim());
+
+    if (Array.isArray(aidd.components)) {
+      for (const item of aidd.components) {
+        const value = String(item || '').trim();
+        if (value) components.add(value);
+      }
+    }
+
+    const status = String(aidd.status || (contentLooksComplete(raw) ? 'complete' : 'draft')) as SetupStepStatus;
+    sections.push({
+      key: template.key,
+      fileName: template.fileName,
+      title: template.title,
+      body,
+      status
+    });
+  }
+
+  const title = titleCandidates.find((candidate) => candidate.trim()) || titleFromSlug(slug);
+  const status = sections.length && sections.every((section) => section.status === 'complete' || section.status === 'skipped')
+    ? 'complete'
+    : 'draft';
+
+  return {
+    title,
+    status: status as SetupStepStatus,
+    components: Array.from(components),
+    sections: normaliseCapabilitySections(sections, {})
+  };
+}
+
+async function reconcileCapabilityAfterReviewImport(projectPath: string, slug: string) {
+  const canonicalSlug = slugify(slug);
+  const dir = path.join(projectPath, 'capabilities', canonicalSlug);
+  const manifestPath = path.join(dir, 'capability.json');
+  const metadata = await readCapabilityReviewSectionMetadata(projectPath, canonicalSlug);
+  const createdManifest = !(await exists(manifestPath));
+
+  await fsp.mkdir(dir, { recursive: true });
+
+  if (createdManifest) {
+    await writeJson(manifestPath, {
+      slug: canonicalSlug,
+      title: metadata.title,
+      status: metadata.status,
+      components: metadata.components,
+      createdAt: new Date().toISOString(),
+      importedAt: new Date().toISOString(),
+      template: {
+        id: TEMPLATE_ID,
+        version: TEMPLATE_VERSION,
+        sectionFiles: CAPABILITY_TEMPLATE_SECTIONS.map((section) => section.fileName)
+      }
+    });
+  }
+
+  const capability = await readCapability({ projectPath, slug: canonicalSlug }).catch(async () => ({
+    slug: canonicalSlug,
+    title: metadata.title,
+    status: metadata.status,
+    components: metadata.components,
+    sections: metadata.sections
+  }));
+
+  await updateCapability({
+    projectPath,
+    slug: canonicalSlug,
+    title: capability.title || metadata.title,
+    status: (capability.status || metadata.status) as SetupStepStatus,
+    componentSlugs: Array.isArray((capability as any).components) ? (capability as any).components : metadata.components,
+    sections: metadata.sections
+  });
+
+  return { slug: canonicalSlug, createdManifest };
+}
+
+async function importCapabilityReviewPackage(input: ImportCapabilityReviewPackageInput): Promise<CapabilityReviewPackageImportResult> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.zipPath) throw new Error('Review response zip path is required.');
+  const root = path.resolve(input.projectPath);
+  const zipPath = path.resolve(input.zipPath);
+  if (!(await exists(root))) throw new Error(`Project path does not exist: ${input.projectPath}`);
+  if (!(await exists(zipPath))) throw new Error(`Review response zip does not exist: ${input.zipPath}`);
+  if (path.extname(zipPath).toLowerCase() !== '.zip') throw new Error('Review response must be a .zip file.');
+
+  const entries = await readZipFile(zipPath);
+  const hasCapabilitiesDirectory = entries.some((entry) => {
+    const name = normaliseRelativePath(entry.name).replace(/^\/+/, '');
+    return name === 'capabilities/' || name.startsWith('capabilities/');
+  });
+  if (!hasCapabilitiesDirectory) {
+    throw new Error('Review response rejected: the zip must contain a capabilities/ directory.');
+  }
+
+  const importedFiles: string[] = [];
+  const skippedFiles: string[] = [];
+  let reviewMarkdown: string | undefined;
+
+  for (const entry of entries) {
+    const relativePath = safeZipReadEntryName(entry.name);
+    if (!relativePath || entry.directory) continue;
+    if (relativePath === 'REVIEW.md') {
+      reviewMarkdown = entry.data.toString('utf8');
+      continue;
+    }
+    if (!isSafeCapabilityReviewReturnPath(relativePath)) {
+      skippedFiles.push(relativePath);
+      continue;
+    }
+
+    const target = path.resolve(root, relativePath);
+    if (!target.startsWith(`${root}${path.sep}`)) {
+      skippedFiles.push(relativePath);
+      continue;
+    }
+
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.writeFile(target, entry.data, 'utf8');
+    importedFiles.push(relativePath);
+  }
+
+  const capabilitySlugs = Array.from(new Set(importedFiles.map((file) => file.split('/')[1]).filter(Boolean).map((slug) => slugify(slug)))).sort((a, b) => a.localeCompare(b));
+  const importedCapabilities: string[] = [];
+
+  for (const slug of capabilitySlugs) {
+    const result = await reconcileCapabilityAfterReviewImport(root, slug);
+    importedCapabilities.push(result.slug);
+  }
+
+  await refreshCapabilitiesIndex(root);
+  await refreshComponentsIndex(root);
+
+  return {
+    accepted: true,
+    zipPath,
+    importedFiles: importedFiles.sort((a, b) => a.localeCompare(b)),
+    skippedFiles: skippedFiles.sort((a, b) => a.localeCompare(b)),
+    capabilityCount: capabilitySlugs.length,
+    importedCapabilities: Array.from(new Set(importedCapabilities)).sort((a, b) => a.localeCompare(b)),
+    reviewIncluded: Boolean(reviewMarkdown),
+    ...(reviewMarkdown ? { reviewMarkdown } : {})
+  };
+}
+
+async function createCapabilityReviewBundle(projectPath: string, capabilitySlug?: string): Promise<CapabilityReviewPackageResult> {
+  if (!projectPath) throw new Error('Project path is required.');
+  const root = path.resolve(projectPath);
+  if (!(await exists(root))) throw new Error(`Project path does not exist: ${projectPath}`);
+
+  const projectName = await readProjectName(root);
+  const createdAt = new Date().toISOString();
+  const stamp = createdAt.replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const requestedSlug = capabilitySlug ? slugify(capabilitySlug) : null;
+  const fileName = requestedSlug
+    ? `${slugify(projectName)}-${requestedSlug}-capability-review-${stamp}.zip`
+    : `${slugify(projectName)}-capability-review-${stamp}.zip`;
+  const outputDir = requestedSlug
+    ? path.join(app.getPath('userData'), 'review-bundles', slugify(projectName), 'capabilities', requestedSlug)
+    : path.join(app.getPath('userData'), 'review-bundles', slugify(projectName), 'capabilities');
+  const filePath = path.join(outputDir, fileName);
+
+  const foundation = await buildProjectFoundationReviewMarkdown(root);
+  const capabilities = await collectCapabilityReviewEntries(root, requestedSlug || undefined);
+  if (requestedSlug && capabilities.capabilityCount === 0) {
+    throw new Error(`Capability not found or has no reviewable files: ${requestedSlug}`);
+  }
+
+  const manifest = {
+    bundleType: 'capability-review',
+    schemaVersion: 1,
+    projectName,
+    createdAt,
+    generatedBy: 'AIDD',
+    outputIsOutsideProject: true,
+    allowedReturnPaths: [
+      'capabilities/**/*.md',
+      'REVIEW.md'
+    ],
+    disallowedReturnPaths: [
+      'PROJECT.md',
+      'README.md',
+      'MANIFEST.json',
+      'capabilities/**/index.md',
+      '**/*.json',
+      'code/**',
+      'foundation/**',
+      'components/**',
+      'delivery/**'
+    ],
+    foundationSources: foundation.includedFiles,
+    targetCapability: requestedSlug || null,
+    capabilityFiles: capabilities.includedFiles,
+    returnInstructions: {
+      zipMustContain: ['capabilities/<capability-id>/<updated-section-files>.md', 'REVIEW.md'],
+      reviewTemplateIncluded: true,
+      onlyReturnChangedCapabilitySectionFiles: true
+    }
+  };
+
+  const zipEntries: ZipEntryInput[] = [
+    { name: 'README.md', data: Buffer.from(buildCapabilityReviewBundleReadme({ projectName, capabilityCount: capabilities.capabilityCount, capabilityFileCount: capabilities.includedFiles.length, foundationFileCount: foundation.includedFiles.length, targetCapability: requestedSlug || null }), 'utf8') },
+    { name: 'REVIEW.md', data: Buffer.from(buildCapabilityReviewTemplate({ projectName, targetCapability: requestedSlug || null }), 'utf8') },
+    { name: 'MANIFEST.json', data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8') },
+    { name: 'PROJECT.md', data: Buffer.from(foundation.markdown, 'utf8') },
+    ...capabilities.entries
+  ];
+
+  await writeZipFile(filePath, zipEntries);
+  return {
+    filePath,
+    fileName,
+    capabilityCount: capabilities.capabilityCount,
+    capabilityFileCount: capabilities.includedFiles.length,
     foundationFileCount: foundation.includedFiles.length,
     entryCount: zipEntries.length
   };
@@ -7641,6 +8890,35 @@ async function prepareFoundationDragFile(input: PrepareFoundationDragFileInput) 
 }
 
 
+
+async function prepareStandardSectionDragFile(input: PrepareStandardSectionDragFileInput) {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.fileName) throw new Error('Standards file name is required.');
+
+  const definition = STANDARD_SECTION_DEFINITIONS.find((section) => section.fileName === input.fileName);
+  if (!definition) throw new Error(`Unknown Standards section: ${input.fileName}`);
+
+  const projectPath = path.resolve(input.projectPath);
+  const dragDir = path.join(projectPath, '.aidd', 'drag-files', 'standards');
+  await fsp.mkdir(dragDir, { recursive: true });
+
+  const safeName = safeDragFileName(input.fileName);
+  const outputPath = path.join(dragDir, safeName);
+  const title = input.title?.trim() || definition.title;
+  const status = input.status || 'draft';
+  const body = input.body?.trim() || '';
+
+  await fsp.writeFile(outputPath, buildStandardSectionMarkdown({
+    id: definition.id,
+    title,
+    status,
+    required: definition.required,
+    body
+  }), 'utf8');
+
+  return outputPath;
+}
+
 async function prepareComponentContractDragFile(input: PrepareComponentContractDragFileInput) {
   if (!input.projectPath) throw new Error('Project path is required.');
   if (!input.slug) throw new Error('Component slug is required.');
@@ -7659,6 +8937,7 @@ async function prepareNativeDragTestFile() {
 }
 
 ipcMain.handle('drag:prepareFoundationFile', async (_event, input: PrepareFoundationDragFileInput) => prepareFoundationDragFile(input));
+ipcMain.handle('drag:prepareStandardSectionFile', async (_event, input: PrepareStandardSectionDragFileInput) => prepareStandardSectionDragFile(input));
 ipcMain.handle('drag:prepareMarkdownFile', async (_event, input: PrepareMarkdownDragFileInput) => prepareMarkdownDragFile(input));
 ipcMain.handle('drag:prepareComponentContractFile', async (_event, input: PrepareComponentContractDragFileInput) => prepareComponentContractDragFile(input));
 ipcMain.handle('drag:prepareNativeTestFile', async () => prepareNativeDragTestFile());
@@ -7722,6 +9001,27 @@ ipcMain.handle('project:importFoundationDocumentUpdate', async (_event, input: I
   return withProjectSaveSync(input.projectPath, () => importFoundationDocumentUpdate(input));
 });
 
+
+ipcMain.handle('project:packageStandardsForReview', async (_event, projectPath: string) => {
+  if (!projectPath) throw new Error('Project path is required.');
+  return createStandardsReviewPackage(projectPath);
+});
+
+ipcMain.handle('project:prepareStandardsReviewPackage', async (_event, projectPath: string) => {
+  if (!projectPath) throw new Error('Project path is required.');
+  return createStandardsReviewPackage(projectPath);
+});
+
+ipcMain.handle('project:importStandardsReviewPackage', async (_event, input: ImportStandardsReviewPackageInput) => {
+  if (!input?.projectPath || !input?.zipPath) throw new Error('Project path and standards review response zip path are required.');
+  return withProjectSaveSync(input.projectPath, () => importStandardsReviewPackage(input));
+});
+
+ipcMain.handle('project:importStandardSectionUpdate', async (_event, input: ImportStandardSectionUpdateInput) => {
+  if (!input?.projectPath || !input?.fileName || !input?.updateFilePath) throw new Error('Project path, standards file name and Markdown update path are required.');
+  return withProjectSaveSync(input.projectPath, () => importStandardSectionUpdate(input));
+});
+
 ipcMain.handle('project:saveFoundationDocument', async (_event, input: SaveFoundationInput) => {
   const docs = await readFoundationDocuments(input.projectPath);
   const existing = docs.find((doc) => doc.fileName === input.fileName);
@@ -7762,18 +9062,7 @@ ipcMain.handle('project:saveStandardSection', async (_event, input: SaveStandard
   }), 'utf8');
 
   const sections = await readStandardSections(input.projectPath);
-  const overallStatus = deriveStandardsStatus(sections);
-  await writeJson(path.join(standardsDir, 'standards.json'), {
-    profiles: overallStatus === 'complete' ? ['project-defined'] : [],
-    sections: sections.map((section) => ({
-      id: section.id,
-      fileName: section.fileName,
-      title: section.title,
-      status: section.status,
-      required: section.required
-    })),
-    updatedAt: new Date().toISOString()
-  });
+  await writeStandardsManifest(input.projectPath, sections);
   await checkpointAndShareProjectAfterSave(input.projectPath);
   return readProjectSetup(input.projectPath);
 });
@@ -7828,6 +9117,22 @@ ipcMain.handle('project:selectComponentSourceDirectory', async (_event, input: C
 ipcMain.handle('project:detectComponentSourceDirectory', async (_event, input: ComponentSourceDirectoryInput) => {
   if (!input.projectPath || !input.directory?.trim()) throw new Error('Project path and source directory are required.');
   return detectStoredComponentSourceDirectory(input);
+});
+
+
+ipcMain.handle('project:packageCapabilitiesForReview', async (_event, projectPath: string) => {
+  if (!projectPath) throw new Error('Project path is required.');
+  return createCapabilityReviewBundle(projectPath);
+});
+
+ipcMain.handle('project:packageCapabilityForReview', async (_event, input: PackageCapabilityReviewInput) => {
+  if (!input?.projectPath || !input?.slug) throw new Error('Project path and capability slug are required.');
+  return createCapabilityReviewBundle(input.projectPath, input.slug);
+});
+
+ipcMain.handle('project:importCapabilityReviewPackage', async (_event, input: ImportCapabilityReviewPackageInput) => {
+  if (!input?.projectPath || !input?.zipPath) throw new Error('Project path and capability review response zip path are required.');
+  return withProjectSaveSync(input.projectPath, () => importCapabilityReviewPackage(input));
 });
 
 ipcMain.handle('project:createCapability', async (_event, input: CreateCapabilityInput) => {

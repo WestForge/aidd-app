@@ -83,7 +83,7 @@ export function ProjectValidation({ activeProject, onProjectChanged }: { activeP
       <header className="flex h-16 shrink-0 items-center justify-between border-b px-6">
         <div>
           <h1 className="text-xl font-semibold">AIDD integrity check</h1>
-          <p className="text-sm text-muted-foreground">Checks templates, front matter versions, missing files, corrupt JSON, broken AIDD links, source workspace configuration, and published workspace docs. It does not score delivery readiness.</p>
+          <p className="text-sm text-muted-foreground">Checks templates, front matter versions, missing files, corrupt JSON, broken AIDD links, source workspace configuration, component source locations, and published workspace docs. It does not score delivery readiness.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={run} disabled={busy}>

@@ -457,6 +457,15 @@ function sourceTypeLabel(type?: string) {
   );
 }
 
+function looksLikeAbsoluteSourcePath(value: string) {
+  const trimmed = value.trim();
+  return Boolean(trimmed.match(/^[a-zA-Z]:[\\/]/) || trimmed.startsWith("/") || trimmed.startsWith("\\\\"));
+}
+
+function sourcePathModeLabel(pathMode?: string) {
+  return pathMode === "absolute" ? "Absolute path" : "Workspace-relative";
+}
+
 export function Components({
   activeProject,
   onOpenCapability,
@@ -474,6 +483,9 @@ export function Components({
   const [selectedSourceProjects, setSelectedSourceProjects] = useState<string[]>([]);
   const [sourceDirectory, setSourceDirectory] = useState("");
   const [sourceType, setSourceType] = useState("webapp");
+  const [sourcePathMode, setSourcePathMode] = useState<AiddComponentSourcePathMode>("workspace-relative");
+  const [sourceIsInsideWorkspace, setSourceIsInsideWorkspace] = useState(true);
+  const [sourceWarning, setSourceWarning] = useState("");
   const [sourceDetection, setSourceDetection] = useState<AiddComponentSourceDetection | null>(null);
   const [detectingSource, setDetectingSource] = useState(false);
   const [showSourceConfig, setShowSourceConfig] = useState(false);
@@ -512,9 +524,15 @@ export function Components({
     sections.find((section) => section.key === activeSectionKey) ?? sections[0];
   const canGenerateContract = view === "edit" && Boolean(editingSlug);
   const contractReady = view === "edit" && contract?.status === "current";
-  const sourceConfig = {
+  const sourceConfig: AiddComponentSourceConfig = {
     directory: sourceDirectory.trim(),
     type: sourceType || "other",
+    pathMode: sourcePathMode,
+    isInsideWorkspace: sourceIsInsideWorkspace,
+    ...(sourcePathMode === "absolute" && sourceDirectory.trim()
+      ? { absolutePath: sourceDirectory.trim() }
+      : {}),
+    ...(sourceWarning.trim() ? { warning: sourceWarning.trim() } : {}),
     detection: sourceDetection,
   };
 
@@ -527,6 +545,9 @@ export function Components({
     setSelectedSourceProjects([]);
     setSourceDirectory("");
     setSourceType("webapp");
+    setSourcePathMode("workspace-relative");
+    setSourceIsInsideWorkspace(true);
+    setSourceWarning("");
     setSourceDetection(null);
     setDetectingSource(false);
     setShowSourceConfig(false);
@@ -557,8 +578,12 @@ export function Components({
       setTitle(component.title);
       setStatus((component.status as AiddSetupStatus) || "draft");
       setSelectedSourceProjects(component.sourceProjects || []);
+      const nextSourcePathMode = component.source?.pathMode || (looksLikeAbsoluteSourcePath(component.source?.directory || "") ? "absolute" : "workspace-relative");
       setSourceDirectory(component.source?.directory || "");
       setSourceType(component.source?.type || "webapp");
+      setSourcePathMode(nextSourcePathMode);
+      setSourceIsInsideWorkspace(component.source?.isInsideWorkspace ?? nextSourcePathMode === "workspace-relative");
+      setSourceWarning(component.source?.warning || "");
       setSourceDetection(component.source?.detection || null);
       setDetectingSource(false);
       setShowSourceConfig(false);
@@ -679,8 +704,12 @@ export function Components({
       setContract(component.contract || null);
       setSections(component.sections?.length ? component.sections : sections);
       setSelectedSourceProjects(component.sourceProjects || selectedSourceProjects);
+      const nextSourcePathMode = component.source?.pathMode || sourcePathMode;
       setSourceDirectory(component.source?.directory || sourceDirectory);
       setSourceType(component.source?.type || sourceType);
+      setSourcePathMode(nextSourcePathMode);
+      setSourceIsInsideWorkspace(component.source?.isInsideWorkspace ?? sourceIsInsideWorkspace);
+      setSourceWarning(component.source?.warning || sourceWarning);
       setSourceDetection(component.source?.detection || sourceDetection);
       setLinkedCapabilities(component.capabilities || linkedCapabilities);
       const nextSetup = await window.aidd.readProjectSetup(activeProject.path);
@@ -703,10 +732,13 @@ export function Components({
 
   const applySourceDetection = (selection: AiddComponentSourceDirectorySelection) => {
     setSourceDirectory(selection.directory);
+    setSourcePathMode(selection.pathMode);
+    setSourceIsInsideWorkspace(selection.isInsideWorkspace);
+    setSourceWarning(selection.warning || "");
     setSourceDetection(selection.detection);
     setSourceType(selection.detection.suggestedType || "other");
     void window.aidd.notify({
-      title: "Source detected",
+      title: selection.isInsideWorkspace ? "Source detected" : "External source detected",
       body: `${sourceTypeLabel(selection.detection.suggestedType)} (${selection.detection.confidence} confidence).`,
     });
   };
@@ -826,7 +858,8 @@ export function Components({
       setReviewPackage(null);
       setReviewPackageDragFilePath(null);
       await load();
-      if (editingSlug) await openEdit(editingSlug);
+      const importedSlug = result.importedComponents?.length === 1 ? result.importedComponents[0] : editingSlug;
+      if (importedSlug) await openEdit(importedSlug);
       void window.aidd.notify({
         title: "Component review imported",
         body: `${result.importedFiles.length} file(s) imported from ${result.componentCount} component(s).`,
@@ -1039,9 +1072,12 @@ export function Components({
                   <CardContent className="space-y-3">
                     {component.source?.directory ? (
                       <div className="flex flex-wrap gap-2">
-                        <Badge variant="outline">
+                        <Badge variant={component.source.isInsideWorkspace ? "outline" : "secondary"}>
                           {sourceTypeLabel(component.source.type)} · {component.source.directory}
                         </Badge>
+                        {component.source.pathMode === "absolute" && (
+                          <Badge variant="outline">Absolute source path</Badge>
+                        )}
                       </div>
                     ) : null}
                     {capabilities.length ? (
@@ -1149,10 +1185,15 @@ export function Components({
                     <Input
                       value={sourceDirectory}
                       onChange={(event) => {
-                        setSourceDirectory(event.target.value);
+                        const nextDirectory = event.target.value;
+                        const absolute = looksLikeAbsoluteSourcePath(nextDirectory);
+                        setSourceDirectory(nextDirectory);
+                        setSourcePathMode(absolute ? "absolute" : "workspace-relative");
+                        setSourceIsInsideWorkspace(!absolute);
+                        setSourceWarning(absolute ? "This absolute source path may break for other users. Prefer a directory inside the configured workspace when possible." : "");
                         setSourceDetection(null);
                       }}
-                      placeholder="src/components/editor-shell"
+                      placeholder="Source/StormRuntime or src/components/editor-shell"
                     />
                     <Button
                       type="button"
@@ -1174,8 +1215,8 @@ export function Components({
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Select or enter the directory owned by this component. AIDD stores a path
-                    relative to the project when possible; external paths are stored as absolute references.
+                    Select or enter the directory owned by this component. Paths inside the configured workspace
+                    are stored as workspace-relative; paths outside the workspace are allowed but not portable.
                   </p>
                 </div>
                 <div className="space-y-1">
@@ -1198,6 +1239,26 @@ export function Components({
                   )}
                 </div>
               </div>
+              {sourceDirectory.trim() && (
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <Badge variant={sourceIsInsideWorkspace ? "secondary" : "outline"}>
+                    {sourcePathModeLabel(sourcePathMode)}
+                  </Badge>
+                  <Badge variant={sourceIsInsideWorkspace ? "secondary" : "outline"}>
+                    {sourceIsInsideWorkspace ? "Inside workspace" : "Outside workspace"}
+                  </Badge>
+                  {sourcePathMode === "absolute" && (
+                    <Badge variant="outline">Not portable</Badge>
+                  )}
+                </div>
+              )}
+              {sourceWarning && (
+                <Alert>
+                  <ShieldAlert className="h-4 w-4" />
+                  <AlertTitle>Source path warning</AlertTitle>
+                  <AlertDescription>{sourceWarning}</AlertDescription>
+                </Alert>
+              )}
               {sourceDetection && (
                 <div className="rounded-md border bg-muted/30 p-3 text-sm">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1208,8 +1269,13 @@ export function Components({
                       <Badge variant="outline">{sourceDetection.packageManager}</Badge>
                     )}
                   </div>
-                  {(sourceDetection.detectedFrameworks.length > 0 || sourceDetection.detectedLanguages.length > 0) && (
+                  {(((sourceDetection.detectedMarkers?.length ?? 0) > 0) || sourceDetection.detectedFrameworks.length > 0 || sourceDetection.detectedLanguages.length > 0) && (
                     <div className="mb-2 flex flex-wrap gap-2">
+                      {(sourceDetection.detectedMarkers ?? []).map((marker) => (
+                        <Badge key={`marker-${marker}`} variant="outline">
+                          {marker}
+                        </Badge>
+                      ))}
                       {sourceDetection.detectedFrameworks.map((framework) => (
                         <Badge key={`framework-${framework}`} variant="secondary">
                           {framework}
@@ -1278,10 +1344,11 @@ export function Components({
             "relative flex h-16 w-36 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent",
             reviewPackageDragFilePath && "cursor-grab active:cursor-grabbing",
             !reviewPackageDragFilePath && canGenerateContract && "cursor-pointer",
-            !canGenerateContract && "cursor-not-allowed opacity-60",
+            !canGenerateContract && !reviewPackageDragFilePath && "opacity-70",
           )}
           onClick={() => {
             if (canGenerateContract) void createComponentReviewPackage();
+            else setDragError("Generate the component contract before creating a review package. You can still drop a returned component review zip here.");
           }}
           onDragStart={startComponentReviewPackageDrag}
           onDragOver={(event) => {
