@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('aidd', {
   showItemInFolder: (filePath: string) => ipcRenderer.invoke('app:showItemInFolder', filePath),
   selectProjectFolder: () => ipcRenderer.invoke('project:selectFolder'),
   selectWorkspaceDirectory: (projectIdOrPath: string) => ipcRenderer.invoke('project:selectWorkspaceDirectory', projectIdOrPath),
+  setWorkspaceDirectory: (input: unknown) => ipcRenderer.invoke('project:setWorkspaceDirectory', input),
   clearWorkspaceDirectory: (projectIdOrPath: string) => ipcRenderer.invoke('project:clearWorkspaceDirectory', projectIdOrPath),
   listProjects: () => ipcRenderer.invoke('project:list'),
   forgetProject: (projectId: string) => ipcRenderer.invoke('project:forget', projectId),

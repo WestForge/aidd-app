@@ -93,6 +93,11 @@ interface CreateProjectInput {
   initializeGit?: boolean;
 }
 
+interface SetWorkspaceDirectoryInput {
+  projectIdOrPath: string;
+  workspacePath: string;
+}
+
 interface TrackedProject {
   id: string;
   name: string;
@@ -1235,6 +1240,102 @@ function normaliseRelativePath(value: string) {
   return value.split('\\').join('/');
 }
 
+function normaliseDiskPath(value: string) {
+  const resolved = path.resolve(value).replace(/[\\/]+$/, '');
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function sameDiskPath(a: string, b: string) {
+  return normaliseDiskPath(a) === normaliseDiskPath(b);
+}
+
+function isSameOrInsideDiskPath(candidatePath: string, rootPath: string) {
+  const candidate = normaliseDiskPath(candidatePath);
+  const root = normaliseDiskPath(rootPath);
+  if (!candidate || !root) return false;
+  if (candidate === root) return true;
+  const rootWithSeparator = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  return candidate.startsWith(rootWithSeparator);
+}
+
+function agentsTargetPathForWorkspace(workspacePath: string) {
+  return path.join(workspacePath, 'AGENTS.md');
+}
+
+const SOURCE_WORKSPACE_MARKER_FILES = new Set([
+  'package.json',
+  'pnpm-workspace.yaml',
+  'pnpm-lock.yaml',
+  'package-lock.json',
+  'yarn.lock',
+  'bun.lockb',
+  'tsconfig.json',
+  'jsconfig.json',
+  'vite.config.ts',
+  'vite.config.js',
+  'astro.config.mjs',
+  'next.config.js',
+  'Cargo.toml'.toLowerCase(),
+  'go.mod',
+  'pyproject.toml',
+  'requirements.txt',
+  'setup.py',
+  'pom.xml',
+  'build.gradle',
+  'settings.gradle',
+  'gradlew',
+  'CMakeLists.txt'.toLowerCase(),
+  'Makefile'.toLowerCase(),
+  'composer.json',
+  'Gemfile'.toLowerCase()
+]);
+
+const SOURCE_WORKSPACE_MARKER_DIRECTORIES = new Set([
+  'src',
+  'source',
+  'app',
+  'apps',
+  'packages',
+  'lib',
+  'public',
+  'private',
+  'tests',
+  'test'
+]);
+
+const SOURCE_WORKSPACE_MARKER_EXTENSIONS = [
+  '.sln',
+  '.csproj',
+  '.fsproj',
+  '.vbproj',
+  '.xcodeproj',
+  '.xcworkspace',
+  '.uproject',
+  '.uplugin'
+];
+
+async function detectSourceWorkspaceMarkers(workspacePath: string) {
+  const markers: string[] = [];
+  const entries = await fsp.readdir(workspacePath, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const lowerName = entry.name.toLowerCase();
+    if (entry.isDirectory() && SOURCE_WORKSPACE_MARKER_DIRECTORIES.has(lowerName)) {
+      markers.push(`${entry.name}/`);
+      continue;
+    }
+    if (SOURCE_WORKSPACE_MARKER_FILES.has(lowerName)) {
+      markers.push(entry.name);
+      continue;
+    }
+    if (SOURCE_WORKSPACE_MARKER_EXTENSIONS.some((extension) => lowerName.endsWith(extension))) {
+      markers.push(entry.isDirectory() ? `${entry.name}/` : entry.name);
+    }
+  }
+
+  return markers.slice(0, 8);
+}
+
 function isSkippedHealthPath(relativePath: string) {
   const normal = normaliseRelativePath(relativePath);
   return (
@@ -1890,6 +1991,127 @@ async function validateProjectFrontmatterVersions(projectPath: string, section: 
   }
 }
 
+async function validateWorkspaceConfiguration(projectPath: string, section: ProjectValidationSection) {
+  const trackedProject = (await readProjects()).find((project) => sameDiskPath(project.path, projectPath));
+  const workspacePath = trackedProject?.workspacePath?.trim();
+
+  if (!trackedProject) {
+    pushValidation(section, {
+      id: 'workspace-project-not-tracked',
+      title: 'Source workspace cannot be checked',
+      message: 'This AIDD project is not currently in the tracked project list, so the source workspace setting could not be read.',
+      severity: 'warning',
+      action: 'Open the project from the Projects screen, then set the source workspace from Home.'
+    });
+    return;
+  }
+
+  if (!workspacePath) {
+    pushValidation(section, {
+      id: 'workspace-directory-missing',
+      title: 'Source workspace is not configured',
+      message: 'Set the workspace to the implementation/source-code directory where AGENTS.md and published AIDD docs should be generated.',
+      severity: 'warning',
+      action: 'Open Home and choose the source-code workspace before generating AGENTS.md.'
+    });
+    return;
+  }
+
+  if (!(await exists(workspacePath))) {
+    pushValidation(section, {
+      id: 'workspace-directory-not-found',
+      title: 'Source workspace was not found',
+      message: `The configured source workspace does not exist: ${workspacePath}`,
+      severity: 'warning',
+      path: workspacePath,
+      action: 'Open Home and choose the directory that contains the source code.'
+    });
+    return;
+  }
+
+  const workspaceStat = await fsp.stat(workspacePath);
+  if (!workspaceStat.isDirectory()) {
+    pushValidation(section, {
+      id: 'workspace-directory-not-directory',
+      title: 'Source workspace is not a directory',
+      message: `The configured source workspace is not a directory: ${workspacePath}`,
+      severity: 'warning',
+      path: workspacePath,
+      action: 'Open Home and choose the directory that contains the source code.'
+    });
+    return;
+  }
+
+  let issueCount = 0;
+
+  if (sameDiskPath(workspacePath, projectPath)) {
+    issueCount++;
+    pushValidation(section, {
+      id: 'workspace-directory-is-aidd-project',
+      title: 'Source workspace cannot be the AIDD project',
+      message: 'The configured workspace is the active AIDD project. Choose the separate implementation directory that contains the source code.',
+      severity: 'warning',
+      path: workspacePath,
+      action: 'Open Home and choose the source-code workspace, not the AIDD project directory.'
+    });
+  } else {
+    if (isSameOrInsideDiskPath(projectPath, workspacePath)) {
+      issueCount++;
+      pushValidation(section, {
+        id: 'workspace-directory-contains-aidd-project',
+        title: 'Source workspace contains the active AIDD project',
+        message: `The active AIDD project is inside the configured source workspace. Workspace: ${workspacePath}. AIDD project: ${projectPath}. Agents may scan the AIDD source files if this is not corrected.`,
+        severity: 'warning',
+        path: workspacePath,
+        action: 'Choose the implementation/source-code directory only, keeping the AIDD project outside that workspace.'
+      });
+    }
+
+    if (isSameOrInsideDiskPath(workspacePath, projectPath)) {
+      issueCount++;
+      pushValidation(section, {
+        id: 'workspace-directory-inside-aidd-project',
+        title: 'Source workspace is inside the active AIDD project',
+        message: `The configured source workspace is nested inside the AIDD project. Workspace: ${workspacePath}. AIDD project: ${projectPath}.`,
+        severity: 'warning',
+        path: workspacePath,
+        action: 'Choose the real implementation/source-code directory outside the AIDD project.'
+      });
+    }
+  }
+
+  const sourceMarkers = await detectSourceWorkspaceMarkers(workspacePath);
+  if (sourceMarkers.length === 0) {
+    issueCount++;
+    pushValidation(section, {
+      id: 'workspace-directory-no-source-markers',
+      title: 'Source workspace does not look like a code workspace',
+      message: 'No common source-code markers were found at the workspace root, such as src/, Source/, package.json, .sln, .uproject, go.mod, pyproject.toml, or Cargo.toml.',
+      severity: 'warning',
+      path: workspacePath,
+      action: 'Choose the directory that contains the project source code.'
+    });
+  } else {
+    pushValidation(section, {
+      id: 'workspace-directory-source-markers-found',
+      title: 'Source workspace markers found',
+      message: `Found source-code marker${sourceMarkers.length === 1 ? '' : 's'}: ${sourceMarkers.join(', ')}.`,
+      severity: 'success',
+      path: workspacePath
+    });
+  }
+
+  if (issueCount === 0) {
+    pushValidation(section, {
+      id: 'workspace-directory-ready',
+      title: 'Source workspace is configured',
+      message: `AGENTS.md will be generated at ${agentsTargetPathForWorkspace(workspacePath)}.`,
+      severity: 'success',
+      path: workspacePath
+    });
+  }
+}
+
 function buildValidationReport(sections: ProjectValidationSection[]): ProjectValidationReport {
   const items = sections.flatMap((section) => section.items);
   const summary = {
@@ -1922,6 +2144,7 @@ async function validateProject(projectPath: string): Promise<ProjectValidationRe
   const frontmatterSection = validationSection('frontmatter', 'Front matter versions');
   const dataSection = validationSection('data', 'Required data files');
   const entitySection = validationSection('entities', 'Entity data integrity');
+  const workspaceSection = validationSection('workspace', 'Source workspace configuration');
 
   if (!projectPath || !(await exists(projectPath))) {
     pushValidation(dataSection, {
@@ -1931,7 +2154,7 @@ async function validateProject(projectPath: string): Promise<ProjectValidationRe
       severity: 'error',
       action: 'Open a valid AIDD project from the Projects screen.'
     });
-    return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection]);
+    return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection, workspaceSection]);
   }
 
   await validateTemplateManifest(projectPath, manifestSection);
@@ -1939,8 +2162,9 @@ async function validateProject(projectPath: string): Promise<ProjectValidationRe
   await validateProjectFrontmatterVersions(projectPath, frontmatterSection);
   await validateProjectDataIntegrity(projectPath, dataSection);
   await validateEntityDataIntegrity(projectPath, entitySection);
+  await validateWorkspaceConfiguration(projectPath, workspaceSection);
 
-  return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection]);
+  return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection, workspaceSection]);
 }
 
 function pushRepairLog(
@@ -6493,14 +6717,29 @@ ipcMain.handle('project:selectWorkspaceDirectory', async (_event, projectIdOrPat
   const project = projects.find((item) => item.id === projectIdOrPath || item.path === projectIdOrPath);
   if (!project) throw new Error('Tracked project was not found.');
 
-  const result = await dialog.showOpenDialog({
-    title: 'Select workspace directory for AGENTS.md',
-    defaultPath: project.workspacePath || path.dirname(project.path),
-    properties: ['openDirectory', 'createDirectory']
-  });
+  const dialogOptions = {
+    title: 'Select source workspace for AGENTS.md',
+    properties: ['openDirectory'] as Array<'openDirectory'>,
+    ...(project.workspacePath ? { defaultPath: project.workspacePath } : {})
+  };
+  const result = await dialog.showOpenDialog(dialogOptions);
   if (result.canceled || result.filePaths.length === 0) return null;
 
   const workspacePath = result.filePaths[0];
+  return updateTrackedProject(projectIdOrPath, (current) => ({
+    ...current,
+    workspacePath,
+    workspaceUpdatedAt: new Date().toISOString(),
+    lastOpenedAt: new Date().toISOString()
+  }));
+});
+
+ipcMain.handle('project:setWorkspaceDirectory', async (_event, input: SetWorkspaceDirectoryInput) => {
+  const projectIdOrPath = input?.projectIdOrPath;
+  const workspacePath = input?.workspacePath?.trim();
+  if (!projectIdOrPath) throw new Error('Tracked project id or path is required.');
+  if (!workspacePath) throw new Error('Workspace path is required.');
+
   return updateTrackedProject(projectIdOrPath, (current) => ({
     ...current,
     workspacePath,
@@ -6542,17 +6781,21 @@ ipcMain.handle('project:openExisting', async () => {
   const projectPath = result.filePaths[0];
   const manifestPath = path.join(projectPath, 'aidd.template.json');
   const manifest = await exists(manifestPath) ? await readJson<any>(manifestPath) : {};
+  const existingProjects = await readProjects();
+  const previous = existingProjects.find((project) => sameDiskPath(project.path, projectPath));
   const tracked: TrackedProject = {
-    id: `${Date.now()}`,
-    name: manifest.project?.name || path.basename(projectPath),
-    description: manifest.project?.description || '',
+    id: previous?.id || `${Date.now()}`,
+    name: manifest.project?.name || previous?.name || path.basename(projectPath),
+    description: manifest.project?.description || previous?.description || '',
     path: projectPath,
-    templateId: manifest.templateId || 'unknown',
-    templateVersion: manifest.templateVersion || 'unknown',
-    createdAt: manifest.createdAt || new Date().toISOString(),
+    ...(previous?.workspacePath ? { workspacePath: previous.workspacePath } : {}),
+    ...(previous?.workspaceUpdatedAt ? { workspaceUpdatedAt: previous.workspaceUpdatedAt } : {}),
+    templateId: manifest.templateId || previous?.templateId || 'unknown',
+    templateVersion: manifest.templateVersion || previous?.templateVersion || 'unknown',
+    createdAt: manifest.createdAt || previous?.createdAt || new Date().toISOString(),
     lastOpenedAt: new Date().toISOString()
   };
-  const projects = (await readProjects()).filter((p) => p.path !== projectPath);
+  const projects = existingProjects.filter((project) => !sameDiskPath(project.path, projectPath));
   projects.unshift(tracked);
   await writeProjects(projects);
   return tracked;

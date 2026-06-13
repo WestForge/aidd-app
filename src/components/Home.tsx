@@ -5,6 +5,8 @@ import {
   CheckCircle2,
   CircleAlert,
   Clock3,
+  FileText,
+  FolderOpen,
   ListChecks,
   PackageCheck,
   Sparkles,
@@ -21,6 +23,7 @@ interface HomeProps {
   onSelectPackage: (id: string) => void;
   onCreatePackage: () => void;
   activeProject: AiddTrackedProject | null;
+  onProjectUpdated: (project: AiddTrackedProject) => void;
   onOpenSetup: () => void;
   onOpenCapabilities: () => void;
   onOpenComponents: () => void;
@@ -29,6 +32,25 @@ interface HomeProps {
 
 function formatStatus(status?: string) {
   return (status || 'draft').replace(/-/g, ' ');
+}
+
+function agentsTargetPath(workspacePath?: string) {
+  if (!workspacePath) return '';
+  const trimmed = workspacePath.replace(/[\\/]+$/, '');
+  const separator = workspacePath.includes('\\') ? '\\' : '/';
+  return `${trimmed}${separator}AGENTS.md`;
+}
+
+function comparablePath(directoryPath?: string) {
+  const cleaned = (directoryPath || '').replace(/[\\/]+$/, '').replace(/\\/g, '/');
+  return /^[a-z]:\//i.test(cleaned) ? cleaned.toLowerCase() : cleaned;
+}
+
+function isSameOrInsidePath(candidatePath?: string, rootPath?: string) {
+  const candidate = comparablePath(candidatePath);
+  const root = comparablePath(rootPath);
+  if (!candidate || !root) return false;
+  return candidate === root || candidate.startsWith(`${root}/`);
 }
 
 function ActionRow({
@@ -53,9 +75,10 @@ function ActionRow({
   );
 }
 
-export function Home({ packages, onSelectPackage, activeProject, onOpenSetup, onOpenCapabilities, onOpenComponents, onOpenDelivery }: HomeProps) {
+export function Home({ packages, onSelectPackage, activeProject, onProjectUpdated, onOpenSetup, onOpenCapabilities, onOpenComponents, onOpenDelivery }: HomeProps) {
   const [status, setStatus] = useState<AiddProjectStatus | null>(null);
   const [work, setWork] = useState<AiddHomeWork | null>(null);
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
 
   useEffect(() => {
     if (!activeProject?.path) return;
@@ -77,6 +100,38 @@ export function Home({ packages, onSelectPackage, activeProject, onOpenSetup, on
   const componentWork = work?.components ?? [];
   const totalNeedsDoing = (work?.total ?? 0) + blockers.length;
   const fallbackActivePackages = useMemo(() => packages.filter((item) => item.status !== 'accepted' && item.status !== 'superseded'), [packages]);
+  const configuredWorkspacePath = activeProject?.workspacePath;
+  const workspaceContainsAiddProject = isSameOrInsidePath(activeProject?.path, configuredWorkspacePath);
+  const workspaceInsideAiddProject = isSameOrInsidePath(configuredWorkspacePath, activeProject?.path);
+  const workspaceHasAiddBoundaryIssue = Boolean(configuredWorkspacePath && (workspaceContainsAiddProject || workspaceInsideAiddProject));
+  const agentsPath = agentsTargetPath(configuredWorkspacePath);
+
+  const selectWorkspaceDirectory = async () => {
+    if (!activeProject) return;
+    setWorkspaceBusy(true);
+    try {
+      const updated = await window.aidd.selectWorkspaceDirectory(activeProject.id);
+      if (updated) onProjectUpdated(updated);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setWorkspaceBusy(false);
+    }
+  };
+
+
+  const clearWorkspaceDirectory = async () => {
+    if (!activeProject) return;
+    setWorkspaceBusy(true);
+    try {
+      const updated = await window.aidd.clearWorkspaceDirectory(activeProject.id);
+      onProjectUpdated(updated);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setWorkspaceBusy(false);
+    }
+  };
 
   if (!activeProject) {
     return <div className="flex h-full items-center justify-center p-6"><Card className="max-w-md"><CardHeader><CardTitle>No project selected</CardTitle><CardDescription>Open or create a project to start the AIDD workflow.</CardDescription></CardHeader></Card></div>;
@@ -200,6 +255,60 @@ export function Home({ packages, onSelectPackage, activeProject, onOpenSetup, on
           </section>
 
           <aside className="space-y-4">
+            <Card>
+              <CardHeader>
+                <FolderOpen className="h-5 w-5" />
+                <CardTitle>Source workspace</CardTitle>
+                <CardDescription>Choose the implementation workspace that contains the source code. AGENTS.md and published AIDD docs will be generated there.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="rounded-lg border bg-muted/40 p-3 text-xs">
+                  <div className="mb-1 font-medium text-foreground">Active AIDD project</div>
+                  <div className="break-all text-muted-foreground">{activeProject.path}</div>
+                </div>
+
+                {activeProject.workspacePath ? (
+                  <>
+                    <div className="rounded-lg border bg-muted/40 p-3 text-xs">
+                      <div className="mb-1 font-medium text-foreground">Configured source workspace</div>
+                      <div className="break-all text-muted-foreground">{activeProject.workspacePath}</div>
+                    </div>
+                    {workspaceHasAiddBoundaryIssue && (
+                      <Alert>
+                        <CircleAlert className="h-4 w-4" />
+                        <AlertTitle>{workspaceContainsAiddProject ? 'Workspace contains the active AIDD project' : 'Workspace is inside the active AIDD project'}</AlertTitle>
+                        <AlertDescription>Choose the source-code workspace only. The active AIDD project must stay outside the workspace that agents will read.</AlertDescription>
+                      </Alert>
+                    )}
+                    <div className="rounded-lg border bg-muted/40 p-3 text-xs">
+                      <div className="mb-1 flex items-center gap-1 font-medium text-foreground"><FileText className="h-3.5 w-3.5" /> AGENTS.md target</div>
+                      <div className="break-all text-muted-foreground">{agentsPath}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={selectWorkspaceDirectory} disabled={workspaceBusy}>Choose</Button>
+                      <Button variant="outline" size="sm" onClick={() => window.aidd.showItemInFolder(activeProject.workspacePath!)}>Open</Button>
+                      <Button variant="ghost" size="sm" onClick={clearWorkspaceDirectory} disabled={workspaceBusy}>Clear</Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Alert>
+                      <CircleAlert className="h-4 w-4" />
+                      <AlertTitle>Source workspace not set</AlertTitle>
+                      <AlertDescription>Health Check will warn until you choose the implementation directory that contains the source code.</AlertDescription>
+                    </Alert>
+                    <div className="rounded-lg border bg-muted/40 p-3 text-xs">
+                      <div className="mb-1 flex items-center gap-1 font-medium text-foreground"><FileText className="h-3.5 w-3.5" /> AGENTS.md target</div>
+                      <div className="break-all text-muted-foreground">Set a source workspace first.</div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" onClick={selectWorkspaceDirectory} disabled={workspaceBusy}>Choose source workspace</Button>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader>
                 <Clock3 className="h-5 w-5" />

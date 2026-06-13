@@ -178,6 +178,11 @@ interface AiddGitResolveReviewFileInput {
   combinedContent?: string;
 }
 
+interface AiddSetWorkspaceDirectoryInput {
+  projectIdOrPath: string;
+  workspacePath: string;
+}
+
 interface AiddTrackedProject {
   id: string;
   name: string;
@@ -703,6 +708,7 @@ interface Window {
     showItemInFolder: (filePath: string) => Promise<boolean>;
     selectProjectFolder: () => Promise<string | null>;
     selectWorkspaceDirectory: (projectIdOrPath: string) => Promise<AiddTrackedProject | null>;
+    setWorkspaceDirectory: (input: AiddSetWorkspaceDirectoryInput) => Promise<AiddTrackedProject>;
     clearWorkspaceDirectory: (projectIdOrPath: string) => Promise<AiddTrackedProject>;
     listProjects: () => Promise<AiddTrackedProject[]>;
     forgetProject: (projectId: string) => Promise<AiddTrackedProject[]>;
