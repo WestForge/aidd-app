@@ -178,11 +178,6 @@ interface AiddGitResolveReviewFileInput {
   combinedContent?: string;
 }
 
-interface AiddSetWorkspaceDirectoryInput {
-  projectIdOrPath: string;
-  workspacePath: string;
-}
-
 interface AiddTrackedProject {
   id: string;
   name: string;
@@ -228,6 +223,46 @@ interface AiddProjectValidationReport {
   summary: { total: number; errors: number; warnings: number; info: number; success: number };
   sections: AiddProjectValidationSection[];
   nextActions: string[];
+}
+
+interface AiddWorkspacePublishOutput {
+  path: string;
+  kind: 'agents' | 'doc' | 'delivery-brief';
+  sourceHash: string;
+  outputHash: string;
+  status: 'missing' | 'stale' | 'modified' | 'up-to-date';
+  message: string;
+}
+
+interface AiddWorkspacePublishWritableFile {
+  path: string;
+  outputHash: string;
+}
+
+interface AiddWorkspacePublishStatus {
+  checkedAt: string;
+  state: 'not-configured' | 'blocked' | 'missing' | 'modified' | 'stale' | 'up-to-date';
+  label: string;
+  message: string;
+  canPublish: boolean;
+  projectPath: string;
+  workspacePath?: string;
+  docsPath?: string;
+  agentsPath?: string;
+  manifestPath?: string;
+  publishedAt?: string;
+  blockers: string[];
+  warnings: string[];
+  outputs: AiddWorkspacePublishOutput[];
+  writableFiles: AiddWorkspacePublishWritableFile[];
+  summary: { total: number; missing: number; stale: number; modified: number; upToDate: number };
+}
+
+interface AiddWorkspacePublishResult extends AiddWorkspacePublishStatus {
+  published: boolean;
+  writtenFiles: string[];
+  skippedFiles: string[];
+  createdWritableFiles: string[];
 }
 
 interface AiddProjectRepairLogEntry {
@@ -629,6 +664,14 @@ interface AiddPrepareFoundationDragFileInput {
   body: string;
 }
 
+interface AiddPrepareStandardSectionDragFileInput {
+  projectPath: string;
+  fileName: string;
+  title?: string;
+  status?: AiddSetupStatus;
+  body: string;
+}
+
 interface AiddPrepareMarkdownDragFileInput {
   projectPath: string;
   directory?: string;
@@ -656,6 +699,13 @@ interface AiddFoundationReviewPackageResult {
   entryCount: number;
 }
 
+interface AiddStandardsReviewPackageResult {
+  filePath: string;
+  fileName: string;
+  standardsFileCount: number;
+  entryCount: number;
+}
+
 interface AiddImportFoundationReviewPackageInput {
   projectPath: string;
   zipPath: string;
@@ -667,7 +717,27 @@ interface AiddImportFoundationDocumentUpdateInput {
   updateFilePath: string;
 }
 
+interface AiddImportStandardsReviewPackageInput {
+  projectPath: string;
+  zipPath: string;
+}
+
+interface AiddImportStandardSectionUpdateInput {
+  projectPath: string;
+  fileName: string;
+  updateFilePath: string;
+}
+
 interface AiddFoundationReviewPackageImportResult {
+  accepted: boolean;
+  zipPath: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  reviewIncluded: boolean;
+  reviewMarkdown?: string;
+}
+
+interface AiddStandardsReviewPackageImportResult {
   accepted: boolean;
   zipPath: string;
   importedFiles: string[];
@@ -708,12 +778,13 @@ interface Window {
     showItemInFolder: (filePath: string) => Promise<boolean>;
     selectProjectFolder: () => Promise<string | null>;
     selectWorkspaceDirectory: (projectIdOrPath: string) => Promise<AiddTrackedProject | null>;
-    setWorkspaceDirectory: (input: AiddSetWorkspaceDirectoryInput) => Promise<AiddTrackedProject>;
     clearWorkspaceDirectory: (projectIdOrPath: string) => Promise<AiddTrackedProject>;
     listProjects: () => Promise<AiddTrackedProject[]>;
     forgetProject: (projectId: string) => Promise<AiddTrackedProject[]>;
     readProjectStatus: (projectPath: string) => Promise<AiddProjectStatus>;
     readHomeWork: (projectPath: string) => Promise<AiddHomeWork>;
+    readWorkspacePublishStatus: (projectPath: string) => Promise<AiddWorkspacePublishStatus>;
+    publishWorkspaceDocs: (projectPath: string) => Promise<AiddWorkspacePublishResult>;
     validateProject: (projectPath: string) => Promise<AiddProjectValidationReport>;
     repairProject: (projectPath: string) => Promise<AiddProjectRepairReport>;
     upgradeProjectTemplates: (projectPath: string) => Promise<AiddProjectTemplateUpgradeReport>;
@@ -722,11 +793,16 @@ interface Window {
     packageFoundationForReview: (projectPath: string) => Promise<AiddFoundationReviewPackageResult>;
     importFoundationReviewPackage: (input: AiddImportFoundationReviewPackageInput) => Promise<AiddFoundationReviewPackageImportResult>;
     importFoundationDocumentUpdate: (input: AiddImportFoundationDocumentUpdateInput) => Promise<AiddProjectSetupState>;
+    prepareStandardsReviewPackage: (projectPath: string) => Promise<AiddStandardsReviewPackageResult>;
+    packageStandardsForReview: (projectPath: string) => Promise<AiddStandardsReviewPackageResult>;
+    importStandardsReviewPackage: (input: AiddImportStandardsReviewPackageInput) => Promise<AiddStandardsReviewPackageImportResult>;
+    importStandardSectionUpdate: (input: AiddImportStandardSectionUpdateInput) => Promise<AiddProjectSetupState>;
     packageComponentsForReview: (projectPath: string) => Promise<AiddComponentReviewPackageResult>;
     packageComponentForReview: (input: AiddPackageComponentForReviewInput) => Promise<AiddComponentReviewPackageResult>;
     importComponentReviewPackage: (input: AiddImportComponentReviewPackageInput) => Promise<AiddComponentReviewPackageImportResult>;
     createComponentReviewBundle: (projectPath: string) => Promise<AiddComponentReviewPackageResult>;
     prepareFoundationDragFile: (input: AiddPrepareFoundationDragFileInput) => Promise<string>;
+    prepareStandardSectionDragFile: (input: AiddPrepareStandardSectionDragFileInput) => Promise<string>;
     prepareMarkdownDragFile: (input: AiddPrepareMarkdownDragFileInput) => Promise<string>;
     prepareComponentContractDragFile: (input: AiddPrepareComponentContractDragFileInput) => Promise<string>;
     prepareNativeDragTestFile: () => Promise<{ filePath: string; fileName: string }>;

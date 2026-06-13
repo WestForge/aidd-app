@@ -211,6 +211,7 @@ function FoundationDocumentTile({
 }
 
 function FoundationReviewTile({
+  scopeLabel = "Foundation",
   ready,
   busy,
   dropActive,
@@ -222,6 +223,7 @@ function FoundationReviewTile({
   onDragOver,
   onDrop,
 }: {
+  scopeLabel?: string;
   ready: boolean;
   busy: boolean;
   dropActive: boolean;
@@ -246,8 +248,8 @@ function FoundationReviewTile({
       disabled={busy}
       title={
         ready
-          ? `Foundation review package ready: ${fileName ?? "review.zip"}. Drag out, or drop a returned review zip here.`
-          : "Create a Foundation review package zip. You can also drop a returned review zip here."
+          ? `${scopeLabel} review package ready: ${fileName ?? "review.zip"}. Drag out, or drop a returned review zip here.`
+          : `Create a ${scopeLabel} review package zip. You can also drop a returned review zip here.`
       }
       className={cn(
         "relative flex h-16 w-28 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent",
@@ -319,6 +321,19 @@ function standardSortWeight(fileName: string) {
   return match ? Number(match[1]) + 1 : 99;
 }
 
+function findDroppedFilePath(files: FileList | File[], extension: string) {
+  const expectedExtension = extension.toLowerCase();
+  const droppedFile = Array.from(files || []).find((file) =>
+    file.name.toLowerCase().endsWith(expectedExtension),
+  );
+  if (!droppedFile) return "";
+  return (
+    window.aidd.getDroppedFilePath(droppedFile) ||
+    (droppedFile as File & { path?: string }).path ||
+    ""
+  );
+}
+
 export function SetupWorkflow({
   activeProject,
   initialStep = "foundation",
@@ -348,6 +363,14 @@ export function SetupWorkflow({
   const [foundationReviewBusy, setFoundationReviewBusy] = useState(false);
   const [foundationReviewDropActive, setFoundationReviewDropActive] = useState(false);
   const [foundationReviewError, setFoundationReviewError] = useState<string | null>(null);
+  const [standardDragFiles, setStandardDragFiles] = useState<Record<string, string>>({});
+  const [standardDragError, setStandardDragError] = useState<string | null>(null);
+  const [standardDocDropTarget, setStandardDocDropTarget] = useState<string | null>(null);
+  const [standardsReviewFilePath, setStandardsReviewFilePath] = useState<string | null>(null);
+  const [standardsReviewFileName, setStandardsReviewFileName] = useState<string | null>(null);
+  const [standardsReviewBusy, setStandardsReviewBusy] = useState(false);
+  const [standardsReviewDropActive, setStandardsReviewDropActive] = useState(false);
+  const [standardsReviewError, setStandardsReviewError] = useState<string | null>(null);
 
   const selectedDoc = useMemo(
     () => setup?.foundation.find((doc) => doc.fileName === selectedFile),
@@ -458,6 +481,55 @@ export function SetupWorkflow({
     step,
   ]);
 
+
+  useEffect(() => {
+    if (!activeProject?.path || activeArea !== "standards" || !setup) {
+      setStandardDragFiles({});
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      const sections = setup.standards.sections ?? [];
+      Promise.all(
+        sections.map(async (section) => {
+          const body = section.fileName === selectedStandardFile ? standardDraftBody : section.body;
+          const status = section.fileName === selectedStandardFile ? standardDraftStatus : section.status;
+          const filePath = await window.aidd.prepareStandardSectionDragFile({
+            projectPath: activeProject.path,
+            fileName: section.fileName,
+            title: section.title,
+            status,
+            body,
+          });
+          return [section.fileName, filePath] as const;
+        }),
+      )
+        .then((entries) => {
+          if (cancelled) return;
+          setStandardDragFiles(Object.fromEntries(entries));
+          setStandardDragError(null);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setStandardDragFiles({});
+          setStandardDragError(err instanceof Error ? err.message : String(err));
+        });
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    activeArea,
+    activeProject?.path,
+    selectedStandardFile,
+    setup,
+    standardDraftBody,
+    standardDraftStatus,
+  ]);
+
   const startFoundationFileDrag = (
     event: React.DragEvent<HTMLButtonElement>,
     fileName: string,
@@ -481,11 +553,7 @@ export function SetupWorkflow({
     setFoundationDocDropTarget(null);
     if (!activeProject?.path) return;
 
-    const files = Array.from(event.dataTransfer.files || []);
-    const markdownFile = files.find((file) => file.name.toLowerCase().endsWith(".md"));
-    const updateFilePath = markdownFile
-      ? window.aidd.getDroppedFilePath(markdownFile) || (markdownFile as File & { path?: string }).path || ""
-      : "";
+    const updateFilePath = findDroppedFilePath(event.dataTransfer.files, ".md");
 
     if (!updateFilePath) {
       const message = `Drop an updated Markdown file for ${docShortTitle(doc.fileName, doc.title)}.`;
@@ -562,11 +630,7 @@ export function SetupWorkflow({
     setFoundationReviewDropActive(false);
     if (!activeProject?.path) return;
 
-    const files = Array.from(event.dataTransfer.files || []);
-    const zipFile = files.find((file) => file.name.toLowerCase().endsWith(".zip"));
-    const zipPath = zipFile
-      ? window.aidd.getDroppedFilePath(zipFile) || (zipFile as File & { path?: string }).path || ""
-      : "";
+    const zipPath = findDroppedFilePath(event.dataTransfer.files, ".zip");
     if (!zipPath) {
       const message = "Drop a returned Foundation review .zip file from your file system.";
       setFoundationReviewError(message);
@@ -592,6 +656,142 @@ export function SetupWorkflow({
       void window.aidd.notify({ title: "Foundation review import failed", body: message });
     } finally {
       setFoundationReviewBusy(false);
+    }
+  };
+
+
+  const startStandardFileDrag = (
+    event: React.DragEvent<HTMLButtonElement>,
+    fileName: string,
+  ) => {
+    event.preventDefault();
+    const filePath = standardDragFiles[fileName];
+    if (!filePath) return;
+    window.aidd.startNativeFileDrag(filePath);
+  };
+
+  const standardDocumentDragOver = (event: React.DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const importStandardDocumentUpdate = async (
+    event: React.DragEvent<HTMLButtonElement>,
+    section: AiddStandardSection,
+  ) => {
+    event.preventDefault();
+    setStandardDocDropTarget(null);
+    if (!activeProject?.path) return;
+
+    const updateFilePath = findDroppedFilePath(event.dataTransfer.files, ".md");
+
+    if (!updateFilePath) {
+      const message = `Drop an updated Markdown file for ${standardShortTitle(section.fileName, section.title)}.`;
+      setStandardsReviewError(message);
+      void window.aidd.notify({ title: "Standards update rejected", body: message });
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setStandardsReviewError(null);
+    try {
+      const nextSetup = await window.aidd.importStandardSectionUpdate({
+        projectPath: activeProject.path,
+        fileName: section.fileName,
+        updateFilePath,
+      });
+      setSetup(nextSetup);
+      setStep("standards");
+      setSelectedStandardFile(section.fileName);
+      const updatedSection = nextSetup.standards.sections?.find((item) => item.fileName === section.fileName);
+      if (updatedSection) {
+        setStandardDraftBody(updatedSection.body);
+        setStandardDraftStatus(updatedSection.status);
+      }
+      void window.aidd.notify({
+        title: "Standards updated",
+        body: `${standardShortTitle(section.fileName, section.title)} was updated from the dropped Markdown file.`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setStandardsReviewError(message);
+      void window.aidd.notify({ title: "Standards update failed", body: message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const createStandardsReviewPackage = async () => {
+    if (!activeProject?.path) return;
+    setStandardsReviewBusy(true);
+    setStandardsReviewError(null);
+    try {
+      const result = await window.aidd.packageStandardsForReview(activeProject.path);
+      setStandardsReviewFilePath(result.filePath);
+      setStandardsReviewFileName(result.fileName);
+      void window.aidd.notify({
+        title: "Standards review package ready",
+        body: "Drag the Review package tile to share it for review.",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setStandardsReviewError(message);
+      void window.aidd.notify({ title: "Standards review package failed", body: message });
+    } finally {
+      setStandardsReviewBusy(false);
+    }
+  };
+
+  const startStandardsReviewPackageDrag = (event: React.DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    if (!standardsReviewFilePath) return;
+    window.aidd.startNativeFileDrag(standardsReviewFilePath);
+  };
+
+  const standardsReviewDragOver = (event: React.DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const importStandardsReviewZip = async (event: React.DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    setStandardsReviewDropActive(false);
+    if (!activeProject?.path) return;
+
+    const zipPath = findDroppedFilePath(event.dataTransfer.files, ".zip");
+    if (!zipPath) {
+      const message = "Drop a returned Standards review .zip file from your file system.";
+      setStandardsReviewError(message);
+      void window.aidd.notify({ title: "Standards review import rejected", body: message });
+      return;
+    }
+
+    setStandardsReviewBusy(true);
+    setStandardsReviewError(null);
+    try {
+      const result = await window.aidd.importStandardsReviewPackage({
+        projectPath: activeProject.path,
+        zipPath,
+      });
+      const nextSetup = await window.aidd.readProjectSetup(activeProject.path);
+      setSetup(nextSetup);
+      const current = nextSetup.standards.sections?.find((section) => section.fileName === selectedStandardFile) ?? nextSetup.standards.sections?.[0];
+      if (current) {
+        setSelectedStandardFile(current.fileName);
+        setStandardDraftBody(current.body);
+        setStandardDraftStatus(current.status);
+      }
+      void window.aidd.notify({
+        title: "Standards review imported",
+        body: `${result.importedFiles.length} Standards file${result.importedFiles.length === 1 ? "" : "s"} updated.`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setStandardsReviewError(message);
+      void window.aidd.notify({ title: "Standards review import failed", body: message });
+    } finally {
+      setStandardsReviewBusy(false);
     }
   };
 
@@ -786,26 +986,58 @@ export function SetupWorkflow({
       {activeArea === "standards" && orderedStandardSections.length > 0 && (
         <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b bg-muted/30 px-4 py-2">
           {orderedStandardSections.map((section) => (
-            <RibbonTile
+            <FoundationDocumentTile
               key={section.fileName}
               title={standardShortTitle(section.fileName, section.title)}
               icon={standardIcon(section.fileName)}
+              fileName={section.fileName}
               selected={step === "standards" && selectedStandardFile === section.fileName}
               status={section.status}
+              dragReady={Boolean(standardDragFiles[section.fileName])}
+              dropActive={standardDocDropTarget === section.fileName}
               onClick={() => {
                 setStep("standards");
                 setSelectedStandardFile(section.fileName);
               }}
+              onDragStart={(event) => startStandardFileDrag(event, section.fileName)}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setStandardDocDropTarget(section.fileName);
+              }}
+              onDragLeave={() => setStandardDocDropTarget(null)}
+              onDragOver={standardDocumentDragOver}
+              onDrop={(event) => importStandardDocumentUpdate(event, section)}
             />
           ))}
+          <FoundationReviewTile
+            scopeLabel="Standards"
+            ready={Boolean(standardsReviewFilePath)}
+            busy={standardsReviewBusy}
+            dropActive={standardsReviewDropActive}
+            fileName={standardsReviewFileName}
+            onClick={createStandardsReviewPackage}
+            onDragStart={startStandardsReviewPackageDrag}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setStandardsReviewDropActive(true);
+            }}
+            onDragLeave={() => setStandardsReviewDropActive(false)}
+            onDragOver={standardsReviewDragOver}
+            onDrop={importStandardsReviewZip}
+          />
         </div>
       )}
 
-      {(error || foundationReviewError || foundationDragError) && (
+      {(error || foundationReviewError || foundationDragError || standardsReviewError || standardDragError) && (
         <div className="shrink-0 px-4 pt-3">
           <Alert variant="destructive">
             <AlertTitle>{activeArea === "standards" ? "Standards error" : "Foundation error"}</AlertTitle>
-            <AlertDescription>{error || foundationReviewError || foundationDragError}</AlertDescription>
+            <AlertDescription>
+              {error ||
+                (activeArea === "standards"
+                  ? standardsReviewError || standardDragError
+                  : foundationReviewError || foundationDragError)}
+            </AlertDescription>
           </Alert>
         </div>
       )}

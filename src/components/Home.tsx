@@ -10,6 +10,7 @@ import {
   ListChecks,
   PackageCheck,
   Sparkles,
+  UploadCloud,
 } from 'lucide-react';
 import type { DeliveryBundle } from '../domain/types';
 import { Button } from './ui/button';
@@ -39,6 +40,28 @@ function agentsTargetPath(workspacePath?: string) {
   const trimmed = workspacePath.replace(/[\\/]+$/, '');
   const separator = workspacePath.includes('\\') ? '\\' : '/';
   return `${trimmed}${separator}AGENTS.md`;
+}
+
+function docsTargetPath(workspacePath?: string) {
+  if (!workspacePath) return '';
+  const trimmed = workspacePath.replace(/[\\/]+$/, '');
+  const separator = workspacePath.includes('\\') ? '\\' : '/';
+  return `${trimmed}${separator}docs`;
+}
+
+function publishStateVariant(state?: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (state === 'up-to-date') return 'secondary';
+  if (state === 'blocked') return 'destructive';
+  return 'outline';
+}
+
+function formatPublishedAt(value?: string) {
+  if (!value) return 'Never published';
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return value;
+  }
 }
 
 function comparablePath(directoryPath?: string) {
@@ -78,7 +101,10 @@ function ActionRow({
 export function Home({ packages, onSelectPackage, activeProject, onProjectUpdated, onOpenSetup, onOpenCapabilities, onOpenComponents, onOpenDelivery }: HomeProps) {
   const [status, setStatus] = useState<AiddProjectStatus | null>(null);
   const [work, setWork] = useState<AiddHomeWork | null>(null);
+  const [publishStatus, setPublishStatus] = useState<AiddWorkspacePublishStatus | null>(null);
+  const [publishResult, setPublishResult] = useState<AiddWorkspacePublishResult | null>(null);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  const [publishBusy, setPublishBusy] = useState(false);
 
   useEffect(() => {
     if (!activeProject?.path) return;
@@ -86,13 +112,15 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
     Promise.all([
       window.aidd.readProjectStatus(activeProject.path),
       window.aidd.readHomeWork(activeProject.path),
-    ]).then(([projectStatus, homeWork]) => {
+      window.aidd.readWorkspacePublishStatus(activeProject.path),
+    ]).then(([projectStatus, homeWork, workspacePublishStatus]) => {
       if (cancelled) return;
       setStatus(projectStatus);
       setWork(homeWork);
+      setPublishStatus(workspacePublishStatus);
     }).catch(console.error);
     return () => { cancelled = true; };
-  }, [activeProject?.path]);
+  }, [activeProject?.path, activeProject?.workspacePath]);
 
   const blockers = status?.setup.filter((item) => !item.complete) ?? [];
   const activeDelivery = work?.delivery ?? [];
@@ -105,13 +133,23 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
   const workspaceInsideAiddProject = isSameOrInsidePath(configuredWorkspacePath, activeProject?.path);
   const workspaceHasAiddBoundaryIssue = Boolean(configuredWorkspacePath && (workspaceContainsAiddProject || workspaceInsideAiddProject));
   const agentsPath = agentsTargetPath(configuredWorkspacePath);
+  const docsPath = publishStatus?.docsPath || docsTargetPath(configuredWorkspacePath);
+
+  const refreshPublishStatus = async () => {
+    if (!activeProject?.path) return;
+    setPublishStatus(await window.aidd.readWorkspacePublishStatus(activeProject.path));
+  };
 
   const selectWorkspaceDirectory = async () => {
     if (!activeProject) return;
     setWorkspaceBusy(true);
     try {
       const updated = await window.aidd.selectWorkspaceDirectory(activeProject.id);
-      if (updated) onProjectUpdated(updated);
+      if (updated) {
+        onProjectUpdated(updated);
+        setPublishResult(null);
+        setPublishStatus(await window.aidd.readWorkspacePublishStatus(updated.path));
+      }
     } catch (error) {
       console.error(error);
     } finally {
@@ -126,10 +164,26 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
     try {
       const updated = await window.aidd.clearWorkspaceDirectory(activeProject.id);
       onProjectUpdated(updated);
+      setPublishResult(null);
+      setPublishStatus(await window.aidd.readWorkspacePublishStatus(updated.path));
     } catch (error) {
       console.error(error);
     } finally {
       setWorkspaceBusy(false);
+    }
+  };
+
+  const publishWorkspaceDocs = async () => {
+    if (!activeProject?.path) return;
+    setPublishBusy(true);
+    try {
+      const result = await window.aidd.publishWorkspaceDocs(activeProject.path);
+      setPublishResult(result);
+      setPublishStatus(result);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setPublishBusy(false);
     }
   };
 
@@ -306,6 +360,68 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
                     </div>
                   </>
                 )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2"><UploadCloud className="h-5 w-5" /><CardTitle>Workspace publishing</CardTitle></div>
+                  {publishStatus && <Badge variant={publishStateVariant(publishStatus.state)}>{publishStatus.label}</Badge>}
+                </div>
+                <CardDescription>Publish approved AIDD context into the source workspace docs directory for agents to read.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="rounded-lg border bg-muted/40 p-3 text-xs">
+                  <div className="mb-1 font-medium text-foreground">Published docs target</div>
+                  <div className="break-all text-muted-foreground">{docsPath || 'Set a source workspace first.'}</div>
+                </div>
+
+                {publishStatus ? (
+                  <>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div className="rounded-md border p-2"><div className="font-medium">Missing</div><div>{publishStatus.summary.missing}</div></div>
+                      <div className="rounded-md border p-2"><div className="font-medium">Stale</div><div>{publishStatus.summary.stale}</div></div>
+                      <div className="rounded-md border p-2"><div className="font-medium">Edited</div><div>{publishStatus.summary.modified}</div></div>
+                    </div>
+
+                    {publishStatus.blockers.length > 0 && (
+                      <Alert>
+                        <CircleAlert className="h-4 w-4" />
+                        <AlertTitle>Publishing blocked</AlertTitle>
+                        <AlertDescription>{publishStatus.blockers[0]}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    {publishStatus.blockers.length === 0 && publishStatus.state !== 'up-to-date' && (
+                      <Alert>
+                        <CircleAlert className="h-4 w-4" />
+                        <AlertTitle>{publishStatus.label}</AlertTitle>
+                        <AlertDescription>{publishStatus.message}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    {publishStatus.warnings.length > 0 && (
+                      <div className="rounded-lg border p-3 text-xs text-muted-foreground">{publishStatus.warnings[0]}</div>
+                    )}
+
+                    {publishResult && (
+                      <div className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
+                        Published: {publishResult.writtenFiles.length} generated file{publishResult.writtenFiles.length === 1 ? '' : 's'} updated, {publishResult.createdWritableFiles.length} writable file{publishResult.createdWritableFiles.length === 1 ? '' : 's'} created, {publishResult.skippedFiles.length} skipped.
+                      </div>
+                    )}
+
+                    <div className="text-xs text-muted-foreground">Last published: {formatPublishedAt(publishStatus.publishedAt)}</div>
+                  </>
+                ) : (
+                  <div className="text-sm text-muted-foreground">Publish status has not loaded yet.</div>
+                )}
+
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" onClick={publishWorkspaceDocs} disabled={publishBusy || !publishStatus?.canPublish}>Publish workspace docs</Button>
+                  <Button variant="outline" size="sm" onClick={refreshPublishStatus} disabled={publishBusy}>Refresh</Button>
+                  {publishStatus?.docsPath && <Button variant="outline" size="sm" onClick={() => window.aidd.showItemInFolder(publishStatus.docsPath!)}>Open docs</Button>}
+                </div>
               </CardContent>
             </Card>
 
