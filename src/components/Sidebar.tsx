@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, FolderGit2, HeartPulse, Home, ListChecks, PackageCheck, Settings, Sparkles, Puzzle, type LucideIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FolderGit2, HeartPulse, Home, ListChecks, PackageCheck, Settings, ShieldCheck, Sparkles, Puzzle, type LucideIcon } from 'lucide-react';
 import type { Screen } from '../main';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -12,16 +12,19 @@ interface SidebarProps {
   onToggleCollapsed?: () => void;
 }
 
-const primaryItems: Array<{ id: Screen; label: string; icon: LucideIcon }> = [
+type SidebarItem = { id: Screen; label: string; icon: LucideIcon };
+
+const primaryItems: SidebarItem[] = [
   { id: 'projects', label: 'Projects', icon: FolderGit2 },
   { id: 'home', label: 'Home', icon: Home },
   { id: 'foundation', label: 'Foundation', icon: ListChecks },
+  { id: 'standards', label: 'Standards', icon: ShieldCheck },
   { id: 'capabilities', label: 'Capabilities', icon: Sparkles },
   { id: 'components', label: 'Components', icon: Puzzle },
   { id: 'delivery-packages', label: 'Delivery', icon: PackageCheck }
 ];
 
-const utilityItems: Array<{ id: Screen; label: string; icon: LucideIcon }> = [
+const utilityItems: SidebarItem[] = [
   { id: 'validation', label: 'Health Check', icon: HeartPulse },
   { id: 'settings', label: 'Settings', icon: Settings }
 ];
@@ -76,7 +79,7 @@ export function Sidebar({ active, onChange, activeProject, collapsed = false, on
   );
 }
 
-function SidebarButton({ item, active, collapsed, onChange }: { item: { id: Screen; label: string; icon: LucideIcon }; active: Screen; collapsed: boolean; onChange: (screen: Screen) => void }) {
+function SidebarButton({ item, active, collapsed, onChange }: { item: SidebarItem; active: Screen; collapsed: boolean; onChange: (screen: Screen) => void }) {
   const Icon = item.icon;
   const isActive = active === item.id || (active === 'project-create' && item.id === 'projects') || (active === 'bundle-editor' && item.id === 'delivery-packages');
 

@@ -1,7 +1,21 @@
-# Standards
+---
+aidd:
+  type: standards
+  id: project-standards
+  title: Standards Overview
+  status: not-started
+  required: true
+  templateVersion: 0.8.0
+---
 
-Project-owned standards applied from AIDD profiles.
+# Project Standards
 
-## Applied Standards
+Use these standards to guide capabilities, components, delivery packages, implementation, and AI review.
 
-No standards profiles have been applied yet.
+## Sections
+
+- Coding Style
+- Security
+- Testing
+- Architecture
+- Hosting & Platform

@@ -2,16 +2,20 @@
 aidd:
   type: standards
   id: project-standards
-  title: Project Standards
+  title: Standards Overview
   status: not-started
   required: true
   templateVersion: 0.8.0
 ---
 
-# Standards
+# Project Standards
 
-TODO: Define the standards this project will use before creating components and capabilities.
+Use these standards to guide capabilities, components, delivery packages, implementation, and AI review.
 
-## Applied Standards
+## Sections
 
-No standards profiles have been applied yet.
+- Coding Style
+- Security
+- Testing
+- Architecture
+- Hosting & Platform

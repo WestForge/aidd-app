@@ -98,6 +98,8 @@ interface TrackedProject {
   name: string;
   description: string;
   path: string;
+  workspacePath?: string;
+  workspaceUpdatedAt?: string;
   templateId: string;
   templateVersion: string;
   createdAt: string;
@@ -246,6 +248,16 @@ interface FoundationDocument {
   body: string;
 }
 
+interface StandardSection {
+  id: string;
+  title: string;
+  fileName: string;
+  filePath: string;
+  status: SetupStepStatus;
+  required: boolean;
+  body: string;
+}
+
 interface ComponentContractInfo {
   path: string;
   version: number;
@@ -285,7 +297,7 @@ interface ComponentSourceDirectorySelection {
 
 interface ProjectSetupState {
   foundation: FoundationDocument[];
-  standards: { status: SetupStepStatus; filePath: string; body: string; profiles: string[] };
+  standards: { status: SetupStepStatus; filePath: string; body: string; profiles: string[]; sections: StandardSection[] };
   components: Array<{ slug: string; title: string; status?: string; sourceProjects?: string[]; source?: ComponentSourceConfig; contract?: ComponentContractInfo }>;
   capabilities: Array<{ slug: string; title: string; status?: string; components?: string[] }>;
   gitInitialized: boolean;
@@ -538,6 +550,14 @@ interface DefineStandardsInput {
   status: SetupStepStatus;
 }
 
+
+interface SaveStandardSectionInput {
+  projectPath: string;
+  fileName: string;
+  status: SetupStepStatus;
+  body: string;
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
@@ -590,6 +610,16 @@ async function readProjects(): Promise<TrackedProject[]> {
 async function writeProjects(projects: TrackedProject[]) {
   await fsp.mkdir(path.dirname(projectsStorePath()), { recursive: true });
   await fsp.writeFile(projectsStorePath(), JSON.stringify(projects, null, 2) + '\n', 'utf8');
+}
+
+async function updateTrackedProject(projectIdOrPath: string, updater: (project: TrackedProject) => TrackedProject) {
+  const projects = await readProjects();
+  const index = projects.findIndex((project) => project.id === projectIdOrPath || project.path === projectIdOrPath);
+  if (index === -1) throw new Error('Tracked project was not found.');
+  const updated = updater({ ...projects[index] });
+  projects[index] = updated;
+  await writeProjects(projects);
+  return updated;
 }
 
 function templatePathCandidates() {
@@ -705,6 +735,109 @@ function buildStandardsMarkdown(status: SetupStepStatus, body: string) {
   return `---\naidd:\n  type: standards\n  id: project-standards\n  title: Project Standards\n  status: ${status}\n  required: true\n  templateVersion: ${TEMPLATE_VERSION}\n  updatedAt: ${new Date().toISOString()}\n---\n\n${body.trim()}\n`;
 }
 
+
+const STANDARD_SECTION_DEFINITIONS = [
+  {
+    id: 'project-standards',
+    title: 'Standards Overview',
+    fileName: 'index.md',
+    required: true,
+    body: '# Project Standards\n\nUse these standards to guide capabilities, components, delivery packages, implementation, and AI review.\n\n## Sections\n\n- Coding Style\n- Security\n- Testing\n- Architecture\n- Hosting & Platform'
+  },
+  {
+    id: 'coding-style',
+    title: 'Coding Style',
+    fileName: '01-coding-style.md',
+    required: false,
+    body: '# Coding Style\n\nDefine the coding conventions people and AI agents should follow.\n\n## Rules\n\n- TODO: Define naming, formatting, linting, and code organisation expectations.\n\n## Avoid\n\n- TODO: Define patterns, shortcuts, or implementation habits to avoid.'
+  },
+  {
+    id: 'security',
+    title: 'Security',
+    fileName: '02-security.md',
+    required: false,
+    body: '# Security\n\nDefine the baseline security expectations for this project.\n\n## Rules\n\n- TODO: Define authentication, authorisation, secret handling, dependency, and data protection expectations.\n\n## Review Checks\n\n- TODO: Define what must be checked before security-sensitive work is accepted.'
+  },
+  {
+    id: 'testing',
+    title: 'Testing',
+    fileName: '03-testing.md',
+    required: false,
+    body: '# Testing\n\nDefine how changes should be verified before they are accepted.\n\n## Required Tests\n\n- TODO: Define unit, integration, end-to-end, accessibility, or manual verification expectations.\n\n## Evidence\n\n- TODO: Define what test results or review notes must be captured in delivery packages.'
+  },
+  {
+    id: 'architecture',
+    title: 'Architecture',
+    fileName: '04-architecture.md',
+    required: false,
+    body: '# Architecture\n\nDefine the architectural principles that should shape implementation decisions.\n\n## Principles\n\n- TODO: Define layering, boundaries, dependency direction, data ownership, and integration expectations.\n\n## Decision Rules\n\n- TODO: Define when an architecture decision record is required.'
+  },
+  {
+    id: 'hosting-platform',
+    title: 'Hosting & Platform',
+    fileName: '05-hosting-platform.md',
+    required: false,
+    body: '# Hosting & Platform\n\nDefine the runtime, hosting, deployment, and operational expectations for this project.\n\n## Platform Choices\n\n- TODO: Define hosting platform, environments, deployment approach, observability, and operational constraints.\n\n## Constraints\n\n- TODO: Define platform limits AI agents and delivery packages must respect.'
+  }
+] as const;
+
+function buildStandardSectionMarkdown(section: { id: string; title: string; status: SetupStepStatus; required?: boolean; body: string }) {
+  return `---\naidd:\n  type: standards\n  id: ${section.id}\n  title: ${section.title}\n  status: ${section.status}\n  required: ${section.required !== false}\n  templateVersion: ${TEMPLATE_VERSION}\n  updatedAt: ${new Date().toISOString()}\n---\n\n${section.body.trim()}\n`;
+}
+
+function standardSectionDone(section: StandardSection) {
+  return section.status === 'complete' || (section.required === false && section.status === 'skipped');
+}
+
+function deriveStandardsStatus(sections: StandardSection[]): SetupStepStatus {
+  if (!sections.length || sections.every((section) => section.status === 'not-started')) return 'not-started';
+  if (sections.every(standardSectionDone)) return 'complete';
+  if (sections.some((section) => section.status === 'in-review')) return 'in-review';
+  if (sections.some((section) => section.status === 'active')) return 'active';
+  if (sections.some((section) => section.status === 'deprecated')) return 'deprecated';
+  return 'draft';
+}
+
+function combineStandardsBody(sections: StandardSection[]) {
+  return sections
+    .map((section) => {
+      const body = section.body.trim() || `# ${section.title}\n\nTODO`;
+      return [`<!-- Source: foundation/standards/${section.fileName} -->`, body].join('\n\n');
+    })
+    .join('\n\n---\n\n');
+}
+
+async function readStandardSections(projectPath: string): Promise<StandardSection[]> {
+  const standardsDir = path.join(projectPath, 'foundation', 'standards');
+  const sections: StandardSection[] = [];
+
+  for (const definition of STANDARD_SECTION_DEFINITIONS) {
+    const filePath = path.join(standardsDir, definition.fileName);
+    const fileExists = await exists(filePath);
+    const raw = fileExists
+      ? await fsp.readFile(filePath, 'utf8')
+      : buildStandardSectionMarkdown({
+          id: definition.id,
+          title: definition.title,
+          status: 'not-started',
+          required: definition.required,
+          body: definition.body
+        });
+    const parsed = parseFrontmatter(raw);
+    sections.push({
+      id: parsed.id || definition.id,
+      title: parsed.title || definition.title,
+      fileName: definition.fileName,
+      filePath,
+      status: parsed.status,
+      required: fileExists ? parsed.required : definition.required,
+      body: parsed.body.trim() || definition.body
+    });
+  }
+
+  return sections;
+}
+
 async function fileStatus(filePath: string): Promise<SetupStepStatus> {
   if (!(await exists(filePath))) return 'not-started';
   const parsed = parseFrontmatter(await fsp.readFile(filePath, 'utf8'));
@@ -714,6 +847,7 @@ async function fileStatus(filePath: string): Promise<SetupStepStatus> {
 async function readFoundationDocuments(projectPath: string): Promise<FoundationDocument[]> {
   const foundationDir = 'foundation';
   const definitions = [
+    ['project-overview', 'Project Overview', '01-project-overview.md'],
     ['product-definition', 'Product definition', '02-product-definition.md'],
     ['audience-and-users', 'Audience & users', '03-audience-and-users.md'],
     ['goals-and-success-metrics', 'Goals & Success Metrics', '04-goals-and-success-metrics.md']
@@ -831,8 +965,8 @@ async function saveWorkflowDocument(input: SaveWorkflowDocumentInput): Promise<W
 
 async function readProjectSetup(projectPath: string): Promise<ProjectSetupState> {
   const standardsPath = path.join(projectPath, 'foundation', 'standards', 'index.md');
-  const standardsRaw = await exists(standardsPath) ? await fsp.readFile(standardsPath, 'utf8') : '# Standards\n\nTODO\n';
-  const standardsParsed = parseFrontmatter(standardsRaw);
+  const standardsSections = await readStandardSections(projectPath);
+  const standardsStatus = deriveStandardsStatus(standardsSections);
   let profiles: string[] = [];
   try {
     const standardsJson = await readJson<any>(path.join(projectPath, 'foundation', 'standards', 'standards.json'));
@@ -840,7 +974,7 @@ async function readProjectSetup(projectPath: string): Promise<ProjectSetupState>
   } catch {}
   return {
     foundation: await readFoundationDocuments(projectPath),
-    standards: { status: standardsParsed.status, filePath: standardsPath, body: standardsParsed.body, profiles },
+    standards: { status: standardsStatus, filePath: standardsPath, body: combineStandardsBody(standardsSections), profiles, sections: standardsSections },
     components: (await readEntities(projectPath, 'components', 'component.json')).concat(await readEntities(projectPath, 'modules', 'module.json')),
     capabilities: (await readEntities(projectPath, 'capabilities', 'capability.json')).map((cap: any) => ({ ...cap, components: cap.components || cap.modules || [] })),
     gitInitialized: await exists(path.join(projectPath, '.git'))
@@ -1001,6 +1135,7 @@ async function readProjectStatus(projectPath: string): Promise<ProjectStatus> {
   const manifest = await exists(manifestPath) ? await readJson<any>(manifestPath) : {};
   const foundationDir = 'foundation';
   const foundationFiles = [
+    ['overview', 'Project overview', '01-project-overview.md', 'Summarises what the project is, why it exists, and what success looks like.'],
     ['product', 'Product definition', '02-product-definition.md', 'Defines the product intent future work inherits.'],
     ['audience', 'Audience & users', '03-audience-and-users.md', 'Identifies who the product is for.'],
     ['goals', 'Goals & success metrics', '04-goals-and-success-metrics.md', 'Defines measurable outcomes used to judge delivery success.']
@@ -1016,7 +1151,8 @@ async function readProjectStatus(projectPath: string): Promise<ProjectStatus> {
   const capabilityCount = await dirCount(projectPath, 'capabilities', 'capability.json');
   const bundleCount = await deliveryBundleCount(projectPath);
   const gitInitialized = await exists(path.join(projectPath, '.git'));
-  const standardsStatus = await fileStatus(path.join(projectPath, 'foundation', 'standards', 'index.md'));
+  const standardSections = await readStandardSections(projectPath);
+  const standardsStatus = deriveStandardsStatus(standardSections);
   const standardsComplete = standardsStatus === 'complete';
 
   const setup: ProjectStatusItem[] = [
@@ -1432,6 +1568,7 @@ async function validateProjectDataIntegrity(projectPath: string, section: Projec
   await validateJsonIntegrity(projectPath, 'delivery/roadmap.json', section, false);
 
   const requiredMarkdown = [
+    'foundation/01-project-overview.md',
     'foundation/02-product-definition.md',
     'foundation/03-audience-and-users.md',
     'foundation/04-goals-and-success-metrics.md',
@@ -2447,6 +2584,7 @@ function markdownContentScore(body: string) {
   return body
     .replace(/^#\s+.*$/gm, '')
     .replace(/TODO:?/gi, '')
+    .replace(/Describe what this project is, why it exists, and what success looks like\.?/gi, '')
     .replace(/Describe what this system is and what product context every delivery package should inherit\.?/gi, '')
     .replace(/Describe what the system is, what it should make possible, and the product context every delivery package should inherit\.?/gi, '')
     .replace(/Describe who uses the system, who maintains it, and what outcomes matter to them\.?/gi, '')
@@ -2556,20 +2694,30 @@ function descriptionIsMissingOrPlaceholder(value: unknown) {
 }
 
 async function refreshProjectSummaryMetadata(projectPath: string, changes: string[], logs: ProjectRepairLogEntry[]) {
-  const productDefinitionPath = path.join(projectPath, 'foundation', '02-product-definition.md');
-  if (!(await exists(productDefinitionPath))) return;
+  const summarySources = [
+    path.join(projectPath, 'foundation', '01-project-overview.md'),
+    path.join(projectPath, 'foundation', '02-product-definition.md')
+  ];
 
-  const productBody = markdownBodyWithoutFrontmatter(await fsp.readFile(productDefinitionPath, 'utf8'));
-  const summary = summaryFromMarkdownBody(productBody);
-  if (!summary || descriptionIsMissingOrPlaceholder(summary)) return;
+  let summary = '';
+  for (const sourcePath of summarySources) {
+    if (!(await exists(sourcePath))) continue;
+    const body = markdownBodyWithoutFrontmatter(await fsp.readFile(sourcePath, 'utf8'));
+    const candidate = summaryFromMarkdownBody(body);
+    if (candidate && !descriptionIsMissingOrPlaceholder(candidate)) {
+      summary = candidate;
+      break;
+    }
+  }
+  if (!summary) return;
 
   const manifestPath = path.join(projectPath, 'aidd.template.json');
   const manifest = await readJsonSafe<any>(manifestPath);
   if (manifest.ok && descriptionIsMissingOrPlaceholder(manifest.data?.project?.description)) {
     manifest.data.project = { ...(manifest.data.project || {}), description: summary };
     await writeJson(manifestPath, manifest.data);
-    changes.push('Updated project summary metadata from Product Definition');
-    pushRepairLog(logs, 'success', 'data-repair', 'Updated project manifest summary from Product Definition.', { path: 'aidd.template.json' });
+    changes.push('Updated project summary metadata from Foundation context');
+    pushRepairLog(logs, 'success', 'data-repair', 'Updated project manifest summary from Foundation context.', { path: 'aidd.template.json' });
   }
 
   const projects = await readProjects();
@@ -2904,6 +3052,14 @@ async function repairProject(projectPath: string): Promise<ProjectRepairReport> 
   });
 
   await ensureMarkdown(
+    'foundation/01-project-overview.md',
+    'foundation',
+    'project-overview',
+    'Project Overview',
+    '# Project Overview\n\nDescribe what this project is, why it exists, and what success looks like.'
+  );
+
+  await ensureMarkdown(
     'foundation/02-product-definition.md',
     'foundation',
     'product-definition',
@@ -2927,13 +3083,16 @@ async function repairProject(projectPath: string): Promise<ProjectRepairReport> 
     '# Goals & Success Metrics\n\nDescribe the measurable goals, outcomes, or success signals this project should optimise for.'
   );
 
-  await ensureMarkdown(
-    'foundation/standards/index.md',
-    'standards',
-    'project-standards',
-    'Project Standards',
-    '# Project Standards\n\n## Software Types\n\n- TODO: Select the software types used by this project.\n\n## Design Standards\n\n- TODO: Select the software design standards that apply.\n\n## Coding, Testing, and Quality\n\n- TODO: Define coding style, testing expectations, and quality checks.'
-  );
+  for (const section of STANDARD_SECTION_DEFINITIONS) {
+    await ensureMarkdown(
+      `foundation/standards/${section.fileName}`,
+      'standards',
+      section.id,
+      section.title,
+      section.body,
+      section.required
+    );
+  }
 
   await ensureMarkdown(
     'foundation/delivery-planning/index.md',
@@ -2968,12 +3127,9 @@ async function repairProject(projectPath: string): Promise<ProjectRepairReport> 
     '# Delivery Packages\n\nDelivery packages are focused implementation slices that connect capability intent, component context, source code, acceptance checks, and handoff evidence.\n\n## Active delivery packages\n\nNo active delivery packages yet.'
   );
 
-  await restoreArchivedSummaryContent('common/01-project-overview.md', 'foundation/02-product-definition.md');
+  await restoreArchivedSummaryContent('common/01-project-overview.md', 'foundation/01-project-overview.md');
   await restoreArchivedSummaryContent('common/02-product-definition.md', 'foundation/02-product-definition.md');
   await restoreArchivedSummaryContent('common/03-audience-and-users.md', 'foundation/03-audience-and-users.md');
-  await restoreArchivedSummaryContent('foundation/01-project-overview.md', 'foundation/02-product-definition.md');
-  await mergeLegacyMarkdownConflict(projectPath, stamp, 'foundation/01-project-overview.md', 'foundation/02-product-definition.md', changes, logs);
-  await archiveObsoleteFoundation('foundation/01-project-overview.md');
   await archiveObsoleteFoundation('foundation/04-decisions.md');
   await archiveObsoleteFoundation('foundation/05-decision-ledger.md');
   await archiveObsoleteFoundation('foundation/06-delivery-rules.md');
@@ -4770,6 +4926,7 @@ function frontmatterValueAsString(value: unknown) {
 
 
 const FOUNDATION_REVIEW_FILES = new Set([
+  'foundation/01-project-overview.md',
   'foundation/02-product-definition.md',
   'foundation/03-audience-and-users.md',
   'foundation/04-goals-and-success-metrics.md'
@@ -4784,16 +4941,26 @@ async function readProjectName(root: string) {
 }
 
 async function readStandardsReviewMarkdown(projectPath: string) {
-  const standardsPath = path.join(projectPath, 'foundation', 'standards', 'index.md');
-  if (!(await exists(standardsPath))) {
-    return '_No project standards file was found._\n';
+  const sections = await readStandardSections(projectPath);
+  const included: string[] = [];
+
+  for (const section of sections) {
+    if (!(await exists(section.filePath))) continue;
+    const raw = await fsp.readFile(section.filePath, 'utf8');
+    if (!shouldIncludeInReviewBundle(raw)) continue;
+    const parsed = matter(raw);
+    included.push([
+      `## ${section.title}`,
+      '',
+      `Source: foundation/standards/${section.fileName}`,
+      `Status: ${section.status}`,
+      '',
+      parsed.content.trim() || '_No content captured._'
+    ].join('\n'));
   }
-  const raw = await fsp.readFile(standardsPath, 'utf8');
-  if (!shouldIncludeInReviewBundle(raw)) {
-    return '_Project standards were excluded from this review package._\n';
-  }
-  const parsed = matter(raw);
-  return parsed.content.trim() || '_Project standards file had no body content._';
+
+  if (!included.length) return '_No project standards files were found or included._\n';
+  return included.join('\n\n');
 }
 
 function buildFoundationReviewPackageReadme(input: { projectName: string; foundationFileCount: number }) {
@@ -4811,10 +4978,11 @@ Do not review or modify components, capabilities, delivery packages, source code
 
 Focus your review on:
 
+- clarity of project overview
 - clarity of product definition
 - audience and user understanding
 - goals and success metrics
-- consistency between product, audience, and goals
+- consistency between overview, product, audience, and goals
 - missing or unclear assumptions
 - pros and cons
 - usefulness for future component, capability, and delivery-package work
@@ -4827,6 +4995,7 @@ Review the Markdown files under \`foundation/\` and improve them so they are cle
 
 You may update only these files:
 
+- \`foundation/01-project-overview.md\`
 - \`foundation/02-product-definition.md\`
 - \`foundation/03-audience-and-users.md\`
 - \`foundation/04-goals-and-success-metrics.md\`
@@ -4856,6 +5025,7 @@ Do not return:
 
 \`\`\`txt
 foundation/
+  01-project-overview.md
   02-product-definition.md
   03-audience-and-users.md
   04-goals-and-success-metrics.md
@@ -4963,6 +5133,7 @@ async function createFoundationReviewPackage(projectPath: string): Promise<Found
     generatedBy: 'AIDD',
     outputIsOutsideProject: true,
     allowedReturnPaths: [
+      'foundation/01-project-overview.md',
       'foundation/02-product-definition.md',
       'foundation/03-audience-and-users.md',
       'foundation/04-goals-and-success-metrics.md',
@@ -5571,19 +5742,19 @@ async function updateCapability(input: UpdateCapabilityInput) {
 
 async function assertProjectFoundationReady(projectPath: string) {
   const foundation = await readFoundationDocuments(projectPath);
+  const standardSections = await readStandardSections(projectPath);
   const incompleteFoundation = foundation.filter((doc) => doc.required !== false && doc.status !== 'complete');
-  const standardsPath = path.join(projectPath, 'foundation', 'standards', 'index.md');
-  const standardsStatus = await fileStatus(standardsPath);
+  const incompleteStandards = standardSections.filter((section) => !standardSectionDone(section));
   const blockers: string[] = [];
   for (const doc of incompleteFoundation) blockers.push(`${doc.title} is ${doc.status.replace(/-/g, ' ')}`);
-  if (standardsStatus !== 'complete') blockers.push(`Project Standards are ${standardsStatus.replace(/-/g, ' ')}`);
+  for (const section of incompleteStandards) blockers.push(`${section.title} standard is ${section.status.replace(/-/g, ' ')}`);
   if (blockers.length) {
     throw new Error(`Project Context must be complete before creating a delivery package. Missing: ${blockers.join('; ')}`);
   }
-  return { foundation, standardsPath };
+  return { foundation, standardSections };
 }
 
-async function buildProjectFoundationSnapshot(projectPath: string, foundation: FoundationDocument[], standardsPath: string) {
+function buildProjectFoundationSnapshot(foundation: FoundationDocument[], standardSections: StandardSection[]) {
   const foundationSections = foundation.map((doc) => [
     `## ${doc.title}`,
     '',
@@ -5593,10 +5764,14 @@ async function buildProjectFoundationSnapshot(projectPath: string, foundation: F
     doc.body.trim() || '_No content captured._'
   ].join('\n'));
 
-  let standardsBody = '_No standards content captured._';
-  if (await exists(standardsPath)) {
-    standardsBody = parseFrontmatter(await fsp.readFile(standardsPath, 'utf8')).body.trim() || standardsBody;
-  }
+  const standardsSections = standardSections.map((section) => [
+    `## ${section.title}`,
+    '',
+    `- Status: ${section.status}`,
+    `- Source: foundation/standards/${section.fileName}`,
+    '',
+    section.body.trim() || '_No content captured._'
+  ].join('\n'));
 
   return [
     '## Project Context Snapshot',
@@ -5607,13 +5782,13 @@ async function buildProjectFoundationSnapshot(projectPath: string, foundation: F
     '',
     '## Project Standards Snapshot',
     '',
-    standardsBody
+    ...standardsSections
   ].join('\n');
 }
 
 async function createDeliveryPackageFromCapability(input: CreateDeliveryPackageFromCapabilityInput) {
-  const { foundation, standardsPath } = await assertProjectFoundationReady(input.projectPath);
-  const foundationSnapshot = await buildProjectFoundationSnapshot(input.projectPath, foundation, standardsPath);
+  const { foundation, standardSections } = await assertProjectFoundationReady(input.projectPath);
+  const foundationSnapshot = buildProjectFoundationSnapshot(foundation, standardSections);
   const capability = await readCapability({ projectPath: input.projectPath, slug: input.capabilitySlug });
   const existing = await readEntities(input.projectPath, 'delivery/packages', 'package.json');
   const nextNumber = existing.length + 1;
@@ -6313,6 +6488,36 @@ ipcMain.handle('project:selectFolder', async () => {
   return result.filePaths[0];
 });
 
+ipcMain.handle('project:selectWorkspaceDirectory', async (_event, projectIdOrPath: string) => {
+  const projects = await readProjects();
+  const project = projects.find((item) => item.id === projectIdOrPath || item.path === projectIdOrPath);
+  if (!project) throw new Error('Tracked project was not found.');
+
+  const result = await dialog.showOpenDialog({
+    title: 'Select workspace directory for AGENTS.md',
+    defaultPath: project.workspacePath || path.dirname(project.path),
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+
+  const workspacePath = result.filePaths[0];
+  return updateTrackedProject(projectIdOrPath, (current) => ({
+    ...current,
+    workspacePath,
+    workspaceUpdatedAt: new Date().toISOString(),
+    lastOpenedAt: new Date().toISOString()
+  }));
+});
+
+ipcMain.handle('project:clearWorkspaceDirectory', async (_event, projectIdOrPath: string) => {
+  return updateTrackedProject(projectIdOrPath, (current) => {
+    const next: TrackedProject = { ...current, lastOpenedAt: new Date().toISOString() };
+    delete next.workspacePath;
+    delete next.workspaceUpdatedAt;
+    return next;
+  });
+});
+
 ipcMain.handle('project:list', async () => readProjects());
 
 ipcMain.handle('project:forget', async (_event, projectId: string) => {
@@ -6371,12 +6576,17 @@ ipcMain.handle('project:create', async (_event, input: CreateProjectInput) => {
     StormUI: name
   });
 
-  await fsp.rm(path.join(projectPath, 'foundation', '01-project-overview.md'), { force: true }).catch(() => undefined);
+  await fsp.writeFile(path.join(projectPath, 'foundation', '01-project-overview.md'), buildFoundationMarkdown({
+    id: 'project-overview',
+    title: 'Project Overview',
+    status: input.description.trim() ? 'draft' : 'not-started',
+    body: `# Project Overview\n\n${input.description.trim() || 'Describe what this project is, why it exists, and what success looks like.'}`
+  }), 'utf8');
   await fsp.writeFile(path.join(projectPath, 'foundation', '02-product-definition.md'), buildFoundationMarkdown({
     id: 'product-definition',
     title: 'Product Definition',
-    status: input.description.trim() ? 'draft' : 'not-started',
-    body: `# Product Definition\n\n${input.description.trim() || 'Describe what this system is and what product context every delivery package should inherit.'}`
+    status: 'not-started',
+    body: '# Product Definition\n\nDescribe what this system is and what product context every delivery package should inherit.'
   }), 'utf8');
   await fsp.writeFile(path.join(projectPath, 'foundation', '04-goals-and-success-metrics.md'), buildFoundationMarkdown({
     id: 'goals-and-success-metrics',
@@ -6597,6 +6807,38 @@ ipcMain.handle('project:defineStandards', async (_event, input: DefineStandardsI
   await fsp.mkdir(standardsDir, { recursive: true });
   await fsp.writeFile(path.join(standardsDir, 'index.md'), buildStandardsMarkdown(input.status, input.body), 'utf8');
   await writeJson(path.join(standardsDir, 'standards.json'), { profiles: input.status === 'complete' ? ['project-defined'] : [], updatedAt: new Date().toISOString() });
+  await checkpointAndShareProjectAfterSave(input.projectPath);
+  return readProjectSetup(input.projectPath);
+});
+
+
+ipcMain.handle('project:saveStandardSection', async (_event, input: SaveStandardSectionInput) => {
+  const definition = STANDARD_SECTION_DEFINITIONS.find((section) => section.fileName === input.fileName);
+  if (!definition) throw new Error(`Unknown standards section: ${input.fileName}`);
+
+  const standardsDir = path.join(input.projectPath, 'foundation', 'standards');
+  await fsp.mkdir(standardsDir, { recursive: true });
+  await fsp.writeFile(path.join(standardsDir, definition.fileName), buildStandardSectionMarkdown({
+    id: definition.id,
+    title: definition.title,
+    status: input.status,
+    required: definition.required,
+    body: input.body
+  }), 'utf8');
+
+  const sections = await readStandardSections(input.projectPath);
+  const overallStatus = deriveStandardsStatus(sections);
+  await writeJson(path.join(standardsDir, 'standards.json'), {
+    profiles: overallStatus === 'complete' ? ['project-defined'] : [],
+    sections: sections.map((section) => ({
+      id: section.id,
+      fileName: section.fileName,
+      title: section.title,
+      status: section.status,
+      required: section.required
+    })),
+    updatedAt: new Date().toISOString()
+  });
   await checkpointAndShareProjectAfterSave(input.projectPath);
   return readProjectSetup(input.projectPath);
 });

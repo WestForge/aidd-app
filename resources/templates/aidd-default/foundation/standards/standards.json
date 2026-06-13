@@ -1,4 +1,11 @@
 {
   "profiles": [],
-  "updatedAt": null
+  "sections": [
+    { "id": "project-standards", "fileName": "index.md", "title": "Standards Overview", "status": "not-started", "required": true },
+    { "id": "coding-style", "fileName": "01-coding-style.md", "title": "Coding Style", "status": "not-started", "required": false },
+    { "id": "security", "fileName": "02-security.md", "title": "Security", "status": "not-started", "required": false },
+    { "id": "testing", "fileName": "03-testing.md", "title": "Testing", "status": "not-started", "required": false },
+    { "id": "architecture", "fileName": "04-architecture.md", "title": "Architecture", "status": "not-started", "required": false },
+    { "id": "hosting-platform", "fileName": "05-hosting-platform.md", "title": "Hosting & Platform", "status": "not-started", "required": false }
+  ]
 }

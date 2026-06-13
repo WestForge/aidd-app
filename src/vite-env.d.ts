@@ -183,6 +183,8 @@ interface AiddTrackedProject {
   name: string;
   description: string;
   path: string;
+  workspacePath?: string;
+  workspaceUpdatedAt?: string;
   templateId: string;
   templateVersion: string;
   createdAt: string;
@@ -319,6 +321,16 @@ interface AiddFoundationDocument {
   body: string;
 }
 
+interface AiddStandardSection {
+  id: string;
+  title: string;
+  fileName: string;
+  filePath: string;
+  status: AiddSetupStatus;
+  required: boolean;
+  body: string;
+}
+
 interface AiddComponentContractInfo {
   path: string;
   version: number;
@@ -374,7 +386,7 @@ interface AiddCapabilitySummary {
 
 interface AiddProjectSetupState {
   foundation: AiddFoundationDocument[];
-  standards: { status: AiddSetupStatus; filePath: string; body: string; profiles: string[] };
+  standards: { status: AiddSetupStatus; filePath: string; body: string; profiles: string[]; sections: AiddStandardSection[] };
   components: AiddComponentSummary[];
   capabilities: AiddCapabilitySummary[];
   gitInitialized: boolean;
@@ -389,6 +401,14 @@ interface AiddSaveFoundationInput {
 
 interface AiddDefineStandardsInput {
   projectPath: string;
+  body: string;
+  status: AiddSetupStatus;
+}
+
+
+interface AiddSaveStandardSectionInput {
+  projectPath: string;
+  fileName: string;
   body: string;
   status: AiddSetupStatus;
 }
@@ -682,6 +702,8 @@ interface Window {
     notify: (input: AiddNotifyInput) => Promise<boolean>;
     showItemInFolder: (filePath: string) => Promise<boolean>;
     selectProjectFolder: () => Promise<string | null>;
+    selectWorkspaceDirectory: (projectIdOrPath: string) => Promise<AiddTrackedProject | null>;
+    clearWorkspaceDirectory: (projectIdOrPath: string) => Promise<AiddTrackedProject>;
     listProjects: () => Promise<AiddTrackedProject[]>;
     forgetProject: (projectId: string) => Promise<AiddTrackedProject[]>;
     readProjectStatus: (projectPath: string) => Promise<AiddProjectStatus>;
@@ -708,6 +730,7 @@ interface Window {
     saveWorkflowDocument: (input: AiddSaveWorkflowDocumentInput) => Promise<AiddWorkflowDocument[]>;
     saveFoundationDocument: (input: AiddSaveFoundationInput) => Promise<AiddProjectSetupState>;
     defineStandards: (input: AiddDefineStandardsInput) => Promise<AiddProjectSetupState>;
+    saveStandardSection: (input: AiddSaveStandardSectionInput) => Promise<AiddProjectSetupState>;
     createComponent: (input: AiddCreateComponentInput) => Promise<AiddProjectSetupState>;
     readComponent: (input: AiddReadComponentInput) => Promise<AiddComponentDetail>;
     updateComponent: (input: AiddUpdateComponentInput) => Promise<AiddProjectSetupState>;

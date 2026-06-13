@@ -2,14 +2,18 @@ import {
   Archive,
   CheckCircle2,
   CircleDashed,
+  Code2,
   Eye,
   FileText,
+  Layers3,
   Pencil,
   PlayCircle,
   Puzzle,
+  ServerCog,
   ShieldCheck,
   SkipForward,
   Sparkles,
+  TestTube2,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -23,7 +27,6 @@ import {
 } from "./ui/card";
 import { Select } from "./ui/select";
 import { Textarea } from "./ui/textarea";
-import { Label } from "./ui/label";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { cn } from "../lib/utils";
 
@@ -31,6 +34,8 @@ type SetupStep = "foundation" | "standards" | "starting-point";
 
 interface SetupWorkflowProps {
   activeProject?: AiddTrackedProject | null;
+  initialStep?: SetupStep;
+  activeArea?: "foundation" | "standards";
   onOpenCapabilities: () => void;
   onOpenComponents: () => void;
 }
@@ -43,38 +48,6 @@ const statusOptions: AiddSetupStatus[] = [
   "deprecated",
   "complete",
   "skipped",
-];
-const softwareTypeOptions = [
-  "JavaScript / TypeScript",
-  "Java",
-  "C# / .NET",
-  "Python",
-  "C++",
-  "Unreal Engine",
-  "Web app",
-  "Desktop app",
-  "Mobile app",
-  "Service / API",
-];
-const designStandardOptions = [
-  "SOLID",
-  "Clean Architecture",
-  "Hexagonal Architecture",
-  "Domain-Driven Design",
-  "Event-driven design",
-  "CQRS",
-  "Repository pattern",
-];
-const qualityOptions = [
-  "Unit tests",
-  "Integration tests",
-  "End-to-end tests",
-  "UI testing",
-  "Accessibility checks",
-  "Static analysis",
-  "Linting",
-  "Formatting",
-  "Test scripts required in delivery packages",
 ];
 
 function statusLabel(status: string) {
@@ -94,76 +67,6 @@ function stepComplete(step: SetupStep, setup?: AiddProjectSetupState) {
     );
   if (step === "standards") return setup.standards.status === "complete";
   return setup.capabilities.length > 0 || setup.components.length > 0;
-}
-
-function toggleValue(
-  value: string,
-  values: string[],
-  setter: (next: string[]) => void,
-) {
-  setter(
-    values.includes(value)
-      ? values.filter((item) => item !== value)
-      : [...values, value],
-  );
-}
-
-function buildStandardsBody(
-  softwareTypes: string[],
-  designStandards: string[],
-  qualityStandards: string[],
-  projectSpecificNotes: string,
-) {
-  const notes = projectSpecificNotes.trim();
-  const sections = [
-    "# Project Standards",
-    "",
-    "These standards define the technical expectations used when creating components, capabilities, delivery packages, and AI reviews.",
-    "",
-    "## Software Types",
-    "",
-    softwareTypes.length
-      ? softwareTypes.map((item) => `- ${item}`).join("\n")
-      : "TODO: Select software types.",
-    "",
-    "## Software Design Standards",
-    "",
-    designStandards.length
-      ? designStandards.map((item) => `- ${item}`).join("\n")
-      : "TODO: Select design standards.",
-    "",
-    "## Coding, Testing, and Quality Rules",
-    "",
-    qualityStandards.length
-      ? qualityStandards.map((item) => `- ${item}`).join("\n")
-      : "TODO: Select coding and testing expectations.",
-    "",
-  ];
-
-  if (notes) sections.push("## Project-Specific Notes", "", notes, "");
-  return sections.join("\n");
-}
-
-function readMarkdownSection(body: string, heading: string) {
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = body.match(
-    new RegExp(`## ${escaped}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`, "i"),
-  );
-  return match ? match[1].trim() : "";
-}
-
-function readMarkdownListSection(body: string, heading: string) {
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = body.match(
-    new RegExp(`## ${escaped}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`, "i"),
-  );
-  if (!match) return [];
-  return match[1]
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("- "))
-    .map((line) => line.slice(2).trim())
-    .filter(Boolean);
 }
 
 const statusVisuals: Record<string, { icon: LucideIcon; className: string }> = {
@@ -375,6 +278,7 @@ function docIcon(fileName: string): LucideIcon {
 }
 
 function docShortTitle(fileName: string, fallback: string) {
+  if (fileName.includes("project-overview")) return "Overview";
   if (fileName.includes("product-definition")) return "Product";
   if (fileName.includes("audience")) return "Audience";
   if (fileName.includes("goals")) return "Goals";
@@ -382,31 +286,58 @@ function docShortTitle(fileName: string, fallback: string) {
 }
 
 function docSortWeight(fileName: string) {
-  if (fileName.includes("product-definition")) return 1;
-  if (fileName.includes("audience")) return 2;
-  if (fileName.includes("goals")) return 3;
+  if (fileName.includes("project-overview")) return 1;
+  if (fileName.includes("product-definition")) return 2;
+  if (fileName.includes("audience")) return 3;
+  if (fileName.includes("goals")) return 4;
   return 99;
+}
+
+
+function standardIcon(fileName: string): LucideIcon {
+  if (fileName.includes("coding")) return Code2;
+  if (fileName.includes("security")) return ShieldCheck;
+  if (fileName.includes("testing")) return TestTube2;
+  if (fileName.includes("architecture")) return Layers3;
+  if (fileName.includes("hosting")) return ServerCog;
+  return FileText;
+}
+
+function standardShortTitle(fileName: string, fallback: string) {
+  if (fileName === "index.md") return "Overview";
+  if (fileName.includes("coding")) return "Coding";
+  if (fileName.includes("security")) return "Security";
+  if (fileName.includes("testing")) return "Testing";
+  if (fileName.includes("architecture")) return "Architecture";
+  if (fileName.includes("hosting")) return "Hosting";
+  return fallback;
+}
+
+function standardSortWeight(fileName: string) {
+  if (fileName === "index.md") return 1;
+  const match = fileName.match(/^(\d+)/);
+  return match ? Number(match[1]) + 1 : 99;
 }
 
 export function SetupWorkflow({
   activeProject,
+  initialStep = "foundation",
+  activeArea = "foundation",
   onOpenCapabilities,
   onOpenComponents,
 }: SetupWorkflowProps) {
   const [setup, setSetup] = useState<AiddProjectSetupState | null>(null);
-  const [step, setStep] = useState<SetupStep>("foundation");
+  const [step, setStep] = useState<SetupStep>(initialStep);
   const [selectedFile, setSelectedFile] = useState<string>(
-    "02-product-definition.md",
+    "01-project-overview.md",
   );
   const [draftBody, setDraftBody] = useState("");
   const [draftStatus, setDraftStatus] =
     useState<AiddSetupStatus>("not-started");
-  const [standardsStatus, setStandardsStatus] =
+  const [selectedStandardFile, setSelectedStandardFile] = useState("index.md");
+  const [standardDraftBody, setStandardDraftBody] = useState("");
+  const [standardDraftStatus, setStandardDraftStatus] =
     useState<AiddSetupStatus>("not-started");
-  const [softwareTypes, setSoftwareTypes] = useState<string[]>([]);
-  const [designStandards, setDesignStandards] = useState<string[]>([]);
-  const [qualityStandards, setQualityStandards] = useState<string[]>([]);
-  const [projectSpecificNotes, setProjectSpecificNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [foundationDragFiles, setFoundationDragFiles] = useState<Record<string, string>>({});
@@ -422,15 +353,9 @@ export function SetupWorkflow({
     () => setup?.foundation.find((doc) => doc.fileName === selectedFile),
     [setup, selectedFile],
   );
-  const generatedStandardsBody = useMemo(
-    () =>
-      buildStandardsBody(
-        softwareTypes,
-        designStandards,
-        qualityStandards,
-        projectSpecificNotes,
-      ),
-    [softwareTypes, designStandards, qualityStandards, projectSpecificNotes],
+  const selectedStandardSection = useMemo(
+    () => setup?.standards.sections?.find((section) => section.fileName === selectedStandardFile),
+    [setup, selectedStandardFile],
   );
   const modelStarted = Boolean(
     setup && (setup.capabilities.length > 0 || setup.components.length > 0),
@@ -448,28 +373,14 @@ export function SetupWorkflow({
       setDraftBody(doc.body);
       setDraftStatus(doc.status);
     }
-    setStandardsStatus(next.standards.status);
-    setSoftwareTypes(
-      readMarkdownListSection(next.standards.body, "Software Types"),
-    );
-    setDesignStandards(
-      readMarkdownListSection(next.standards.body, "Software Design Standards"),
-    );
-    setQualityStandards(
-      [
-        ...readMarkdownListSection(
-          next.standards.body,
-          "Coding, Testing, and Quality Rules",
-        ),
-        ...readMarkdownListSection(
-          next.standards.body,
-          "Coding Style, Testing, and Verification",
-        ),
-      ].filter((value, index, values) => values.indexOf(value) === index),
-    );
-    setProjectSpecificNotes(
-      readMarkdownSection(next.standards.body, "Project-Specific Notes"),
-    );
+    const standard =
+      next.standards.sections?.find((item) => item.fileName === selectedStandardFile) ||
+      next.standards.sections?.[0];
+    if (standard) {
+      setSelectedStandardFile(standard.fileName);
+      setStandardDraftBody(standard.body);
+      setStandardDraftStatus(standard.status);
+    }
   };
 
   useEffect(() => {
@@ -478,10 +389,18 @@ export function SetupWorkflow({
     );
   }, [activeProject?.path]);
   useEffect(() => {
+    setStep(initialStep);
+  }, [initialStep]);
+  useEffect(() => {
     if (!selectedDoc) return;
     setDraftBody(selectedDoc.body);
     setDraftStatus(selectedDoc.status);
   }, [selectedDoc?.fileName]);
+  useEffect(() => {
+    if (!selectedStandardSection) return;
+    setStandardDraftBody(selectedStandardSection.body);
+    setStandardDraftStatus(selectedStandardSection.status);
+  }, [selectedStandardSection?.fileName]);
   useEffect(() => {
     if (modelStarted && step === "starting-point")
       setStep(
@@ -708,26 +627,32 @@ export function SetupWorkflow({
     }
   };
 
-  const saveStandards = async (statusOverride?: AiddSetupStatus) => {
-    if (!activeProject?.path) return;
-    const nextStatus = statusOverride ?? standardsStatus;
+  const saveStandardSection = async (statusOverride?: AiddSetupStatus) => {
+    if (!activeProject?.path || !selectedStandardSection) return;
+    const nextStatus = statusOverride ?? standardDraftStatus;
     setSaving(true);
     setError(null);
     try {
-      setSetup(
-        await window.aidd.defineStandards({
-          projectPath: activeProject.path,
-          body: generatedStandardsBody,
-          status: nextStatus,
-        }),
+      const nextSetup = await window.aidd.saveStandardSection({
+        projectPath: activeProject.path,
+        fileName: selectedStandardSection.fileName,
+        body: standardDraftBody,
+        status: nextStatus,
+      });
+      setSetup(nextSetup);
+      setStandardDraftStatus(nextStatus);
+      const savedSection = nextSetup.standards.sections?.find(
+        (section) => section.fileName === selectedStandardSection.fileName,
       );
-      setStandardsStatus(nextStatus);
+      if (savedSection) setStandardDraftBody(savedSection.body);
       void window.aidd.notify({
         title: "Saved",
         body:
           statusOverride === "complete"
-            ? "Standards saved and marked complete."
-            : "Standards saved.",
+            ? `${selectedStandardSection.title} saved and marked complete.`
+            : statusOverride === "skipped"
+              ? `${selectedStandardSection.title} skipped.`
+              : `${selectedStandardSection.title} saved.`,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -751,15 +676,9 @@ export function SetupWorkflow({
     );
   }
 
-  const steps: Array<{ id: SetupStep; title: string; icon: LucideIcon }> = [
-    { id: "foundation", title: "Foundation", icon: FileText },
-    { id: "standards", title: "Standards", icon: ShieldCheck },
-    ...(modelStarted
-      ? []
-      : [
-          { id: "starting-point" as SetupStep, title: "Start", icon: Sparkles },
-        ]),
-  ];
+  const startingPointSteps: Array<{ id: SetupStep; title: string; icon: LucideIcon }> = modelStarted
+    ? []
+    : [{ id: "starting-point", title: "Start", icon: Sparkles }];
   const orderedFoundationDocs =
     setup?.foundation
       .slice()
@@ -768,45 +687,39 @@ export function SetupWorkflow({
           docSortWeight(a.fileName) - docSortWeight(b.fileName) ||
           a.title.localeCompare(b.title),
       ) ?? [];
+  const orderedStandardSections =
+    setup?.standards.sections
+      ?.slice()
+      .sort(
+        (a, b) =>
+          standardSortWeight(a.fileName) - standardSortWeight(b.fileName) ||
+          a.title.localeCompare(b.title),
+      ) ?? [];
+  const pageTitle = activeArea === "standards" ? "Standards" : "Foundation";
+  const pageDescription =
+    activeArea === "standards"
+      ? "Define technical standards used by delivery packages, components, capabilities, and reviews."
+      : "Define project overview, product context, audience, and goals used by delivery packages.";
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <header className="flex h-14 shrink-0 items-center justify-between border-b px-4">
         <div>
-          <h1 className="text-lg font-semibold">Foundation</h1>
-          <p className="text-xs text-muted-foreground">
-            Define product context, audience, goals and standards used by
-            delivery packages.
-          </p>
+          <h1 className="text-lg font-semibold">{pageTitle}</h1>
+          <p className="text-xs text-muted-foreground">{pageDescription}</p>
         </div>
         <Button variant="outline" size="sm" onClick={load}>
           Refresh
         </Button>
       </header>
 
-      <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b bg-muted/30 px-4 py-2">
-        <div className="flex shrink-0 items-center gap-2">
-          {steps.map((item) => (
-            <RibbonTile
-              key={item.id}
-              title={item.title}
-              icon={item.icon}
-              selected={step === item.id}
-              status={
-                stepComplete(item.id, setup ?? undefined)
-                  ? "complete"
-                  : "not-started"
-              }
-              onClick={() => setStep(item.id)}
-            />
-          ))}
-        </div>
-
-        {orderedFoundationDocs.length > 0 && (
-          <div
-            className="flex shrink-0 items-center gap-2 border-l pl-3"
-            aria-label="Foundation context sections"
-          >
+      {activeArea === "foundation" && (
+        <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b bg-muted/30 px-4 py-2">
+          {orderedFoundationDocs.length > 0 && (
+            <div
+              className="flex shrink-0 items-center gap-2"
+              aria-label="Foundation context sections"
+            >
             {orderedFoundationDocs.map((doc) => (
               <FoundationDocumentTile
                 key={doc.fileName}
@@ -848,12 +761,50 @@ export function SetupWorkflow({
             />
           </div>
         )}
-      </div>
+
+          {startingPointSteps.length > 0 && (
+            <div className="flex shrink-0 items-center gap-2 border-l pl-3">
+              {startingPointSteps.map((item) => (
+                <RibbonTile
+                  key={item.id}
+                  title={item.title}
+                  icon={item.icon}
+                  selected={step === item.id}
+                  status={
+                    stepComplete(item.id, setup ?? undefined)
+                      ? "complete"
+                      : "not-started"
+                  }
+                  onClick={() => setStep(item.id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeArea === "standards" && orderedStandardSections.length > 0 && (
+        <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b bg-muted/30 px-4 py-2">
+          {orderedStandardSections.map((section) => (
+            <RibbonTile
+              key={section.fileName}
+              title={standardShortTitle(section.fileName, section.title)}
+              icon={standardIcon(section.fileName)}
+              selected={step === "standards" && selectedStandardFile === section.fileName}
+              status={section.status}
+              onClick={() => {
+                setStep("standards");
+                setSelectedStandardFile(section.fileName);
+              }}
+            />
+          ))}
+        </div>
+      )}
 
       {(error || foundationReviewError || foundationDragError) && (
         <div className="shrink-0 px-4 pt-3">
           <Alert variant="destructive">
-            <AlertTitle>Foundation error</AlertTitle>
+            <AlertTitle>{activeArea === "standards" ? "Standards error" : "Foundation error"}</AlertTitle>
             <AlertDescription>{error || foundationReviewError || foundationDragError}</AlertDescription>
           </Alert>
         </div>
@@ -915,98 +866,71 @@ export function SetupWorkflow({
           </div>
         )}
 
-        {step === "standards" && setup && (
-          <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-            <Card className="flex min-h-0 flex-col overflow-hidden rounded-md">
+        {step === "standards" && setup && selectedStandardSection && (
+          <div className="h-full min-h-0">
+            <Card className="flex h-full min-h-0 flex-col rounded-md">
               <CardHeader className="shrink-0 px-4 py-3">
-                <CardTitle className="text-base">Define Standards</CardTitle>
-                <CardDescription>
-                  Choose the technical standards that influence delivery
-                  planning and review.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden px-4 pb-4">
-                <div className="grid shrink-0 gap-2">
-                  <Label>Status</Label>
-                  <Select
-                    value={standardsStatus}
-                    onChange={(event) =>
-                      setStandardsStatus(event.target.value as AiddSetupStatus)
-                    }
-                  >
-                    {statusOptions.map((s) => (
-                      <option key={s} value={s}>
-                        {statusLabel(s)}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <div className="shrink-0 space-y-5 overflow-auto pr-1">
-                  <OptionPanel
-                    title="Software types"
-                    options={softwareTypeOptions}
-                    values={softwareTypes}
-                    setValues={setSoftwareTypes}
-                  />
-                  <OptionPanel
-                    title="Software design standards"
-                    options={designStandardOptions}
-                    values={designStandards}
-                    setValues={setDesignStandards}
-                  />
-                  <OptionPanel
-                    title="Coding, test, and quality rules"
-                    options={qualityOptions}
-                    values={qualityStandards}
-                    setValues={setQualityStandards}
-                  />
-                </div>
-                <div className="min-h-0 flex-1">
-                  <div className="flex h-full min-h-[360px] flex-col gap-2">
-                    <Label>Project-specific additions</Label>
-                    <Textarea
-                      className="h-full min-h-[320px] resize-none font-mono text-sm"
-                      value={projectSpecificNotes}
-                      onChange={(event) => setProjectSpecificNotes(event.target.value)}
-                    />
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <CardTitle className="text-base">
+                      {selectedStandardSection.title}
+                    </CardTitle>
+                    <CardDescription>
+                      Edit this standards section independently. Saved to foundation/standards/{selectedStandardSection.fileName}.
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={standardDraftStatus}
+                      onChange={(event) =>
+                        setStandardDraftStatus(event.target.value as AiddSetupStatus)
+                      }
+                    >
+                      {statusOptions.map((s) => (
+                        <option key={s} value={s}>
+                          {statusLabel(s)}
+                        </option>
+                      ))}
+                    </Select>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => saveStandardSection()}
+                      disabled={saving}
+                    >
+                      Save
+                    </Button>
+                    {!selectedStandardSection.required && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => saveStandardSection("skipped")}
+                        disabled={saving}
+                      >
+                        Skip
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      onClick={() => saveStandardSection("complete")}
+                      disabled={saving}
+                    >
+                      Save complete
+                    </Button>
                   </div>
                 </div>
-                <div className="flex shrink-0 gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => saveStandards()}
-                    disabled={saving}
-                  >
-                    Save Standards
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => saveStandards("complete")}
-                    disabled={saving}
-                  >
-                    Save complete
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="flex min-h-0 flex-col rounded-md">
-              <CardHeader className="px-4 py-3">
-                <CardTitle className="text-base">Generated Markdown</CardTitle>
-                <CardDescription>
-                  This is written to foundation/standards/index.md.
-                </CardDescription>
               </CardHeader>
               <CardContent className="min-h-0 flex-1 px-4 pb-4">
                 <Textarea
-                  className="h-full min-h-[420px] font-mono text-xs"
-                  value={generatedStandardsBody}
-                  readOnly
+                  className="h-full min-h-[520px] resize-none font-mono text-sm"
+                  value={standardDraftBody}
+                  onChange={(event) => setStandardDraftBody(event.target.value)}
                 />
               </CardContent>
             </Card>
           </div>
         )}
+
 
         {step === "starting-point" && setup && (
           <div className="grid gap-4 md:grid-cols-2">
@@ -1040,36 +964,5 @@ export function SetupWorkflow({
         )}
       </main>
     </div>
-  );
-}
-
-function OptionPanel({
-  title,
-  options,
-  values,
-  setValues,
-}: {
-  title: string;
-  options: string[];
-  values: string[];
-  setValues: (next: string[]) => void;
-}) {
-  return (
-    <section className="space-y-2">
-      <h3 className="text-sm font-medium">{title}</h3>
-      <div className="flex flex-wrap gap-2">
-        {options.map((item) => (
-          <Button
-            key={item}
-            type="button"
-            variant={values.includes(item) ? "secondary" : "outline"}
-            size="sm"
-            onClick={() => toggleValue(item, values, setValues)}
-          >
-            {item}
-          </Button>
-        ))}
-      </div>
-    </section>
   );
 }

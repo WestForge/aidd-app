@@ -17,7 +17,7 @@ import { Reviews } from './components/Reviews';
 import { Settings } from './components/Settings';
 import { ProjectValidation } from './components/ProjectValidation';
 
-export type Screen = 'projects' | 'project-create' | 'home' | 'foundation' | 'capabilities' | 'components' | 'delivery-packages' | 'bundle-editor' | 'reviews' | 'validation' | 'settings';
+export type Screen = 'projects' | 'project-create' | 'home' | 'foundation' | 'standards' | 'capabilities' | 'components' | 'delivery-packages' | 'bundle-editor' | 'reviews' | 'validation' | 'settings';
 
 type ThemeMode = 'system' | 'light' | 'dark';
 
@@ -148,7 +148,24 @@ function App() {
         {screen === 'projects' && <Projects projects={projects} activeProject={activeProject} onCreateProject={() => setScreen('project-create')} onOpenProject={(project) => { setActiveProject(project); setScreen('home'); }} onOpenExistingProject={openExistingProject} onForgetProject={forgetProject} />}
         {screen === 'project-create' && <ProjectCreate onCreated={projectCreated} onCancel={() => setScreen('projects')} />}
         {screen === 'home' && <Home packages={packages} selectedId={selectedId} onSelectPackage={selectPackage} onCreatePackage={createPackage} activeProject={activeProject} onOpenSetup={() => setScreen('foundation')} onOpenCapabilities={() => setScreen('capabilities')} onOpenComponents={() => setScreen('components')} onOpenDelivery={() => setScreen('delivery-packages')} />}
-        {screen === 'foundation' && <SetupWorkflow activeProject={activeProject} onOpenCapabilities={() => setScreen('capabilities')} onOpenComponents={() => setScreen('components')} />}
+        {screen === 'foundation' && (
+          <SetupWorkflow
+            activeProject={activeProject}
+            initialStep="foundation"
+            activeArea="foundation"
+            onOpenCapabilities={() => setScreen('capabilities')}
+            onOpenComponents={() => setScreen('components')}
+          />
+        )}
+        {screen === 'standards' && (
+          <SetupWorkflow
+            activeProject={activeProject}
+            initialStep="standards"
+            activeArea="standards"
+            onOpenCapabilities={() => setScreen('capabilities')}
+            onOpenComponents={() => setScreen('components')}
+          />
+        )}
         {screen === 'capabilities' && <Capabilities activeProject={activeProject} onDeliveryPackageCreated={openCreatedDeliveryPackage} initialCapabilitySlug={capabilityToOpen} onInitialCapabilityOpened={() => setCapabilityToOpen(null)} />}
         {screen === 'components' && <Components activeProject={activeProject} onOpenCapability={(slug) => { setCapabilityToOpen(slug); setScreen('capabilities'); }} />}
         {screen === 'delivery-packages' && <DeliveryPackages packages={packages} selectedId={selectedId} onSelectPackage={selectPackage} onCreatePackage={createPackage} activeProject={activeProject} />}
