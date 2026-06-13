@@ -253,9 +253,33 @@ interface ComponentContractInfo {
   blockers: string[];
 }
 
+type ComponentSourceDetectionConfidence = 'high' | 'medium' | 'low';
+
+interface ComponentSourceDetection {
+  suggestedType: string;
+  confidence: ComponentSourceDetectionConfidence;
+  detectedLanguages: string[];
+  detectedFrameworks: string[];
+  packageManager?: string;
+  reasons: string[];
+}
+
 interface ComponentSourceConfig {
   directory: string;
   type: string;
+  detection?: ComponentSourceDetection | null;
+}
+
+interface ComponentSourceDirectoryInput {
+  projectPath: string;
+  directory?: string;
+  currentDirectory?: string;
+}
+
+interface ComponentSourceDirectorySelection {
+  directory: string;
+  absolutePath: string;
+  detection: ComponentSourceDetection;
 }
 
 interface ProjectSetupState {
@@ -299,6 +323,25 @@ interface PrepareMarkdownDragFileInput {
   status?: SetupStepStatus | string;
   body: string;
   metadata?: Record<string, unknown>;
+}
+
+interface PrepareComponentContractDragFileInput {
+  projectPath: string;
+  slug: string;
+}
+
+interface ComponentReviewBundleResult {
+  filePath: string;
+  fileName: string;
+  componentCount: number;
+  componentFileCount: number;
+  foundationFileCount: number;
+  entryCount: number;
+}
+
+interface PackageComponentReviewInput {
+  projectPath: string;
+  slug: string;
 }
 
 interface ComponentSectionInput {
@@ -934,8 +977,8 @@ async function readProjectStatus(projectPath: string): Promise<ProjectStatus> {
   const standardsComplete = standardsStatus === 'complete';
 
   const setup: ProjectStatusItem[] = [
-    { id: 'foundation', label: 'Project Foundation started', complete: foundationStatuses.some((status) => status !== 'not-started'), detail: 'Shared context exists for the project.' },
-    { id: 'foundation-complete', label: 'Project Foundation complete', complete: foundation.every((item) => item.complete), detail: 'All required foundation sections have useful content.' },
+    { id: 'foundation', label: 'Project Context started', complete: foundationStatuses.some((status) => status !== 'not-started'), detail: 'Shared context exists for the project.' },
+    { id: 'foundation-complete', label: 'Project Context complete', complete: foundation.every((item) => item.complete), detail: 'All required foundation sections have useful content.' },
     { id: 'standards', label: 'Project Standards defined', complete: standardsComplete, detail: standardsComplete ? 'Standards are marked complete.' : 'Define standards before creating components and capabilities.' },
     { id: 'capability', label: 'First capability created', complete: capabilityCount > 0, detail: `${capabilityCount} capabilit${capabilityCount === 1 ? 'y' : 'ies'} found.` },
     { id: 'component', label: 'First component created', complete: componentCount > 0, detail: `${componentCount} component${componentCount === 1 ? '' : 's'} found.` },
@@ -956,7 +999,7 @@ async function readProjectStatus(projectPath: string): Promise<ProjectStatus> {
   } else if (!foundation.every((item) => item.complete)) {
     status = 'setting-up';
     label = 'Setting up';
-    nextAction = 'Complete the Project Foundation.';
+    nextAction = 'Complete the Project Context.';
   } else if (!standardsComplete) {
     status = 'setting-up';
     label = 'Setting up';
@@ -3328,10 +3371,100 @@ function buildComponentIndexMarkdown(input: { slug: string; title: string; statu
 
 type NormalisedComponentSection = ReturnType<typeof normaliseComponentSections>[number];
 
+const COMPONENT_SOURCE_TYPES = new Set([
+  'webapp',
+  'desktop-app',
+  'plugin',
+  'library',
+  'service',
+  'api',
+  'cli',
+  'game-module',
+  'shared-module',
+  'test-suite',
+  'other'
+]);
+
+const SOURCE_SCAN_IGNORED_DIRECTORIES = new Set([
+  '.git',
+  '.hg',
+  '.svn',
+  '.idea',
+  '.vscode',
+  'node_modules',
+  'dist',
+  'build',
+  'out',
+  'coverage',
+  '.next',
+  '.nuxt',
+  '.svelte-kit',
+  '.turbo',
+  '.cache',
+  'bin',
+  'obj',
+  'Intermediate',
+  'Saved',
+  'Binaries'
+]);
+
+const SOURCE_LANGUAGE_BY_EXTENSION: Record<string, string> = {
+  '.ts': 'TypeScript',
+  '.tsx': 'TypeScript React',
+  '.js': 'JavaScript',
+  '.jsx': 'JavaScript React',
+  '.mjs': 'JavaScript',
+  '.cjs': 'JavaScript',
+  '.vue': 'Vue',
+  '.svelte': 'Svelte',
+  '.astro': 'Astro',
+  '.cs': 'C#',
+  '.cpp': 'C++',
+  '.cc': 'C++',
+  '.cxx': 'C++',
+  '.h': 'C/C++ Header',
+  '.hpp': 'C++ Header',
+  '.csproj': 'C# Project',
+  '.py': 'Python',
+  '.go': 'Go',
+  '.rs': 'Rust',
+  '.java': 'Java',
+  '.kt': 'Kotlin',
+  '.swift': 'Swift',
+  '.php': 'PHP',
+  '.rb': 'Ruby',
+  '.mdx': 'MDX',
+  '.md': 'Markdown'
+};
+
+function normaliseComponentSourceDetection(input?: Partial<ComponentSourceDetection> | null): ComponentSourceDetection | null {
+  if (!input) return null;
+  const reasons = Array.isArray(input.reasons) ? input.reasons.map(String).map((item) => item.trim()).filter(Boolean) : [];
+  const detectedLanguages = Array.isArray(input.detectedLanguages) ? input.detectedLanguages.map(String).map((item) => item.trim()).filter(Boolean) : [];
+  const detectedFrameworks = Array.isArray(input.detectedFrameworks) ? input.detectedFrameworks.map(String).map((item) => item.trim()).filter(Boolean) : [];
+  const suggestedType = normaliseComponentSourceType(input.suggestedType);
+  const confidence = input.confidence === 'high' || input.confidence === 'medium' || input.confidence === 'low' ? input.confidence : 'low';
+  if (!reasons.length && !detectedLanguages.length && !detectedFrameworks.length && suggestedType === 'other') return null;
+  return {
+    suggestedType,
+    confidence,
+    detectedLanguages: Array.from(new Set(detectedLanguages)),
+    detectedFrameworks: Array.from(new Set(detectedFrameworks)),
+    ...(input.packageManager ? { packageManager: String(input.packageManager) } : {}),
+    reasons
+  };
+}
+
+function normaliseComponentSourceType(value?: string | null) {
+  const normalised = String(value || '').trim() || 'other';
+  return COMPONENT_SOURCE_TYPES.has(normalised) ? normalised : 'other';
+}
+
 function normaliseComponentSource(input?: Partial<ComponentSourceConfig> | null): ComponentSourceConfig {
   return {
     directory: String(input?.directory || '').trim().replace(/\\/g, '/'),
-    type: String(input?.type || '').trim() || 'other'
+    type: normaliseComponentSourceType(input?.type),
+    detection: normaliseComponentSourceDetection((input as any)?.detection)
   };
 }
 
@@ -3341,10 +3474,262 @@ function componentSourceIsConfigured(source?: Partial<ComponentSourceConfig> | n
 
 function componentSourceDisplay(source: ComponentSourceConfig) {
   if (!componentSourceIsConfigured(source)) return 'Source location has not been configured for this component.';
-  return [
+  const detection = normaliseComponentSourceDetection(source.detection);
+  const lines = [
     `- Type: \`${source.type || 'other'}\``,
     `- Directory: \`${source.directory}\``
-  ].join('\n');
+  ];
+  if (detection) {
+    lines.push(`- Detection confidence: \`${detection.confidence}\``);
+    lines.push(`- Suggested type: \`${detection.suggestedType}\``);
+    if (detection.packageManager) lines.push(`- Package manager: \`${detection.packageManager}\``);
+    if (detection.detectedFrameworks.length) lines.push(`- Detected frameworks: ${detection.detectedFrameworks.map((item) => `\`${item}\``).join(', ')}`);
+    if (detection.detectedLanguages.length) lines.push(`- Detected languages: ${detection.detectedLanguages.map((item) => `\`${item}\``).join(', ')}`);
+    if (detection.reasons.length) {
+      lines.push('- Detection evidence:');
+      for (const reason of detection.reasons) lines.push(`  - ${reason}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function componentSourceDirectoryToStoredPath(projectPath: string, absolutePath: string) {
+  const relative = path.relative(projectPath, absolutePath);
+  if (relative === '') return '.';
+  if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+    return normaliseRelativePath(relative);
+  }
+  return path.resolve(absolutePath).replace(/\\/g, '/');
+}
+
+function resolveComponentSourceDirectory(projectPath: string, sourceDirectory?: string | null) {
+  const value = String(sourceDirectory || '').trim();
+  if (!value) return projectPath;
+  return path.isAbsolute(value) ? value : path.resolve(projectPath, value);
+}
+
+async function collectSourceFileEvidence(root: string, maxDepth = 5, maxFiles = 2500) {
+  const files: string[] = [];
+  const extensionCounts = new Map<string, number>();
+
+  async function visit(dir: string, depth: number) {
+    if (files.length >= maxFiles || depth > maxDepth) return;
+    let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }> = [];
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (files.length >= maxFiles) break;
+      if (entry.isDirectory()) {
+        if (SOURCE_SCAN_IGNORED_DIRECTORIES.has(entry.name)) continue;
+        await visit(path.join(dir, entry.name), depth + 1);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const absolute = path.join(dir, entry.name);
+      const relative = normaliseRelativePath(path.relative(root, absolute));
+      files.push(relative);
+      const lowerName = entry.name.toLowerCase();
+      const extension = lowerName.endsWith('.build.cs') ? '.build.cs' : path.extname(lowerName);
+      if (extension) extensionCounts.set(extension, (extensionCounts.get(extension) || 0) + 1);
+    }
+  }
+
+  await visit(root, 0);
+  return { files, extensionCounts };
+}
+
+async function readJsonIfPresent(filePath: string): Promise<any | null> {
+  try {
+    return JSON.parse(await fsp.readFile(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function dependencyNames(packageJson: any) {
+  const groups = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
+  return new Set(groups.flatMap((group) => Object.keys(packageJson?.[group] || {})));
+}
+
+function detectPackageManager(files: Set<string>) {
+  if (files.has('bun.lockb') || files.has('bun.lock')) return 'bun';
+  if (files.has('pnpm-lock.yaml')) return 'pnpm';
+  if (files.has('yarn.lock')) return 'yarn';
+  if (files.has('package-lock.json')) return 'npm';
+  return undefined;
+}
+
+function topLanguages(extensionCounts: Map<string, number>) {
+  return Array.from(extensionCounts.entries())
+    .map(([extension, count]) => ({ language: SOURCE_LANGUAGE_BY_EXTENSION[extension], count }))
+    .filter((item): item is { language: string; count: number } => Boolean(item.language))
+    .sort((a, b) => b.count - a.count)
+    .map((item) => item.language)
+    .filter((language, index, all) => all.indexOf(language) === index)
+    .slice(0, 6);
+}
+
+async function detectComponentSourceDirectory(directoryPath: string): Promise<ComponentSourceDetection> {
+  const root = path.resolve(directoryPath);
+  const { files, extensionCounts } = await collectSourceFileEvidence(root);
+  const fileSet = new Set(files.map((file) => file.toLowerCase()));
+  const basenames = new Set(files.map((file) => path.basename(file).toLowerCase()));
+  const packageJson = await readJsonIfPresent(path.join(root, 'package.json'));
+  const deps = dependencyNames(packageJson);
+  const reasons: string[] = [];
+  const frameworks = new Set<string>();
+  const languages = topLanguages(extensionCounts);
+  const packageManager = detectPackageManager(fileSet);
+
+  const hasFile = (fileName: string) => fileSet.has(fileName.toLowerCase()) || basenames.has(fileName.toLowerCase());
+  const hasAnyFile = (...fileNames: string[]) => fileNames.some(hasFile);
+  const hasDep = (...names: string[]) => names.some((name) => deps.has(name));
+  const hasRelativeMatch = (predicate: (file: string) => boolean) => files.some((file) => predicate(file.toLowerCase()));
+
+  let suggestedType = 'other';
+  let confidence: ComponentSourceDetectionConfidence = 'low';
+  let confidenceRank = 1;
+  const confidenceRanks: Record<ComponentSourceDetectionConfidence, number> = { low: 1, medium: 2, high: 3 };
+
+  const useSuggestion = (type: string, nextConfidence: ComponentSourceDetectionConfidence, reason: string) => {
+    const nextRank = confidenceRanks[nextConfidence];
+    if (nextRank >= confidenceRank) {
+      suggestedType = type;
+      confidence = nextConfidence;
+      confidenceRank = nextRank;
+    }
+    reasons.push(reason);
+  };
+
+  if (packageJson) reasons.push('package.json found.');
+  if (packageManager) reasons.push(`${packageManager} lockfile found.`);
+
+  if (hasAnyFile('tauri.conf.json') || hasRelativeMatch((file) => file.endsWith('/tauri.conf.json'))) {
+    frameworks.add('Tauri');
+    useSuggestion('desktop-app', 'high', 'Tauri configuration found.');
+  }
+  if (hasDep('electron') || hasAnyFile('electron-builder.json', 'electron.vite.config.ts', 'electron.vite.config.js')) {
+    frameworks.add('Electron');
+    useSuggestion('desktop-app', 'high', 'Electron dependency or configuration found.');
+  }
+
+  if (hasRelativeMatch((file) => file.endsWith('.uproject'))) {
+    frameworks.add('Unreal Engine');
+    useSuggestion('game-module', 'high', 'Unreal .uproject file found.');
+  }
+  if (hasRelativeMatch((file) => file.endsWith('.uplugin'))) {
+    frameworks.add('Unreal Plugin');
+    useSuggestion('plugin', 'high', 'Unreal .uplugin file found.');
+  }
+  if (hasRelativeMatch((file) => file.endsWith('.build.cs'))) {
+    frameworks.add('Unreal Build');
+    useSuggestion(suggestedType === 'plugin' ? 'plugin' : 'game-module', 'medium', 'Unreal Build.cs file found.');
+  }
+
+  const manifest = await readJsonIfPresent(path.join(root, 'manifest.json'));
+  if (manifest?.manifest_version && (manifest.background || manifest.content_scripts || manifest.action || manifest.browser_action)) {
+    frameworks.add('Browser extension');
+    useSuggestion('plugin', 'high', 'Browser extension manifest found.');
+  }
+
+  if (hasDep('next') || hasAnyFile('next.config.js', 'next.config.mjs', 'next.config.ts')) {
+    frameworks.add('Next.js');
+    useSuggestion('webapp', 'high', 'Next.js dependency or configuration found.');
+  }
+  if (hasDep('astro') || hasAnyFile('astro.config.js', 'astro.config.mjs', 'astro.config.ts')) {
+    frameworks.add('Astro');
+    useSuggestion('webapp', 'high', 'Astro dependency or configuration found.');
+  }
+  if (hasDep('@angular/core') || hasAnyFile('angular.json')) {
+    frameworks.add('Angular');
+    useSuggestion('webapp', 'high', 'Angular dependency or workspace file found.');
+  }
+  if (hasDep('vite') || hasAnyFile('vite.config.js', 'vite.config.mjs', 'vite.config.ts')) {
+    frameworks.add('Vite');
+    if (hasDep('react')) frameworks.add('React');
+    if (hasDep('vue')) frameworks.add('Vue');
+    if (hasDep('svelte')) frameworks.add('Svelte');
+    useSuggestion('webapp', confidenceRank >= confidenceRanks.high ? 'medium' : 'high', 'Vite configuration or dependency found.');
+  }
+  if (hasDep('react') || hasDep('vue') || hasDep('svelte') || hasDep('solid-js')) {
+    if (hasDep('react')) frameworks.add('React');
+    if (hasDep('vue')) frameworks.add('Vue');
+    if (hasDep('svelte')) frameworks.add('Svelte');
+    if (hasDep('solid-js')) frameworks.add('Solid');
+    useSuggestion('webapp', confidenceRank >= confidenceRanks.high ? 'medium' : 'medium', 'Front-end framework dependency found.');
+  }
+
+  if (packageJson?.bin && Object.keys(packageJson.bin).length) {
+    useSuggestion('cli', 'high', 'package.json exposes a bin entry.');
+  }
+
+  if (hasDep('express', 'fastify', '@nestjs/core', 'hono', 'koa', 'elysia', '@apollo/server') || hasAnyFile('openapi.yaml', 'openapi.yml', 'swagger.yaml', 'swagger.yml')) {
+    if (hasDep('@nestjs/core')) frameworks.add('NestJS');
+    if (hasDep('express')) frameworks.add('Express');
+    if (hasDep('fastify')) frameworks.add('Fastify');
+    if (hasDep('hono')) frameworks.add('Hono');
+    if (hasDep('koa')) frameworks.add('Koa');
+    useSuggestion(suggestedType === 'webapp' || suggestedType === 'desktop-app' ? suggestedType : 'api', suggestedType === 'webapp' || suggestedType === 'desktop-app' ? 'medium' : 'high', 'API/server framework or OpenAPI file found.');
+  }
+
+  if (hasAnyFile('playwright.config.ts', 'playwright.config.js', 'cypress.config.ts', 'cypress.config.js', 'vitest.config.ts', 'vitest.config.js', 'jest.config.ts', 'jest.config.js')) {
+    frameworks.add('Test tooling');
+    if (suggestedType === 'other') useSuggestion('test-suite', 'medium', 'Dedicated test tool configuration found.');
+    else reasons.push('Test tool configuration found.');
+  }
+
+  const hasLibraryShape = Boolean(packageJson?.exports || packageJson?.types || packageJson?.typings || packageJson?.main || hasAnyFile('index.ts', 'index.js', 'src/index.ts', 'src/index.js'));
+  if (hasLibraryShape && suggestedType === 'other') {
+    useSuggestion('library', packageJson ? 'medium' : 'low', 'Library-style entry point or package metadata found.');
+  }
+
+  if (!reasons.length) {
+    reasons.push(files.length ? 'Source files found, but no strong framework indicators were detected.' : 'No source files or known project indicators were detected.');
+  }
+
+  return {
+    suggestedType: normaliseComponentSourceType(suggestedType),
+    confidence,
+    detectedLanguages: languages,
+    detectedFrameworks: Array.from(frameworks).sort(),
+    ...(packageManager ? { packageManager } : {}),
+    reasons: Array.from(new Set(reasons)).slice(0, 12)
+  };
+}
+
+async function selectComponentSourceDirectory(input: ComponentSourceDirectoryInput): Promise<ComponentSourceDirectorySelection | null> {
+  const currentDirectory = input.currentDirectory || input.directory || '';
+  const defaultPath = currentDirectory ? resolveComponentSourceDirectory(input.projectPath, currentDirectory) : input.projectPath;
+  const result = await dialog.showOpenDialog({
+    title: 'Select component source directory',
+    defaultPath: await exists(defaultPath) ? defaultPath : input.projectPath,
+    properties: ['openDirectory']
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  const absolutePath = path.resolve(result.filePaths[0]);
+  const detection = await detectComponentSourceDirectory(absolutePath);
+  return {
+    directory: componentSourceDirectoryToStoredPath(input.projectPath, absolutePath),
+    absolutePath: absolutePath.replace(/\\/g, '/'),
+    detection
+  };
+}
+
+async function detectStoredComponentSourceDirectory(input: ComponentSourceDirectoryInput): Promise<ComponentSourceDirectorySelection> {
+  if (!input.directory?.trim()) throw new Error('Source directory is required.');
+  const absolutePath = resolveComponentSourceDirectory(input.projectPath, input.directory);
+  if (!(await exists(absolutePath))) throw new Error(`Source directory does not exist: ${input.directory}`);
+  const detection = await detectComponentSourceDirectory(absolutePath);
+  return {
+    directory: componentSourceDirectoryToStoredPath(input.projectPath, absolutePath),
+    absolutePath: absolutePath.replace(/\\/g, '/'),
+    detection
+  };
 }
 
 type ComponentContractStatus = ComponentContractInfo['status'];
@@ -3354,16 +3739,8 @@ function componentSectionIsContractReady(section: NormalisedComponentSection) {
   return section.status === 'complete' || section.status === 'active';
 }
 
-function componentContractBlockers(sections: NormalisedComponentSection[]) {
-  return sections.flatMap((section) => {
-    if (section.status === 'skipped' && !section.skipReason?.trim()) {
-      return [`${section.title} is skipped but needs a reason.`];
-    }
-    if (!componentSectionIsContractReady(section)) {
-      return [`${section.title} must be ready or skipped.`];
-    }
-    return [];
-  });
+function componentContractBlockers(_sections: NormalisedComponentSection[]) {
+  return [] as string[];
 }
 
 function componentContractSource(input: { slug: string; title: string; status: string; sourceProjects: string[]; source: ComponentSourceConfig; capabilities: string[]; sections: NormalisedComponentSection[] }) {
@@ -3473,7 +3850,7 @@ function buildComponentContractMarkdown(input: { slug: string; title: string; st
         key: section.key,
         fileName: section.fileName,
         status: section.status || 'not-started',
-        skipReason: section.status === 'skipped' ? section.skipReason?.trim() || '' : undefined
+        ...(section.status === 'skipped' ? { skipReason: section.skipReason?.trim() || '' } : {})
       })),
       sourceProjects: input.sourceProjects,
       capabilitiesSupported: input.capabilities,
@@ -3809,7 +4186,7 @@ async function createComponent(root: string, title: string, description?: string
       fileName: section.fileName,
       status: section.status || 'not-started',
       required: true,
-      skipReason: section.status === 'skipped' ? section.skipReason?.trim() || '' : undefined
+      ...(section.status === 'skipped' ? { skipReason: section.skipReason?.trim() || '' } : {})
     })),
     contract: {
       path: 'component.md',
@@ -3998,7 +4375,7 @@ async function updateComponent(input: UpdateComponentInput) {
       fileName: section.fileName,
       status: section.status || 'not-started',
       required: true,
-      skipReason: section.status === 'skipped' ? section.skipReason?.trim() || '' : undefined
+      ...(section.status === 'skipped' ? { skipReason: section.skipReason?.trim() || '' } : {})
     })),
     contract: {
       ...previousContract,
@@ -4032,11 +4409,6 @@ async function generateComponentContract(input: GenerateComponentContractInput) 
   const manifest = await readJson<any>(manifestPath);
   const component = await readComponent({ projectPath: input.projectPath, slug });
   const sections = normaliseComponentSections(component.sections, {});
-  const blockers = componentContractBlockers(sections);
-  if (blockers.length) {
-    throw new Error(`Component contract is not ready: ${blockers.join(' ')}`);
-  }
-
   const sourceHash = computeComponentContractHash({
     slug,
     title: component.title,
@@ -4080,7 +4452,7 @@ async function generateComponentContract(input: GenerateComponentContractInput) 
         title: section.title,
         fileName: section.fileName,
         status: section.status || 'not-started',
-        skipReason: section.status === 'skipped' ? section.skipReason?.trim() || '' : undefined
+        ...(section.status === 'skipped' ? { skipReason: section.skipReason?.trim() || '' } : {})
       }))
     }
   });
@@ -4089,6 +4461,434 @@ async function generateComponentContract(input: GenerateComponentContractInput) 
   return readComponent({ projectPath: input.projectPath, slug });
 }
 
+
+
+interface ZipEntryInput {
+  name: string;
+  data: Buffer;
+  modifiedAt?: Date;
+}
+
+const ZIP_CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(buffer: Buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc = ZIP_CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function zipDosDateTime(date = new Date()) {
+  const year = Math.max(1980, date.getFullYear());
+  return {
+    dosTime: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
+    dosDate: ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()
+  };
+}
+
+function safeZipEntryName(value: string) {
+  const normalised = normaliseRelativePath(value).replace(/^\/+/, '');
+  const parts = normalised.split('/').filter(Boolean);
+  if (!parts.length || parts.some((part) => part === '.' || part === '..') || path.isAbsolute(value)) {
+    throw new Error(`Unsafe zip entry path: ${value}`);
+  }
+  return parts.join('/');
+}
+
+async function writeZipFile(filePath: string, entries: ZipEntryInput[]) {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+  const sortedEntries = [...entries].sort((a, b) => a.name.localeCompare(b.name));
+
+  for (const entry of sortedEntries) {
+    const entryName = safeZipEntryName(entry.name);
+    const nameBuffer = Buffer.from(entryName, 'utf8');
+    const data = entry.data;
+    const crc = crc32(data);
+    const { dosTime, dosDate } = zipDosDateTime(entry.modifiedAt || new Date());
+
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0x0800, 6);
+    localHeader.writeUInt16LE(0, 8);
+    localHeader.writeUInt16LE(dosTime, 10);
+    localHeader.writeUInt16LE(dosDate, 12);
+    localHeader.writeUInt32LE(crc, 14);
+    localHeader.writeUInt32LE(data.length, 18);
+    localHeader.writeUInt32LE(data.length, 22);
+    localHeader.writeUInt16LE(nameBuffer.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+
+    localParts.push(localHeader, nameBuffer, data);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0x0800, 8);
+    centralHeader.writeUInt16LE(0, 10);
+    centralHeader.writeUInt16LE(dosTime, 12);
+    centralHeader.writeUInt16LE(dosDate, 14);
+    centralHeader.writeUInt32LE(crc, 16);
+    centralHeader.writeUInt32LE(data.length, 20);
+    centralHeader.writeUInt32LE(data.length, 24);
+    centralHeader.writeUInt16LE(nameBuffer.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+    centralParts.push(centralHeader, nameBuffer);
+
+    offset += localHeader.length + nameBuffer.length + data.length;
+  }
+
+  const centralOffset = offset;
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(sortedEntries.length, 8);
+  end.writeUInt16LE(sortedEntries.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  end.writeUInt16LE(0, 20);
+
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  await fsp.writeFile(filePath, Buffer.concat([...localParts, centralDirectory, end]));
+}
+
+function shouldIncludeInReviewBundle(raw: string) {
+  try {
+    const parsed = matter(raw || '');
+    const data = (parsed.data || {}) as any;
+    const aidd = data.aidd || {};
+    if (data.includeInReviewBundle === false || aidd.includeInReviewBundle === false) return false;
+    if (data.excludeFromReviewBundle === true || aidd.excludeFromReviewBundle === true) return false;
+  } catch {
+    return true;
+  }
+  return true;
+}
+
+function frontmatterValueAsString(value: unknown) {
+  return typeof value === 'string' ? value : '';
+}
+
+async function buildProjectFoundationReviewMarkdown(projectPath: string) {
+  const foundationRoot = path.join(projectPath, 'foundation');
+  const files = await collectMarkdownFiles(foundationRoot);
+  const includedFiles: string[] = [];
+  const sections: string[] = [];
+
+  for (const relativeFile of files) {
+    const full = path.join(foundationRoot, relativeFile);
+    const raw = await fsp.readFile(full, 'utf8');
+    if (!shouldIncludeInReviewBundle(raw)) continue;
+
+    const parsed = matter(raw);
+    const data = (parsed.data || {}) as any;
+    const aidd = data.aidd || {};
+    const title = frontmatterValueAsString(aidd.title) || frontmatterValueAsString(data.title) || path.basename(relativeFile, '.md');
+    const status = frontmatterValueAsString(aidd.status) || frontmatterValueAsString(data.status) || 'unknown';
+    const body = parsed.content.trim() || '_No content captured._';
+    includedFiles.push(`foundation/${normaliseRelativePath(relativeFile)}`);
+    sections.push([
+      `## ${title}`,
+      '',
+      `- Source: \`foundation/${normaliseRelativePath(relativeFile)}\``,
+      `- Status: \`${status}\``,
+      '',
+      body,
+      ''
+    ].join('\n'));
+  }
+
+  const markdown = [
+    '# Project Context',
+    '',
+    'This file was generated by AIDD for review context only.',
+    'Do not return this file in the review zip.',
+    '',
+    sections.length ? sections.join('\n') : '_No foundation files were included in this review bundle._',
+    ''
+  ].join('\n');
+
+  return { markdown, includedFiles };
+}
+
+async function collectComponentReviewEntries(projectPath: string, componentSlug?: string) {
+  const componentsRoot = path.join(projectPath, 'components');
+  const entries: ZipEntryInput[] = [];
+  const includedFiles: string[] = [];
+  const requestedSlug = componentSlug ? slugify(componentSlug) : null;
+  let componentCount = 0;
+
+  if (!(await exists(componentsRoot))) {
+    return { entries, includedFiles, componentCount };
+  }
+
+  for (const componentDirEntry of await fsp.readdir(componentsRoot, { withFileTypes: true })) {
+    if (!componentDirEntry.isDirectory() || componentDirEntry.name.startsWith('_')) continue;
+
+    const slug = componentDirEntry.name;
+    if (requestedSlug && slug !== requestedSlug) continue;
+    const componentDir = path.join(componentsRoot, slug);
+    const manifestPath = path.join(componentDir, 'component.json');
+    if (!(await exists(manifestPath))) continue;
+    componentCount += 1;
+
+    let sectionFiles = COMPONENT_TEMPLATE_SECTIONS.map((section) => section.fileName);
+    try {
+      const manifest = await readJson<any>(manifestPath);
+      const manifestSectionFiles = Array.isArray(manifest?.template?.sectionFiles)
+        ? manifest.template.sectionFiles.map(String)
+        : Array.isArray(manifest?.sections)
+          ? manifest.sections.map((section: any) => String(section.fileName || '')).filter(Boolean)
+          : [];
+      if (manifestSectionFiles.length) sectionFiles = manifestSectionFiles;
+    } catch {}
+
+    const existingMarkdown = (await collectMarkdownFiles(componentDir)).filter((relativeFile) => {
+      const base = path.basename(relativeFile).toLowerCase();
+      return base !== 'index.md' && base !== 'component.md';
+    });
+
+    const candidateFiles = Array.from(new Set([...sectionFiles, ...existingMarkdown])).filter((fileName) => {
+      const normalised = normaliseRelativePath(fileName);
+      const base = path.basename(normalised).toLowerCase();
+      const unsafe = path.isAbsolute(fileName) || normalised.split('/').some((part) => part === '..' || part === '.');
+      return !unsafe && normalised.toLowerCase().endsWith('.md') && base !== 'index.md' && base !== 'component.md';
+    });
+
+    for (const relativeFile of candidateFiles) {
+      const full = path.join(componentDir, relativeFile);
+      if (!(await exists(full))) continue;
+      const raw = await fsp.readFile(full, 'utf8');
+      if (!shouldIncludeInReviewBundle(raw)) continue;
+      const zipPath = `components/${slug}/${normaliseRelativePath(relativeFile)}`;
+      entries.push({ name: zipPath, data: Buffer.from(raw, 'utf8') });
+      includedFiles.push(zipPath);
+    }
+  }
+
+  return { entries, includedFiles: includedFiles.sort((a, b) => a.localeCompare(b)), componentCount };
+}
+
+function buildComponentReviewBundleReadme(input: { projectName: string; componentCount: number; componentFileCount: number; foundationFileCount: number }) {
+  return `# AIDD Component Review Package
+
+This zip was generated by AIDD for component review.
+
+## Review scope
+
+Review only the component included in this package.
+
+Do not review other components, capabilities, delivery packages, source code, or project structure unless they are directly relevant to understanding the included component.
+
+Use \`PROJECT.md\` only as background context for the included component.
+
+## Your task
+
+Review the included component files under \`components/\` and improve them so they are clearer, more complete, and more useful for coding delivery packages.
+
+Your review should focus on the included component's clarity, responsibilities, boundaries, architecture, risks, missing information, pros and cons, and usefulness for future delivery-package implementation.
+
+## Allowed changes
+
+You may update only the Markdown files for the included component under:
+
+- \`components/<included-component-id>/\`
+
+You must return a zip containing only:
+
+- updated Markdown files under \`components/<included-component-id>/\`
+- \`REVIEW.md\`
+
+Do not include changes for any other component.
+
+The included \`REVIEW.md\` is a template. Complete it and return it with the updated component files.
+
+## Do not return
+
+Do not return:
+
+- changes for any component other than the included component
+- \`PROJECT.md\`
+- \`README.md\`
+- \`MANIFEST.json\`
+- generated \`component.md\` files
+- component \`index.md\` files
+- source code
+- files outside \`components/<included-component-id>/\`
+
+## Required return shape
+
+\`\`\`txt
+components/
+  <included-component-id>/
+    <updated-section-files>.md
+REVIEW.md
+\`\`\`
+
+## REVIEW.md must include
+
+- Summary of changes
+- Pros: what is already strong or useful
+- Cons: gaps, inconsistencies, weak areas, or risks
+- Components reviewed
+- Files changed
+- Assumptions made
+- Questions or unresolved issues
+
+## Excluding files from future review bundles
+
+To exclude a Markdown file from future review bundles, add this to its front matter:
+
+\`\`\`yaml
+aidd:
+  includeInReviewBundle: false
+\`\`\`
+
+## Package summary
+
+- Project: ${input.projectName}
+- Foundation files included: ${input.foundationFileCount}
+- Components found: ${input.componentCount}
+- Component files included: ${input.componentFileCount}
+`;
+}
+
+function buildComponentReviewTemplate(input: { projectName: string }) {
+  return `# Component Review
+
+Project: ${input.projectName}
+
+## Review scope
+
+Review only the component included in this package.
+
+## Summary of changes
+
+- TODO
+
+## Pros
+
+- TODO
+
+## Cons
+
+- TODO
+
+## Components reviewed
+
+- TODO
+
+## Files changed
+
+- TODO
+
+## Assumptions made
+
+- TODO
+
+## Questions or unresolved issues
+
+- TODO
+`;
+}
+
+async function createComponentReviewBundle(projectPath: string, componentSlug?: string): Promise<ComponentReviewBundleResult> {
+  if (!projectPath) throw new Error('Project path is required.');
+  const root = path.resolve(projectPath);
+  if (!(await exists(root))) throw new Error(`Project path does not exist: ${projectPath}`);
+
+  const templateManifestPath = path.join(root, 'aidd.template.json');
+  const templateManifest = await exists(templateManifestPath) ? await readJson<any>(templateManifestPath).catch(() => null) : null;
+  const projectName = String(templateManifest?.project?.name || path.basename(root) || 'AIDD project');
+  const createdAt = new Date().toISOString();
+  const stamp = createdAt.replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const requestedSlug = componentSlug ? slugify(componentSlug) : null;
+  const fileName = requestedSlug
+    ? `${slugify(projectName)}-${requestedSlug}-component-review-${stamp}.zip`
+    : `${slugify(projectName)}-component-review-${stamp}.zip`;
+  const outputDir = requestedSlug
+    ? path.join(app.getPath('userData'), 'review-bundles', slugify(projectName), requestedSlug)
+    : path.join(app.getPath('userData'), 'review-bundles', slugify(projectName));
+  const filePath = path.join(outputDir, fileName);
+
+  const foundation = await buildProjectFoundationReviewMarkdown(root);
+  const components = await collectComponentReviewEntries(root, requestedSlug || undefined);
+  if (requestedSlug && components.componentCount === 0) {
+    throw new Error(`Component not found or has no reviewable files: ${requestedSlug}`);
+  }
+  const manifest = {
+    bundleType: 'component-review',
+    schemaVersion: 1,
+    projectName,
+    createdAt,
+    generatedBy: 'AIDD',
+    outputIsOutsideProject: true,
+    allowedReturnPaths: [
+      'components/**/*.md',
+      'REVIEW.md'
+    ],
+    disallowedReturnPaths: [
+      'PROJECT.md',
+      'README.md',
+      'MANIFEST.json',
+      'components/**/component.md',
+      'components/**/index.md',
+      '**/*.json',
+      'code/**',
+      'foundation/**',
+      'capabilities/**',
+      'delivery/**'
+    ],
+    foundationSources: foundation.includedFiles,
+    targetComponent: requestedSlug || null,
+    componentFiles: components.includedFiles,
+    returnInstructions: {
+      zipMustContain: ['components/<component-id>/<updated-section-files>.md', 'REVIEW.md'],
+      reviewTemplateIncluded: true,
+      onlyReturnChangedComponentSectionFiles: true,
+      doNotReturnGeneratedComponentContracts: true
+    }
+  };
+
+  const zipEntries: ZipEntryInput[] = [
+    { name: 'README.md', data: Buffer.from(buildComponentReviewBundleReadme({ projectName, componentCount: components.componentCount, componentFileCount: components.includedFiles.length, foundationFileCount: foundation.includedFiles.length }), 'utf8') },
+    { name: 'REVIEW.md', data: Buffer.from(buildComponentReviewTemplate({ projectName }), 'utf8') },
+    { name: 'MANIFEST.json', data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8') },
+    { name: 'PROJECT.md', data: Buffer.from(foundation.markdown, 'utf8') },
+    ...components.entries
+  ];
+
+  await writeZipFile(filePath, zipEntries);
+  return {
+    filePath,
+    fileName,
+    componentCount: components.componentCount,
+    componentFileCount: components.includedFiles.length,
+    foundationFileCount: foundation.includedFiles.length,
+    entryCount: zipEntries.length
+  };
+}
 
 async function createCapability(root: string, input: CreateCapabilityInput) {
   const title = input.title.trim();
@@ -4260,7 +5060,7 @@ async function assertProjectFoundationReady(projectPath: string) {
   for (const doc of incompleteFoundation) blockers.push(`${doc.title} is ${doc.status.replace(/-/g, ' ')}`);
   if (standardsStatus !== 'complete') blockers.push(`Project Standards are ${standardsStatus.replace(/-/g, ' ')}`);
   if (blockers.length) {
-    throw new Error(`Project Foundation must be complete before creating a delivery package. Missing: ${blockers.join('; ')}`);
+    throw new Error(`Project Context must be complete before creating a delivery package. Missing: ${blockers.join('; ')}`);
   }
   return { foundation, standardsPath };
 }
@@ -4281,7 +5081,7 @@ async function buildProjectFoundationSnapshot(projectPath: string, foundation: F
   }
 
   return [
-    '## Project Foundation Snapshot',
+    '## Project Context Snapshot',
     '',
     'This section is captured because every delivery package must inherit the approved project foundation and standards.',
     '',
@@ -5177,6 +5977,16 @@ async function prepareFoundationDragFile(input: PrepareFoundationDragFileInput) 
   return outputPath;
 }
 
+
+async function prepareComponentContractDragFile(input: PrepareComponentContractDragFileInput) {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.slug) throw new Error('Component slug is required.');
+  const slug = slugify(input.slug);
+  const filePath = path.join(input.projectPath, 'components', slug, 'component.md');
+  if (!(await exists(filePath))) throw new Error('Generate component.md before dragging it.');
+  return filePath;
+}
+
 async function prepareNativeDragTestFile() {
   const dragDir = path.join(app.getPath('userData'), 'native-file-drag-test');
   await fsp.mkdir(dragDir, { recursive: true });
@@ -5187,6 +5997,7 @@ async function prepareNativeDragTestFile() {
 
 ipcMain.handle('drag:prepareFoundationFile', async (_event, input: PrepareFoundationDragFileInput) => prepareFoundationDragFile(input));
 ipcMain.handle('drag:prepareMarkdownFile', async (_event, input: PrepareMarkdownDragFileInput) => prepareMarkdownDragFile(input));
+ipcMain.handle('drag:prepareComponentContractFile', async (_event, input: PrepareComponentContractDragFileInput) => prepareComponentContractDragFile(input));
 ipcMain.handle('drag:prepareNativeTestFile', async () => prepareNativeDragTestFile());
 
 // Use ipcMain.on + ipcRenderer.send for native drag-out. This keeps the call as close as possible
@@ -5264,6 +6075,21 @@ ipcMain.handle('project:readComponent', async (_event, input: ReadComponentInput
   return readComponent(input);
 });
 
+ipcMain.handle('project:createComponentReviewBundle', async (_event, projectPath: string) => {
+  if (!projectPath) throw new Error('Project path is required.');
+  return createComponentReviewBundle(projectPath);
+});
+
+ipcMain.handle('project:packageComponentsForReview', async (_event, projectPath: string) => {
+  if (!projectPath) throw new Error('Project path is required.');
+  return createComponentReviewBundle(projectPath);
+});
+
+ipcMain.handle('project:packageComponentForReview', async (_event, input: PackageComponentReviewInput) => {
+  if (!input?.projectPath || !input?.slug) throw new Error('Project path and component slug are required.');
+  return createComponentReviewBundle(input.projectPath, input.slug);
+});
+
 ipcMain.handle('project:updateComponent', async (_event, input: UpdateComponentInput) => {
   if (!input.projectPath || !input.slug || !input.title?.trim()) throw new Error('Project path, component slug, and title are required.');
   return withProjectSaveSync(input.projectPath, () => updateComponent(input));
@@ -5272,6 +6098,16 @@ ipcMain.handle('project:updateComponent', async (_event, input: UpdateComponentI
 ipcMain.handle('project:generateComponentContract', async (_event, input: GenerateComponentContractInput) => {
   if (!input.projectPath || !input.slug) throw new Error('Project path and component slug are required.');
   return withProjectSaveSync(input.projectPath, () => generateComponentContract(input));
+});
+
+ipcMain.handle('project:selectComponentSourceDirectory', async (_event, input: ComponentSourceDirectoryInput) => {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  return selectComponentSourceDirectory(input);
+});
+
+ipcMain.handle('project:detectComponentSourceDirectory', async (_event, input: ComponentSourceDirectoryInput) => {
+  if (!input.projectPath || !input.directory?.trim()) throw new Error('Project path and source directory are required.');
+  return detectStoredComponentSourceDirectory(input);
 });
 
 ipcMain.handle('project:createCapability', async (_event, input: CreateCapabilityInput) => {

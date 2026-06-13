@@ -327,9 +327,33 @@ interface AiddComponentContractInfo {
   blockers: string[];
 }
 
+type AiddComponentSourceDetectionConfidence = 'high' | 'medium' | 'low';
+
+interface AiddComponentSourceDetection {
+  suggestedType: string;
+  confidence: AiddComponentSourceDetectionConfidence;
+  detectedLanguages: string[];
+  detectedFrameworks: string[];
+  packageManager?: string;
+  reasons: string[];
+}
+
 interface AiddComponentSourceConfig {
   directory: string;
   type: string;
+  detection?: AiddComponentSourceDetection | null;
+}
+
+interface AiddComponentSourceDirectoryInput {
+  projectPath: string;
+  directory?: string;
+  currentDirectory?: string;
+}
+
+interface AiddComponentSourceDirectorySelection {
+  directory: string;
+  absolutePath: string;
+  detection: AiddComponentSourceDetection;
 }
 
 interface AiddComponentSummary {
@@ -590,6 +614,26 @@ interface AiddPrepareMarkdownDragFileInput {
   metadata?: Record<string, unknown>;
 }
 
+
+interface AiddComponentReviewPackageResult {
+  filePath: string;
+  fileName: string;
+  componentCount: number;
+  componentFileCount: number;
+  foundationFileCount: number;
+  entryCount: number;
+}
+
+interface AiddPackageComponentForReviewInput {
+  projectPath: string;
+  slug: string;
+}
+
+interface AiddPrepareComponentContractDragFileInput {
+  projectPath: string;
+  slug: string;
+}
+
 interface Window {
   aidd: {
     notify: (input: AiddNotifyInput) => Promise<boolean>;
@@ -604,8 +648,12 @@ interface Window {
     upgradeProjectTemplates: (projectPath: string) => Promise<AiddProjectTemplateUpgradeReport>;
     readProjectSetup: (projectPath: string) => Promise<AiddProjectSetupState>;
     prepareFoundationReviewPackage: (projectPath: string) => Promise<{ filePath: string; fileName: string }>;
+    packageComponentsForReview: (projectPath: string) => Promise<AiddComponentReviewPackageResult>;
+    packageComponentForReview: (input: AiddPackageComponentForReviewInput) => Promise<AiddComponentReviewPackageResult>;
+    createComponentReviewBundle: (projectPath: string) => Promise<AiddComponentReviewPackageResult>;
     prepareFoundationDragFile: (input: AiddPrepareFoundationDragFileInput) => Promise<string>;
     prepareMarkdownDragFile: (input: AiddPrepareMarkdownDragFileInput) => Promise<string>;
+    prepareComponentContractDragFile: (input: AiddPrepareComponentContractDragFileInput) => Promise<string>;
     prepareNativeDragTestFile: () => Promise<{ filePath: string; fileName: string }>;
     startNativeFileDrag: (filePath: string) => void;
     startFileDrag: (filePath: string) => void;
@@ -617,6 +665,8 @@ interface Window {
     readComponent: (input: AiddReadComponentInput) => Promise<AiddComponentDetail>;
     updateComponent: (input: AiddUpdateComponentInput) => Promise<AiddProjectSetupState>;
     generateComponentContract: (input: AiddGenerateComponentContractInput) => Promise<AiddComponentDetail>;
+    selectComponentSourceDirectory: (input: AiddComponentSourceDirectoryInput) => Promise<AiddComponentSourceDirectorySelection | null>;
+    detectComponentSourceDirectory: (input: AiddComponentSourceDirectoryInput) => Promise<AiddComponentSourceDirectorySelection>;
     createCapability: (input: AiddCreateCapabilityInput) => Promise<AiddProjectSetupState>;
     readCapability: (input: AiddReadCapabilityInput) => Promise<AiddCapabilityDetail>;
     updateCapability: (input: AiddUpdateCapabilityInput) => Promise<AiddProjectSetupState>;

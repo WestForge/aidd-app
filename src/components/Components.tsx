@@ -480,9 +480,11 @@ export function Components({
   const [linkedCapabilities, setLinkedCapabilities] = useState<string[]>([]);
   const [contract, setContract] = useState<AiddComponentContractInfo | null>(null);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sectionDragFiles, setSectionDragFiles] = useState<Record<string, string>>({});
+  const [contractDragFilePath, setContractDragFilePath] = useState<string | null>(null);
+  const [reviewPackage, setReviewPackage] = useState<AiddComponentReviewPackageResult | null>(null);
+  const [reviewPackageDragFilePath, setReviewPackageDragFilePath] = useState<string | null>(null);
   const [dragError, setDragError] = useState<string | null>(null);
 
   const load = async () => {
@@ -509,6 +511,7 @@ export function Components({
   const activeSection =
     sections.find((section) => section.key === activeSectionKey) ?? sections[0];
   const canGenerateContract = view === "edit" && Boolean(editingSlug);
+  const contractReady = view === "edit" && contract?.status === "current";
   const sourceConfig = {
     directory: sourceDirectory.trim(),
     type: sourceType || "other",
@@ -529,9 +532,11 @@ export function Components({
     setShowSourceConfig(false);
     setLinkedCapabilities([]);
     setContract(null);
-    setMessage(null);
+    setReviewPackage(null);
+    setReviewPackageDragFilePath(null);
     setDragError(null);
     setSectionDragFiles({});
+    setContractDragFilePath(null);
   };
 
   const backToList = () => {
@@ -543,7 +548,6 @@ export function Components({
     if (!activeProject?.path) return;
     setSaving(true);
     setError(null);
-    setMessage(null);
     try {
       const component = await window.aidd.readComponent({
         projectPath: activeProject.path,
@@ -560,6 +564,9 @@ export function Components({
       setShowSourceConfig(false);
       setLinkedCapabilities(component.capabilities || []);
       setContract(component.contract || null);
+      setContractDragFilePath(null);
+      setReviewPackage(null);
+      setReviewPackageDragFilePath(null);
       setSections(component.sections?.length ? component.sections : newSections());
       setActiveSectionKey(component.sections?.[0]?.key || "purpose");
       setView("edit");
@@ -608,7 +615,6 @@ export function Components({
     if (!activeProject?.path) return;
     setSaving(true);
     setError(null);
-    setMessage(null);
     try {
       const next = await window.aidd.createComponent({
         projectPath: activeProject.path,
@@ -632,7 +638,6 @@ export function Components({
     if (!activeProject?.path || !editingSlug) return;
     setSaving(true);
     setError(null);
-    setMessage(null);
     try {
       const next = await window.aidd.updateComponent({
         projectPath: activeProject.path,
@@ -644,7 +649,6 @@ export function Components({
         sections,
       });
       setSetup(next);
-      setMessage("Component saved.");
       void window.aidd.notify({ title: "Saved", body: "Component saved." });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -658,7 +662,6 @@ export function Components({
 
     setSaving(true);
     setError(null);
-    setMessage(null);
     try {
       await window.aidd.updateComponent({
         projectPath: activeProject.path,
@@ -682,8 +685,15 @@ export function Components({
       setLinkedCapabilities(component.capabilities || linkedCapabilities);
       const nextSetup = await window.aidd.readProjectSetup(activeProject.path);
       setSetup(nextSetup);
-      setMessage("Generated component.md.");
-      void window.aidd.notify({ title: "Generated", body: "Component contract generated." });
+      const filePath = await window.aidd.prepareComponentContractDragFile({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+      });
+      setContractDragFilePath(filePath);
+      void window.aidd.notify({
+        title: "component.md ready",
+        body: "The component contract is ready to drag out from the component file bar.",
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -695,14 +705,16 @@ export function Components({
     setSourceDirectory(selection.directory);
     setSourceDetection(selection.detection);
     setSourceType(selection.detection.suggestedType || "other");
-    setMessage(`Detected source as ${sourceTypeLabel(selection.detection.suggestedType)} (${selection.detection.confidence} confidence).`);
+    void window.aidd.notify({
+      title: "Source detected",
+      body: `${sourceTypeLabel(selection.detection.suggestedType)} (${selection.detection.confidence} confidence).`,
+    });
   };
 
   const browseSourceDirectory = async () => {
     if (!activeProject?.path) return;
     setDetectingSource(true);
     setError(null);
-    setMessage(null);
     try {
       const selection = await window.aidd.selectComponentSourceDirectory({
         projectPath: activeProject.path,
@@ -720,7 +732,6 @@ export function Components({
     if (!activeProject?.path || !sourceDirectory.trim()) return;
     setDetectingSource(true);
     setError(null);
-    setMessage(null);
     try {
       const selection = await window.aidd.detectComponentSourceDirectory({
         projectPath: activeProject.path,
@@ -732,6 +743,87 @@ export function Components({
     } finally {
       setDetectingSource(false);
     }
+  };
+
+  const createComponentReviewPackage = async () => {
+    if (!activeProject?.path || !editingSlug) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await window.aidd.updateComponent({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+        title,
+        status,
+        sourceProjects: selectedSourceProjects,
+        source: sourceConfig,
+        sections,
+      });
+      const bundle = await window.aidd.packageComponentForReview({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+      });
+      setReviewPackage(bundle);
+      setReviewPackageDragFilePath(bundle.filePath);
+      void window.aidd.notify({
+        title: "Component review package ready",
+        body: `${bundle.componentFileCount} component file(s) packaged. Drag the review zip tile out when ready.`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startComponentReviewPackageDrag = (event: DragEvent<HTMLButtonElement>) => {
+    if (!reviewPackageDragFilePath) {
+      event.preventDefault();
+      setDragError("Click the review package tile before dragging it.");
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("text/plain", reviewPackageDragFilePath);
+    event.preventDefault();
+    window.aidd.startNativeFileDrag(reviewPackageDragFilePath);
+  };
+
+  const prepareComponentContractDragFile = async () => {
+    if (!activeProject?.path || !editingSlug || contract?.status !== "current") {
+      setContractDragFilePath(null);
+      return null;
+    }
+
+    const filePath = await window.aidd.prepareComponentContractDragFile({
+      projectPath: activeProject.path,
+      slug: editingSlug,
+    });
+    setContractDragFilePath(filePath);
+    setDragError(null);
+    return filePath;
+  };
+
+  const startComponentContractDrag = (event: DragEvent<HTMLButtonElement>) => {
+    if (!contractReady) {
+      event.preventDefault();
+      setDragError("Generate component.md before dragging it.");
+      return;
+    }
+
+    if (!contractDragFilePath) {
+      event.preventDefault();
+      setDragError("component.md is still being prepared for drag-out. Try again in a moment.");
+      prepareComponentContractDragFile().catch((err) =>
+        setDragError(err instanceof Error ? err.message : String(err)),
+      );
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("text/plain", contractDragFilePath);
+    event.preventDefault();
+    window.aidd.startNativeFileDrag(contractDragFilePath);
   };
 
   const prepareComponentSectionDragFile = async (section: ComponentSection) => {
@@ -774,6 +866,27 @@ export function Components({
 
     return () => window.clearTimeout(timer);
   }, [activeProject?.path, editingSlug, title, sections, view]);
+
+  useEffect(() => {
+    if (!activeProject?.path || view !== "edit" || !editingSlug || contract?.status !== "current") {
+      setContractDragFilePath(null);
+      return;
+    }
+
+    let cancelled = false;
+    window.aidd
+      .prepareComponentContractDragFile({ projectPath: activeProject.path, slug: editingSlug })
+      .then((filePath) => {
+        if (!cancelled) setContractDragFilePath(filePath);
+      })
+      .catch(() => {
+        if (!cancelled) setContractDragFilePath(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProject?.path, view, editingSlug, contract?.status, contract?.sourceHash, contract?.version]);
 
   const startComponentSectionDrag = (
     event: DragEvent<HTMLButtonElement>,
@@ -819,14 +932,16 @@ export function Components({
               Define the parts that own architecture, state, interfaces, and standards.
             </p>
           </div>
-          <Button
-            onClick={() => {
-              resetForm();
-              setView("new");
-            }}
-          >
-            <Plus className="h-4 w-4" /> New Component
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={() => {
+                resetForm();
+                setView("new");
+              }}
+            >
+              <Plus className="h-4 w-4" /> New Component
+            </Button>
+          </div>
         </header>
         <main className="min-h-0 flex-1 overflow-auto p-6">
           {error && (
@@ -950,17 +1065,6 @@ export function Components({
             <GitBranch className="h-4 w-4" />
             Configure source
           </Button>
-          {view === "edit" && (
-            <Button
-              variant="outline"
-              onClick={generateComponentContract}
-              disabled={saving || !canGenerateContract}
-              title="Generate versioned component.md"
-            >
-              <FileText className="h-4 w-4" />
-              {contract?.status === "current" ? "Regenerate component.md" : "Generate component.md"}
-            </Button>
-          )}
           <Button
             onClick={view === "edit" ? updateComponent : createComponent}
             disabled={saving || !title.trim()}
@@ -975,14 +1079,6 @@ export function Components({
           <Alert variant="destructive">
             <AlertTitle>Error</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        </div>
-      )}
-      {message && (
-        <div className="shrink-0 px-6 pt-4">
-          <Alert>
-            <AlertTitle>Saved</AlertTitle>
-            <AlertDescription>{message}</AlertDescription>
           </Alert>
         </div>
       )}
@@ -1126,6 +1222,35 @@ export function Components({
             </button>
           );
         })}
+        <button
+          type="button"
+          draggable={Boolean(reviewPackageDragFilePath)}
+          className={cn(
+            "relative flex h-16 w-36 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent",
+            reviewPackageDragFilePath && "cursor-grab active:cursor-grabbing",
+            !reviewPackageDragFilePath && canGenerateContract && "cursor-pointer",
+            !canGenerateContract && "cursor-not-allowed opacity-60",
+          )}
+          onClick={() => {
+            if (canGenerateContract) void createComponentReviewPackage();
+          }}
+          onDragStart={startComponentReviewPackageDrag}
+          title={reviewPackageDragFilePath ? "Review package is ready. Drag this zip out." : "Create a component review package zip for this component."}
+        >
+          <StatusIcon
+            status={reviewPackageDragFilePath ? "complete" : "not-started"}
+            className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
+          />
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <Archive className={cn("h-4 w-4", reviewPackageDragFilePath && "text-green-400")} />
+          </div>
+          <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
+            Review package
+          </span>
+          <span className="line-clamp-1 text-[10px] text-muted-foreground">
+            {saving ? "Packaging..." : reviewPackage ? "Ready to drag" : "Create zip"}
+          </span>
+        </button>
       </div>
       {dragError && (
         <div className="shrink-0 px-6 pt-2 text-xs text-destructive">
