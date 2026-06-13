@@ -624,6 +624,27 @@ interface AiddComponentReviewPackageResult {
   entryCount: number;
 }
 
+interface AiddFoundationReviewPackageResult {
+  filePath: string;
+  fileName: string;
+  foundationFileCount: number;
+  entryCount: number;
+}
+
+interface AiddImportFoundationReviewPackageInput {
+  projectPath: string;
+  zipPath: string;
+}
+
+interface AiddFoundationReviewPackageImportResult {
+  accepted: boolean;
+  zipPath: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  reviewIncluded: boolean;
+  reviewMarkdown?: string;
+}
+
 interface AiddPackageComponentForReviewInput {
   projectPath: string;
   slug: string;
@@ -651,9 +672,9 @@ interface AiddPrepareComponentContractDragFileInput {
 
 interface Window {
   aidd: {
+    getDroppedFilePath: (file: File) => string;
     notify: (input: AiddNotifyInput) => Promise<boolean>;
     showItemInFolder: (filePath: string) => Promise<boolean>;
-    getDroppedFilePath: (file: File) => string;
     selectProjectFolder: () => Promise<string | null>;
     listProjects: () => Promise<AiddTrackedProject[]>;
     forgetProject: (projectId: string) => Promise<AiddTrackedProject[]>;
@@ -663,7 +684,9 @@ interface Window {
     repairProject: (projectPath: string) => Promise<AiddProjectRepairReport>;
     upgradeProjectTemplates: (projectPath: string) => Promise<AiddProjectTemplateUpgradeReport>;
     readProjectSetup: (projectPath: string) => Promise<AiddProjectSetupState>;
-    prepareFoundationReviewPackage: (projectPath: string) => Promise<{ filePath: string; fileName: string }>;
+    prepareFoundationReviewPackage: (projectPath: string) => Promise<AiddFoundationReviewPackageResult>;
+    packageFoundationForReview: (projectPath: string) => Promise<AiddFoundationReviewPackageResult>;
+    importFoundationReviewPackage: (input: AiddImportFoundationReviewPackageInput) => Promise<AiddFoundationReviewPackageImportResult>;
     packageComponentsForReview: (projectPath: string) => Promise<AiddComponentReviewPackageResult>;
     packageComponentForReview: (input: AiddPackageComponentForReviewInput) => Promise<AiddComponentReviewPackageResult>;
     importComponentReviewPackage: (input: AiddImportComponentReviewPackageInput) => Promise<AiddComponentReviewPackageImportResult>;

@@ -1,9 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 contextBridge.exposeInMainWorld('aidd', {
+  getDroppedFilePath: (file: unknown) => webUtils.getPathForFile(file as any),
   notify: (input: unknown) => ipcRenderer.invoke('app:notify', input),
   showItemInFolder: (filePath: string) => ipcRenderer.invoke('app:showItemInFolder', filePath),
-  getDroppedFilePath: (file: unknown) => webUtils.getPathForFile(file as any),
   selectProjectFolder: () => ipcRenderer.invoke('project:selectFolder'),
   listProjects: () => ipcRenderer.invoke('project:list'),
   forgetProject: (projectId: string) => ipcRenderer.invoke('project:forget', projectId),
@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('aidd', {
   upgradeProjectTemplates: (projectPath: string) => ipcRenderer.invoke('project:upgradeTemplates', projectPath),
   readProjectSetup: (projectPath: string) => ipcRenderer.invoke('project:setup', projectPath),
   prepareFoundationReviewPackage: (projectPath: string) => ipcRenderer.invoke('project:prepareFoundationReviewPackage', projectPath),
+  packageFoundationForReview: (projectPath: string) => ipcRenderer.invoke('project:packageFoundationForReview', projectPath),
+  importFoundationReviewPackage: (input: unknown) => ipcRenderer.invoke('project:importFoundationReviewPackage', input),
   packageComponentsForReview: (projectPath: string) => ipcRenderer.invoke('project:packageComponentsForReview', projectPath),
   packageComponentForReview: (input: unknown) => ipcRenderer.invoke('project:packageComponentForReview', input),
   importComponentReviewPackage: (input: unknown) => ipcRenderer.invoke('project:importComponentReviewPackage', input),

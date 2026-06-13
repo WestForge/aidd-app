@@ -235,6 +235,68 @@ function RibbonTile({
   );
 }
 
+
+function FoundationReviewTile({
+  ready,
+  busy,
+  dropActive,
+  fileName,
+  onClick,
+  onDragStart,
+  onDragEnter,
+  onDragLeave,
+  onDragOver,
+  onDrop,
+}: {
+  ready: boolean;
+  busy: boolean;
+  dropActive: boolean;
+  fileName?: string | null;
+  onClick: () => void;
+  onDragStart: (event: React.DragEvent<HTMLButtonElement>) => void;
+  onDragEnter: (event: React.DragEvent<HTMLButtonElement>) => void;
+  onDragLeave: (event: React.DragEvent<HTMLButtonElement>) => void;
+  onDragOver: (event: React.DragEvent<HTMLButtonElement>) => void;
+  onDrop: (event: React.DragEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <button
+      type="button"
+      draggable={ready && !busy}
+      onClick={onClick}
+      onDragStart={onDragStart}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      disabled={busy}
+      title={
+        ready
+          ? `Foundation review package ready: ${fileName ?? "review.zip"}. Drag out, or drop a returned review zip here.`
+          : "Create a Foundation review package zip. You can also drop a returned review zip here."
+      }
+      className={cn(
+        "relative flex h-16 w-28 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent",
+        ready && "border-emerald-500/70 bg-emerald-500/10",
+        dropActive && "border-ring bg-accent ring-1 ring-ring",
+        busy && "cursor-wait opacity-70",
+      )}
+    >
+      <StatusIcon
+        status={ready ? "complete" : "in-review"}
+        className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
+      />
+      <Archive className="h-4 w-4 text-muted-foreground" />
+      <span className="line-clamp-2 px-1 text-center font-medium leading-tight">
+        Review package
+      </span>
+      <span className="text-[10px] text-muted-foreground">
+        {dropActive ? "Drop zip" : busy ? "Working…" : ready ? "Drag out" : "Create zip"}
+      </span>
+    </button>
+  );
+}
+
 function docIcon(fileName: string): LucideIcon {
   if (fileName.includes("audience")) return Puzzle;
   if (fileName.includes("goals")) return Sparkles;
@@ -278,6 +340,11 @@ export function SetupWorkflow({
   const [saving, setSaving] = useState(false);
   const [dragFilePath, setDragFilePath] = useState<string | null>(null);
   const [dragError, setDragError] = useState<string | null>(null);
+  const [foundationReviewFilePath, setFoundationReviewFilePath] = useState<string | null>(null);
+  const [foundationReviewFileName, setFoundationReviewFileName] = useState<string | null>(null);
+  const [foundationReviewBusy, setFoundationReviewBusy] = useState(false);
+  const [foundationReviewDropActive, setFoundationReviewDropActive] = useState(false);
+  const [foundationReviewError, setFoundationReviewError] = useState<string | null>(null);
 
   const selectedDoc = useMemo(
     () => setup?.foundation.find((doc) => doc.fileName === selectedFile),
@@ -402,6 +469,77 @@ export function SetupWorkflow({
       );
   };
 
+
+  const createFoundationReviewPackage = async () => {
+    if (!activeProject?.path) return;
+    setFoundationReviewBusy(true);
+    setFoundationReviewError(null);
+    try {
+      const result = await window.aidd.packageFoundationForReview(activeProject.path);
+      setFoundationReviewFilePath(result.filePath);
+      setFoundationReviewFileName(result.fileName);
+      void window.aidd.notify({
+        title: "Foundation review package ready",
+        body: "Drag the Review package tile to share it for review.",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setFoundationReviewError(message);
+      void window.aidd.notify({ title: "Foundation review package failed", body: message });
+    } finally {
+      setFoundationReviewBusy(false);
+    }
+  };
+
+  const startFoundationReviewPackageDrag = (event: React.DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    if (!foundationReviewFilePath) return;
+    window.aidd.startNativeFileDrag(foundationReviewFilePath);
+  };
+
+  const foundationReviewDragOver = (event: React.DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const importFoundationReviewZip = async (event: React.DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    setFoundationReviewDropActive(false);
+    if (!activeProject?.path) return;
+
+    const files = Array.from(event.dataTransfer.files || []);
+    const zipFile = files.find((file) => file.name.toLowerCase().endsWith(".zip"));
+    const zipPath = zipFile
+      ? window.aidd.getDroppedFilePath(zipFile) || (zipFile as File & { path?: string }).path || ""
+      : "";
+    if (!zipPath) {
+      const message = "Drop a returned Foundation review .zip file from your file system.";
+      setFoundationReviewError(message);
+      void window.aidd.notify({ title: "Foundation review import rejected", body: message });
+      return;
+    }
+
+    setFoundationReviewBusy(true);
+    setFoundationReviewError(null);
+    try {
+      const result = await window.aidd.importFoundationReviewPackage({
+        projectPath: activeProject.path,
+        zipPath,
+      });
+      await load();
+      void window.aidd.notify({
+        title: "Foundation review imported",
+        body: `${result.importedFiles.length} Foundation file${result.importedFiles.length === 1 ? "" : "s"} updated.`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setFoundationReviewError(message);
+      void window.aidd.notify({ title: "Foundation review import failed", body: message });
+    } finally {
+      setFoundationReviewBusy(false);
+    }
+  };
+
   const saveFoundation = async (statusOverride?: AiddSetupStatus) => {
     if (!activeProject?.path || !selectedDoc) return;
     const nextStatus = statusOverride ?? draftStatus;
@@ -510,7 +648,7 @@ export function SetupWorkflow({
         </Button>
       </header>
 
-      <div className="flex shrink-0 items-center justify-between gap-4 overflow-x-auto border-b bg-muted/30 px-4 py-2">
+      <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b bg-muted/30 px-4 py-2">
         <div className="flex shrink-0 items-center gap-2">
           {steps.map((item) => (
             <RibbonTile
@@ -528,9 +666,9 @@ export function SetupWorkflow({
           ))}
         </div>
 
-        {step === "foundation" && orderedFoundationDocs.length > 0 && (
+        {orderedFoundationDocs.length > 0 && (
           <div
-            className="ml-auto flex shrink-0 items-center gap-2 border-l pl-4"
+            className="flex shrink-0 items-center gap-2 border-l pl-3"
             aria-label="Foundation context sections"
           >
             {orderedFoundationDocs.map((doc) => (
@@ -538,7 +676,7 @@ export function SetupWorkflow({
                 key={doc.fileName}
                 title={docShortTitle(doc.fileName, doc.title)}
                 icon={docIcon(doc.fileName)}
-                selected={selectedFile === doc.fileName}
+                selected={step === "foundation" && selectedFile === doc.fileName}
                 status={doc.status}
                 onClick={() => {
                   setStep("foundation");
@@ -546,15 +684,30 @@ export function SetupWorkflow({
                 }}
               />
             ))}
+            <FoundationReviewTile
+              ready={Boolean(foundationReviewFilePath)}
+              busy={foundationReviewBusy}
+              dropActive={foundationReviewDropActive}
+              fileName={foundationReviewFileName}
+              onClick={createFoundationReviewPackage}
+              onDragStart={startFoundationReviewPackageDrag}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setFoundationReviewDropActive(true);
+              }}
+              onDragLeave={() => setFoundationReviewDropActive(false)}
+              onDragOver={foundationReviewDragOver}
+              onDrop={importFoundationReviewZip}
+            />
           </div>
         )}
       </div>
 
-      {error && (
+      {(error || foundationReviewError) && (
         <div className="shrink-0 px-4 pt-3">
           <Alert variant="destructive">
             <AlertTitle>Foundation error</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>{error || foundationReviewError}</AlertDescription>
           </Alert>
         </div>
       )}
