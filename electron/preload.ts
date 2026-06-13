@@ -1,8 +1,9 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 contextBridge.exposeInMainWorld('aidd', {
   notify: (input: unknown) => ipcRenderer.invoke('app:notify', input),
   showItemInFolder: (filePath: string) => ipcRenderer.invoke('app:showItemInFolder', filePath),
+  getDroppedFilePath: (file: unknown) => webUtils.getPathForFile(file as any),
   selectProjectFolder: () => ipcRenderer.invoke('project:selectFolder'),
   listProjects: () => ipcRenderer.invoke('project:list'),
   forgetProject: (projectId: string) => ipcRenderer.invoke('project:forget', projectId),
@@ -15,6 +16,7 @@ contextBridge.exposeInMainWorld('aidd', {
   prepareFoundationReviewPackage: (projectPath: string) => ipcRenderer.invoke('project:prepareFoundationReviewPackage', projectPath),
   packageComponentsForReview: (projectPath: string) => ipcRenderer.invoke('project:packageComponentsForReview', projectPath),
   packageComponentForReview: (input: unknown) => ipcRenderer.invoke('project:packageComponentForReview', input),
+  importComponentReviewPackage: (input: unknown) => ipcRenderer.invoke('project:importComponentReviewPackage', input),
   createComponentReviewBundle: (projectPath: string) => ipcRenderer.invoke('project:createComponentReviewBundle', projectPath),
   prepareFoundationDragFile: (input: unknown) => ipcRenderer.invoke('drag:prepareFoundationFile', input),
   prepareMarkdownDragFile: (input: unknown) => ipcRenderer.invoke('drag:prepareMarkdownFile', input),

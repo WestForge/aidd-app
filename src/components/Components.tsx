@@ -789,6 +789,55 @@ export function Components({
     window.aidd.startNativeFileDrag(reviewPackageDragFilePath);
   };
 
+  const droppedZipPathFromEvent = (event: DragEvent<HTMLButtonElement>) => {
+    const file = event.dataTransfer.files?.[0];
+    if (file) {
+      const nativePath = window.aidd.getDroppedFilePath(file);
+      if (nativePath) return nativePath;
+      const fallbackPath = (file as File & { path?: string }).path;
+      if (fallbackPath) return fallbackPath;
+    }
+    return event.dataTransfer.getData("text/plain");
+  };
+
+  const importComponentReviewPackage = async (event: DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!activeProject?.path) return;
+
+    const zipPath = droppedZipPathFromEvent(event);
+    if (!zipPath) {
+      setDragError("Drop a returned component review .zip onto this tile.");
+      return;
+    }
+    if (!zipPath.toLowerCase().endsWith(".zip")) {
+      setDragError("Review response rejected: drop a .zip file.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setDragError(null);
+    try {
+      const result = await window.aidd.importComponentReviewPackage({
+        projectPath: activeProject.path,
+        zipPath,
+      });
+      setReviewPackage(null);
+      setReviewPackageDragFilePath(null);
+      await load();
+      if (editingSlug) await openEdit(editingSlug);
+      void window.aidd.notify({
+        title: "Component review imported",
+        body: `${result.importedFiles.length} file(s) imported from ${result.componentCount} component(s).`,
+      });
+    } catch (err) {
+      setDragError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const prepareComponentContractDragFile = async () => {
     if (!activeProject?.path || !editingSlug || contract?.status !== "current") {
       setContractDragFilePath(null);
@@ -1235,7 +1284,12 @@ export function Components({
             if (canGenerateContract) void createComponentReviewPackage();
           }}
           onDragStart={startComponentReviewPackageDrag}
-          title={reviewPackageDragFilePath ? "Review package is ready. Drag this zip out." : "Create a component review package zip for this component."}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+          }}
+          onDrop={importComponentReviewPackage}
+          title={reviewPackageDragFilePath ? "Review package is ready. Drag this zip out, or drop a returned review zip here." : "Create a component review package zip, or drop a returned review zip here."}
         >
           <StatusIcon
             status={reviewPackageDragFilePath ? "complete" : "not-started"}
@@ -1248,7 +1302,7 @@ export function Components({
             Review package
           </span>
           <span className="line-clamp-1 text-[10px] text-muted-foreground">
-            {saving ? "Packaging..." : reviewPackage ? "Ready to drag" : "Create zip"}
+            {saving ? "Working..." : reviewPackage ? "Ready to drag/drop" : "Create/drop zip"}
           </span>
         </button>
       </div>

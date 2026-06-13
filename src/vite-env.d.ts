@@ -629,6 +629,21 @@ interface AiddPackageComponentForReviewInput {
   slug: string;
 }
 
+interface AiddImportComponentReviewPackageInput {
+  projectPath: string;
+  zipPath: string;
+}
+
+interface AiddComponentReviewPackageImportResult {
+  accepted: boolean;
+  zipPath: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  componentCount: number;
+  reviewIncluded: boolean;
+  reviewMarkdown?: string;
+}
+
 interface AiddPrepareComponentContractDragFileInput {
   projectPath: string;
   slug: string;
@@ -638,6 +653,7 @@ interface Window {
   aidd: {
     notify: (input: AiddNotifyInput) => Promise<boolean>;
     showItemInFolder: (filePath: string) => Promise<boolean>;
+    getDroppedFilePath: (file: File) => string;
     selectProjectFolder: () => Promise<string | null>;
     listProjects: () => Promise<AiddTrackedProject[]>;
     forgetProject: (projectId: string) => Promise<AiddTrackedProject[]>;
@@ -650,6 +666,7 @@ interface Window {
     prepareFoundationReviewPackage: (projectPath: string) => Promise<{ filePath: string; fileName: string }>;
     packageComponentsForReview: (projectPath: string) => Promise<AiddComponentReviewPackageResult>;
     packageComponentForReview: (input: AiddPackageComponentForReviewInput) => Promise<AiddComponentReviewPackageResult>;
+    importComponentReviewPackage: (input: AiddImportComponentReviewPackageInput) => Promise<AiddComponentReviewPackageImportResult>;
     createComponentReviewBundle: (projectPath: string) => Promise<AiddComponentReviewPackageResult>;
     prepareFoundationDragFile: (input: AiddPrepareFoundationDragFileInput) => Promise<string>;
     prepareMarkdownDragFile: (input: AiddPrepareMarkdownDragFileInput) => Promise<string>;

@@ -3,6 +3,7 @@ import path from 'node:path';
 import fsp from 'node:fs/promises';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
+import zlib from 'node:zlib';
 import git from 'isomorphic-git';
 import matter from 'gray-matter';
 import { createKeytarCredentialStore } from './services/gitCredentialStore';
@@ -342,6 +343,21 @@ interface ComponentReviewBundleResult {
 interface PackageComponentReviewInput {
   projectPath: string;
   slug: string;
+}
+
+interface ImportComponentReviewPackageInput {
+  projectPath: string;
+  zipPath: string;
+}
+
+interface ComponentReviewPackageImportResult {
+  accepted: boolean;
+  zipPath: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  componentCount: number;
+  reviewIncluded: boolean;
+  reviewMarkdown?: string;
 }
 
 interface ComponentSectionInput {
@@ -4573,6 +4589,141 @@ async function writeZipFile(filePath: string, entries: ZipEntryInput[]) {
   await fsp.writeFile(filePath, Buffer.concat([...localParts, centralDirectory, end]));
 }
 
+interface ZipReadEntry {
+  name: string;
+  data: Buffer;
+  directory: boolean;
+}
+
+function findZipEndOfCentralDirectory(buffer: Buffer) {
+  const min = Math.max(0, buffer.length - 0xffff - 22);
+  for (let offset = buffer.length - 22; offset >= min; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === 0x06054b50) return offset;
+  }
+  throw new Error('Invalid zip file: end of central directory was not found.');
+}
+
+function safeZipReadEntryName(value: string) {
+  const normalised = normaliseRelativePath(value).replace(/^\/+/, '');
+  const parts = normalised.split('/');
+  if (!normalised || path.isAbsolute(value) || parts.some((part) => part === '..')) return null;
+  return normalised;
+}
+
+async function readZipFile(filePath: string): Promise<ZipReadEntry[]> {
+  const zipPath = path.resolve(filePath || '');
+  const buffer = await fsp.readFile(zipPath);
+  const endOffset = findZipEndOfCentralDirectory(buffer);
+  const entryCount = buffer.readUInt16LE(endOffset + 10);
+  let centralOffset = buffer.readUInt32LE(endOffset + 16);
+  const entries: ZipReadEntry[] = [];
+
+  for (let index = 0; index < entryCount; index += 1) {
+    if (centralOffset + 46 > buffer.length || buffer.readUInt32LE(centralOffset) !== 0x02014b50) {
+      throw new Error('Invalid zip file: central directory is corrupt.');
+    }
+
+    const compressionMethod = buffer.readUInt16LE(centralOffset + 10);
+    const compressedSize = buffer.readUInt32LE(centralOffset + 20);
+    const fileNameLength = buffer.readUInt16LE(centralOffset + 28);
+    const extraLength = buffer.readUInt16LE(centralOffset + 30);
+    const commentLength = buffer.readUInt16LE(centralOffset + 32);
+    const localHeaderOffset = buffer.readUInt32LE(centralOffset + 42);
+    const rawName = buffer.subarray(centralOffset + 46, centralOffset + 46 + fileNameLength).toString('utf8');
+    const name = safeZipReadEntryName(rawName);
+    centralOffset += 46 + fileNameLength + extraLength + commentLength;
+    if (!name) continue;
+
+    if (localHeaderOffset + 30 > buffer.length || buffer.readUInt32LE(localHeaderOffset) !== 0x04034b50) {
+      throw new Error(`Invalid zip file: local header is corrupt for ${name}.`);
+    }
+    const localFileNameLength = buffer.readUInt16LE(localHeaderOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localHeaderOffset + 28);
+    const dataOffset = localHeaderOffset + 30 + localFileNameLength + localExtraLength;
+    const compressed = buffer.subarray(dataOffset, dataOffset + compressedSize);
+    const directory = name.endsWith('/');
+    let data = Buffer.alloc(0);
+
+    if (!directory) {
+      if (compressionMethod === 0) data = Buffer.from(compressed);
+      else if (compressionMethod === 8) data = zlib.inflateRawSync(compressed);
+      else throw new Error(`Unsupported zip compression method ${compressionMethod} for ${name}.`);
+    }
+
+    entries.push({ name, data, directory });
+  }
+
+  return entries;
+}
+
+function isSafeComponentReviewReturnPath(relativePath: string) {
+  const normalised = safeZipReadEntryName(relativePath);
+  if (!normalised || !normalised.startsWith('components/')) return false;
+  const parts = normalised.split('/');
+  if (parts.length < 3) return false;
+  if (!normalised.toLowerCase().endsWith('.md')) return false;
+  const base = path.basename(normalised).toLowerCase();
+  if (base === 'component.md' || base === 'index.md') return false;
+  return true;
+}
+
+async function importComponentReviewPackage(input: ImportComponentReviewPackageInput): Promise<ComponentReviewPackageImportResult> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.zipPath) throw new Error('Review response zip path is required.');
+  const root = path.resolve(input.projectPath);
+  const zipPath = path.resolve(input.zipPath);
+  if (!(await exists(root))) throw new Error(`Project path does not exist: ${input.projectPath}`);
+  if (!(await exists(zipPath))) throw new Error(`Review response zip does not exist: ${input.zipPath}`);
+  if (path.extname(zipPath).toLowerCase() !== '.zip') throw new Error('Review response must be a .zip file.');
+
+  const entries = await readZipFile(zipPath);
+  const hasComponentsDirectory = entries.some((entry) => {
+    const name = normaliseRelativePath(entry.name).replace(/^\/+/, '');
+    return name === 'components/' || name.startsWith('components/');
+  });
+  if (!hasComponentsDirectory) {
+    throw new Error('Review response rejected: the zip must contain a components/ directory.');
+  }
+
+  const importedFiles: string[] = [];
+  const skippedFiles: string[] = [];
+  let reviewMarkdown: string | undefined;
+
+  for (const entry of entries) {
+    const relativePath = safeZipReadEntryName(entry.name);
+    if (!relativePath || entry.directory) continue;
+    if (relativePath === 'REVIEW.md') {
+      reviewMarkdown = entry.data.toString('utf8');
+      continue;
+    }
+    if (!isSafeComponentReviewReturnPath(relativePath)) {
+      skippedFiles.push(relativePath);
+      continue;
+    }
+
+    const target = path.resolve(root, relativePath);
+    if (!target.startsWith(`${root}${path.sep}`)) {
+      skippedFiles.push(relativePath);
+      continue;
+    }
+
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.writeFile(target, entry.data, 'utf8');
+    importedFiles.push(relativePath);
+  }
+
+  const componentSlugs = new Set(importedFiles.map((file) => file.split('/')[1]).filter(Boolean));
+  return {
+    accepted: true,
+    zipPath,
+    importedFiles: importedFiles.sort((a, b) => a.localeCompare(b)),
+    skippedFiles: skippedFiles.sort((a, b) => a.localeCompare(b)),
+    componentCount: componentSlugs.size,
+    reviewIncluded: Boolean(reviewMarkdown),
+    ...(reviewMarkdown ? { reviewMarkdown } : {})
+  };
+}
+
 function shouldIncludeInReviewBundle(raw: string) {
   try {
     const parsed = matter(raw || '');
@@ -4690,37 +4841,48 @@ async function collectComponentReviewEntries(projectPath: string, componentSlug?
   return { entries, includedFiles: includedFiles.sort((a, b) => a.localeCompare(b)), componentCount };
 }
 
-function buildComponentReviewBundleReadme(input: { projectName: string; componentCount: number; componentFileCount: number; foundationFileCount: number }) {
+function buildComponentReviewBundleReadme(input: { projectName: string; componentCount: number; componentFileCount: number; foundationFileCount: number; targetComponent?: string | null }) {
+  const targetComponent = input.targetComponent || '<included-component-id>';
   return `# AIDD Component Review Package
 
 This zip was generated by AIDD for component review.
 
 ## Review scope
 
-Review only the component included in this package.
+You are reviewing **only the component included in this package**.
 
-Do not review other components, capabilities, delivery packages, source code, or project structure unless they are directly relevant to understanding the included component.
+Target component: \`${targetComponent}\`
 
-Use \`PROJECT.md\` only as background context for the included component.
+Do not review or modify any other components, capabilities, delivery packages, source code, or project structure unless explicitly required to understand this component.
+
+\`PROJECT.md\` is **context only**.
+
+Focus your review on:
+
+- clarity of purpose
+- responsibilities and boundaries
+- internal architecture
+- risks and edge cases
+- missing or unclear design decisions
+- pros and cons
+- suitability for implementation in a delivery package
 
 ## Your task
 
-Review the included component files under \`components/\` and improve them so they are clearer, more complete, and more useful for coding delivery packages.
+Review the included component section files under \`components/${targetComponent}/\` and improve them so they are clearer, more complete, and more useful for coding delivery packages.
 
-Your review should focus on the included component's clarity, responsibilities, boundaries, architecture, risks, missing information, pros and cons, and usefulness for future delivery-package implementation.
+Use \`PROJECT.md\` only as background context.
 
 ## Allowed changes
 
-You may update only the Markdown files for the included component under:
+You may update files only under:
 
-- \`components/<included-component-id>/\`
+- \`components/${targetComponent}/\`
 
 You must return a zip containing only:
 
-- updated Markdown files under \`components/<included-component-id>/\`
+- updated Markdown files under \`components/${targetComponent}/\`
 - \`REVIEW.md\`
-
-Do not include changes for any other component.
 
 The included \`REVIEW.md\` is a template. Complete it and return it with the updated component files.
 
@@ -4728,23 +4890,25 @@ The included \`REVIEW.md\` is a template. Complete it and return it with the upd
 
 Do not return:
 
-- changes for any component other than the included component
 - \`PROJECT.md\`
 - \`README.md\`
 - \`MANIFEST.json\`
 - generated \`component.md\` files
 - component \`index.md\` files
 - source code
-- files outside \`components/<included-component-id>/\`
+- files outside \`components/${targetComponent}/\`
+- any unrelated components
 
 ## Required return shape
 
 \`\`\`txt
 components/
-  <included-component-id>/
+  ${targetComponent}/
     <updated-section-files>.md
 REVIEW.md
 \`\`\`
+
+AIDD will accept a returned zip only when it contains a \`components/\` directory.
 
 ## REVIEW.md must include
 
@@ -4768,20 +4932,18 @@ aidd:
 ## Package summary
 
 - Project: ${input.projectName}
+- Target component: ${targetComponent}
 - Foundation files included: ${input.foundationFileCount}
 - Components found: ${input.componentCount}
 - Component files included: ${input.componentFileCount}
 `;
 }
 
-function buildComponentReviewTemplate(input: { projectName: string }) {
+function buildComponentReviewTemplate(input: { projectName: string; targetComponent?: string | null }) {
   return `# Component Review
 
 Project: ${input.projectName}
-
-## Review scope
-
-Review only the component included in this package.
+Target component: ${input.targetComponent || '<included-component-id>'}
 
 ## Summary of changes
 
@@ -4872,8 +5034,8 @@ async function createComponentReviewBundle(projectPath: string, componentSlug?: 
   };
 
   const zipEntries: ZipEntryInput[] = [
-    { name: 'README.md', data: Buffer.from(buildComponentReviewBundleReadme({ projectName, componentCount: components.componentCount, componentFileCount: components.includedFiles.length, foundationFileCount: foundation.includedFiles.length }), 'utf8') },
-    { name: 'REVIEW.md', data: Buffer.from(buildComponentReviewTemplate({ projectName }), 'utf8') },
+    { name: 'README.md', data: Buffer.from(buildComponentReviewBundleReadme({ projectName, componentCount: components.componentCount, componentFileCount: components.includedFiles.length, foundationFileCount: foundation.includedFiles.length, targetComponent: requestedSlug || null }), 'utf8') },
+    { name: 'REVIEW.md', data: Buffer.from(buildComponentReviewTemplate({ projectName, targetComponent: requestedSlug || null }), 'utf8') },
     { name: 'MANIFEST.json', data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8') },
     { name: 'PROJECT.md', data: Buffer.from(foundation.markdown, 'utf8') },
     ...components.entries
@@ -6088,6 +6250,11 @@ ipcMain.handle('project:packageComponentsForReview', async (_event, projectPath:
 ipcMain.handle('project:packageComponentForReview', async (_event, input: PackageComponentReviewInput) => {
   if (!input?.projectPath || !input?.slug) throw new Error('Project path and component slug are required.');
   return createComponentReviewBundle(input.projectPath, input.slug);
+});
+
+ipcMain.handle('project:importComponentReviewPackage', async (_event, input: ImportComponentReviewPackageInput) => {
+  if (!input?.projectPath || !input?.zipPath) throw new Error('Project path and review response zip path are required.');
+  return withProjectSaveSync(input.projectPath, () => importComponentReviewPackage(input));
 });
 
 ipcMain.handle('project:updateComponent', async (_event, input: UpdateComponentInput) => {
