@@ -636,6 +636,12 @@ interface AiddImportFoundationReviewPackageInput {
   zipPath: string;
 }
 
+interface AiddImportFoundationDocumentUpdateInput {
+  projectPath: string;
+  fileName: string;
+  updateFilePath: string;
+}
+
 interface AiddFoundationReviewPackageImportResult {
   accepted: boolean;
   zipPath: string;
@@ -687,6 +693,7 @@ interface Window {
     prepareFoundationReviewPackage: (projectPath: string) => Promise<AiddFoundationReviewPackageResult>;
     packageFoundationForReview: (projectPath: string) => Promise<AiddFoundationReviewPackageResult>;
     importFoundationReviewPackage: (input: AiddImportFoundationReviewPackageInput) => Promise<AiddFoundationReviewPackageImportResult>;
+    importFoundationDocumentUpdate: (input: AiddImportFoundationDocumentUpdateInput) => Promise<AiddProjectSetupState>;
     packageComponentsForReview: (projectPath: string) => Promise<AiddComponentReviewPackageResult>;
     packageComponentForReview: (input: AiddPackageComponentForReviewInput) => Promise<AiddComponentReviewPackageResult>;
     importComponentReviewPackage: (input: AiddImportComponentReviewPackageInput) => Promise<AiddComponentReviewPackageImportResult>;

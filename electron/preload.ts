@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('aidd', {
   prepareFoundationReviewPackage: (projectPath: string) => ipcRenderer.invoke('project:prepareFoundationReviewPackage', projectPath),
   packageFoundationForReview: (projectPath: string) => ipcRenderer.invoke('project:packageFoundationForReview', projectPath),
   importFoundationReviewPackage: (input: unknown) => ipcRenderer.invoke('project:importFoundationReviewPackage', input),
+  importFoundationDocumentUpdate: (input: unknown) => ipcRenderer.invoke('project:importFoundationDocumentUpdate', input),
   packageComponentsForReview: (projectPath: string) => ipcRenderer.invoke('project:packageComponentsForReview', projectPath),
   packageComponentForReview: (input: unknown) => ipcRenderer.invoke('project:packageComponentForReview', input),
   importComponentReviewPackage: (input: unknown) => ipcRenderer.invoke('project:importComponentReviewPackage', input),

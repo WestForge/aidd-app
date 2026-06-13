@@ -372,6 +372,12 @@ interface ImportFoundationReviewPackageInput {
   zipPath: string;
 }
 
+interface ImportFoundationDocumentUpdateInput {
+  projectPath: string;
+  fileName: string;
+  updateFilePath: string;
+}
+
 interface FoundationReviewPackageImportResult {
   accepted: boolean;
   zipPath: string;
@@ -5060,6 +5066,39 @@ async function importFoundationReviewPackage(input: ImportFoundationReviewPackag
   };
 }
 
+async function importFoundationDocumentUpdate(input: ImportFoundationDocumentUpdateInput): Promise<ProjectSetupState> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.fileName) throw new Error('Foundation file name is required.');
+  if (!input.updateFilePath) throw new Error('Dropped Markdown update path is required.');
+  if (path.basename(input.fileName) !== input.fileName || path.extname(input.fileName).toLowerCase() !== '.md') {
+    throw new Error(`Invalid Foundation file name: ${input.fileName}`);
+  }
+
+  const updateFilePath = path.resolve(input.updateFilePath);
+  if (!(await exists(updateFilePath))) throw new Error(`Dropped Markdown file does not exist: ${input.updateFilePath}`);
+  if (path.extname(updateFilePath).toLowerCase() !== '.md') throw new Error('Foundation updates must be Markdown .md files.');
+
+  const docs = await readFoundationDocuments(input.projectPath);
+  const existing = docs.find((doc) => doc.fileName === input.fileName);
+  if (!existing) throw new Error(`Unknown foundation document: ${input.fileName}`);
+
+  const raw = await fsp.readFile(updateFilePath, 'utf8');
+  const parsed = matter(raw);
+  const incomingStatus = normalizeSetupStatus(parsed.data?.aidd?.status || parsed.data?.status || existing.status);
+  const body = parsed.content ?? raw;
+
+  await fsp.mkdir(path.dirname(existing.filePath), { recursive: true });
+  await fsp.writeFile(existing.filePath, buildFoundationMarkdown({
+    id: existing.id,
+    title: existing.title,
+    status: incomingStatus,
+    required: existing.required,
+    body,
+  }), 'utf8');
+
+  return readProjectSetup(input.projectPath);
+}
+
 async function buildProjectFoundationReviewMarkdown(projectPath: string) {
   const foundationRoot = path.join(projectPath, 'foundation');
   const files = await collectMarkdownFiles(foundationRoot);
@@ -6531,6 +6570,11 @@ ipcMain.handle('project:prepareFoundationReviewPackage', async (_event, projectP
 ipcMain.handle('project:importFoundationReviewPackage', async (_event, input: ImportFoundationReviewPackageInput) => {
   if (!input?.projectPath || !input?.zipPath) throw new Error('Project path and foundation review response zip path are required.');
   return withProjectSaveSync(input.projectPath, () => importFoundationReviewPackage(input));
+});
+
+ipcMain.handle('project:importFoundationDocumentUpdate', async (_event, input: ImportFoundationDocumentUpdateInput) => {
+  if (!input?.projectPath || !input?.fileName || !input?.updateFilePath) throw new Error('Project path, foundation file name and Markdown update path are required.');
+  return withProjectSaveSync(input.projectPath, () => importFoundationDocumentUpdate(input));
 });
 
 ipcMain.handle('project:saveFoundationDocument', async (_event, input: SaveFoundationInput) => {

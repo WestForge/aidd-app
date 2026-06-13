@@ -4,7 +4,6 @@ import {
   CircleDashed,
   Eye,
   FileText,
-  FolderOpen,
   Pencil,
   PlayCircle,
   Puzzle,
@@ -236,6 +235,78 @@ function RibbonTile({
 }
 
 
+
+function FoundationDocumentTile({
+  title,
+  icon: Icon,
+  selected,
+  status,
+  fileName,
+  dragReady,
+  dropActive,
+  disabled,
+  onClick,
+  onDragStart,
+  onDragEnter,
+  onDragLeave,
+  onDragOver,
+  onDrop,
+}: {
+  title: string;
+  icon: LucideIcon;
+  selected: boolean;
+  status?: string;
+  fileName: string;
+  dragReady: boolean;
+  dropActive: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  onDragStart: (event: React.DragEvent<HTMLButtonElement>) => void;
+  onDragEnter: (event: React.DragEvent<HTMLButtonElement>) => void;
+  onDragLeave: (event: React.DragEvent<HTMLButtonElement>) => void;
+  onDragOver: (event: React.DragEvent<HTMLButtonElement>) => void;
+  onDrop: (event: React.DragEvent<HTMLButtonElement>) => void;
+}) {
+  const displayStatus = status ?? "not-started";
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      draggable={dragReady && !disabled}
+      onClick={onClick}
+      onDragStart={onDragStart}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      title={
+        dragReady
+          ? `${title}: drag out this Markdown file, or drop an updated ${fileName} here.`
+          : `${title}: preparing Markdown drag file. You can drop an updated ${fileName} here.`
+      }
+      className={cn(
+        "relative flex h-16 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent",
+        selected && "border-ring bg-accent ring-1 ring-ring",
+        dropActive && "border-ring bg-accent ring-1 ring-ring",
+        disabled && "cursor-not-allowed opacity-50",
+        dragReady && !disabled && "cursor-grab active:cursor-grabbing",
+      )}
+    >
+      <StatusIcon
+        status={displayStatus}
+        className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
+      />
+      <Icon className="h-4 w-4 text-muted-foreground" />
+      <span className="line-clamp-2 px-1 text-center font-medium leading-tight">
+        {title}
+      </span>
+      <span className="text-[10px] text-muted-foreground">
+        {dropActive ? "Drop update" : dragReady ? "Drag/drop" : "Preparing"}
+      </span>
+    </button>
+  );
+}
+
 function FoundationReviewTile({
   ready,
   busy,
@@ -338,8 +409,9 @@ export function SetupWorkflow({
   const [projectSpecificNotes, setProjectSpecificNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [dragFilePath, setDragFilePath] = useState<string | null>(null);
-  const [dragError, setDragError] = useState<string | null>(null);
+  const [foundationDragFiles, setFoundationDragFiles] = useState<Record<string, string>>({});
+  const [foundationDragError, setFoundationDragError] = useState<string | null>(null);
+  const [foundationDocDropTarget, setFoundationDocDropTarget] = useState<string | null>(null);
   const [foundationReviewFilePath, setFoundationReviewFilePath] = useState<string | null>(null);
   const [foundationReviewFileName, setFoundationReviewFileName] = useState<string | null>(null);
   const [foundationReviewBusy, setFoundationReviewBusy] = useState(false);
@@ -420,53 +492,117 @@ export function SetupWorkflow({
   }, [modelStarted, setup, step]);
 
   useEffect(() => {
-    if (!activeProject?.path || step !== "foundation" || !selectedDoc) {
-      setDragFilePath(null);
+    if (!activeProject?.path || step !== "foundation" || !setup) {
+      setFoundationDragFiles({});
       return;
     }
 
+    let cancelled = false;
     const timer = window.setTimeout(() => {
-      window.aidd
-        .prepareFoundationDragFile({
-          projectPath: activeProject.path,
-          fileName: selectedDoc.fileName,
-          title: selectedDoc.title,
-          status: draftStatus,
-          body: draftBody,
-        })
-        .then((filePath) => {
-          setDragFilePath(filePath);
-          setDragError(null);
+      const docs = setup.foundation;
+      Promise.all(
+        docs.map(async (doc) => {
+          const body = doc.fileName === selectedFile ? draftBody : doc.body;
+          const status = doc.fileName === selectedFile ? draftStatus : doc.status;
+          const filePath = await window.aidd.prepareFoundationDragFile({
+            projectPath: activeProject.path,
+            fileName: doc.fileName,
+            title: doc.title,
+            status,
+            body,
+          });
+          return [doc.fileName, filePath] as const;
+        }),
+      )
+        .then((entries) => {
+          if (cancelled) return;
+          setFoundationDragFiles(Object.fromEntries(entries));
+          setFoundationDragError(null);
         })
         .catch((err) => {
-          setDragFilePath(null);
-          setDragError(err instanceof Error ? err.message : String(err));
+          if (cancelled) return;
+          setFoundationDragFiles({});
+          setFoundationDragError(err instanceof Error ? err.message : String(err));
         });
     }, 350);
 
-    return () => window.clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [
     activeProject?.path,
-    selectedDoc?.fileName,
-    selectedDoc?.title,
     draftBody,
     draftStatus,
+    selectedFile,
+    setup,
     step,
   ]);
 
-  const startFoundationFileDrag = (event: React.DragEvent<HTMLDivElement>) => {
+  const startFoundationFileDrag = (
+    event: React.DragEvent<HTMLButtonElement>,
+    fileName: string,
+  ) => {
     event.preventDefault();
-    if (!dragFilePath) return;
-    window.aidd.startNativeFileDrag(dragFilePath);
+    const filePath = foundationDragFiles[fileName];
+    if (!filePath) return;
+    window.aidd.startNativeFileDrag(filePath);
   };
 
-  const openDragFileLocation = () => {
-    if (!dragFilePath) return;
-    window.aidd
-      .showItemInFolder(dragFilePath)
-      .catch((err) =>
-        setDragError(err instanceof Error ? err.message : String(err)),
-      );
+  const foundationDocumentDragOver = (event: React.DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const importFoundationDocumentUpdate = async (
+    event: React.DragEvent<HTMLButtonElement>,
+    doc: AiddFoundationDocument,
+  ) => {
+    event.preventDefault();
+    setFoundationDocDropTarget(null);
+    if (!activeProject?.path) return;
+
+    const files = Array.from(event.dataTransfer.files || []);
+    const markdownFile = files.find((file) => file.name.toLowerCase().endsWith(".md"));
+    const updateFilePath = markdownFile
+      ? window.aidd.getDroppedFilePath(markdownFile) || (markdownFile as File & { path?: string }).path || ""
+      : "";
+
+    if (!updateFilePath) {
+      const message = `Drop an updated Markdown file for ${docShortTitle(doc.fileName, doc.title)}.`;
+      setFoundationReviewError(message);
+      void window.aidd.notify({ title: "Foundation update rejected", body: message });
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setFoundationReviewError(null);
+    try {
+      const nextSetup = await window.aidd.importFoundationDocumentUpdate({
+        projectPath: activeProject.path,
+        fileName: doc.fileName,
+        updateFilePath,
+      });
+      setSetup(nextSetup);
+      setStep("foundation");
+      setSelectedFile(doc.fileName);
+      const updatedDoc = nextSetup.foundation.find((item) => item.fileName === doc.fileName);
+      if (updatedDoc) {
+        setDraftBody(updatedDoc.body);
+        setDraftStatus(updatedDoc.status);
+      }
+      void window.aidd.notify({
+        title: "Foundation updated",
+        body: `${docShortTitle(doc.fileName, doc.title)} was updated from the dropped Markdown file.`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setFoundationReviewError(message);
+      void window.aidd.notify({ title: "Foundation update failed", body: message });
+    } finally {
+      setSaving(false);
+    }
   };
 
 
@@ -672,16 +808,27 @@ export function SetupWorkflow({
             aria-label="Foundation context sections"
           >
             {orderedFoundationDocs.map((doc) => (
-              <RibbonTile
+              <FoundationDocumentTile
                 key={doc.fileName}
                 title={docShortTitle(doc.fileName, doc.title)}
                 icon={docIcon(doc.fileName)}
+                fileName={doc.fileName}
                 selected={step === "foundation" && selectedFile === doc.fileName}
                 status={doc.status}
+                dragReady={Boolean(foundationDragFiles[doc.fileName])}
+                dropActive={foundationDocDropTarget === doc.fileName}
                 onClick={() => {
                   setStep("foundation");
                   setSelectedFile(doc.fileName);
                 }}
+                onDragStart={(event) => startFoundationFileDrag(event, doc.fileName)}
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  setFoundationDocDropTarget(doc.fileName);
+                }}
+                onDragLeave={() => setFoundationDocDropTarget(null)}
+                onDragOver={foundationDocumentDragOver}
+                onDrop={(event) => importFoundationDocumentUpdate(event, doc)}
               />
             ))}
             <FoundationReviewTile
@@ -703,18 +850,18 @@ export function SetupWorkflow({
         )}
       </div>
 
-      {(error || foundationReviewError) && (
+      {(error || foundationReviewError || foundationDragError) && (
         <div className="shrink-0 px-4 pt-3">
           <Alert variant="destructive">
             <AlertTitle>Foundation error</AlertTitle>
-            <AlertDescription>{error || foundationReviewError}</AlertDescription>
+            <AlertDescription>{error || foundationReviewError || foundationDragError}</AlertDescription>
           </Alert>
         </div>
       )}
       <main className="min-h-0 flex-1 overflow-hidden p-4">
         {step === "foundation" && setup && (
-          <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[minmax(0,1fr)_108px]">
-            <Card className="flex min-h-0 flex-col rounded-md">
+          <div className="h-full min-h-0">
+            <Card className="flex h-full min-h-0 flex-col rounded-md">
               <CardHeader className="shrink-0 px-4 py-3">
                 <div className="flex items-center justify-between gap-4">
                   <div>
@@ -765,58 +912,6 @@ export function SetupWorkflow({
                 />
               </CardContent>
             </Card>
-
-            <aside
-              className="flex min-h-0 flex-col gap-2"
-              aria-label="Current foundation file drag column"
-            >
-              <Card className="rounded-md">
-                <CardHeader className="px-2 py-2">
-                  <CardTitle className="text-center text-xs">File</CardTitle>
-                </CardHeader>
-                <CardContent className="px-2 pb-2">
-                  <div
-                    draggable={Boolean(dragFilePath)}
-                    onDragStart={startFoundationFileDrag}
-                    title={
-                      dragFilePath
-                        ? "Drag this Markdown file into Explorer, ChatGPT, Claude, or another file upload target."
-                        : "Preparing current Markdown file..."
-                    }
-                    className={cn(
-                      "flex h-28 select-none flex-col items-center justify-center gap-2 rounded-md border bg-card p-2 text-center text-xs text-card-foreground shadow-sm",
-                      dragFilePath
-                        ? "cursor-grab hover:bg-accent active:cursor-grabbing"
-                        : "cursor-not-allowed opacity-60",
-                    )}
-                  >
-                    <FileText className="h-8 w-8" />
-                    <span className="line-clamp-2 break-all leading-tight">
-                      {selectedDoc?.fileName ?? "foundation.md"}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground">
-                      Drag out
-                    </span>
-                  </div>
-                  <Button
-                    className="mt-2 w-full px-1 text-[11px]"
-                    variant="outline"
-                    size="sm"
-                    onClick={openDragFileLocation}
-                    disabled={!dragFilePath}
-                    title="Open the generated file location"
-                  >
-                    <FolderOpen className="mr-1 h-3 w-3" />
-                    Folder
-                  </Button>
-                  {dragError && (
-                    <p className="mt-2 text-[10px] text-destructive">
-                      {dragError}
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </aside>
           </div>
         )}
 
