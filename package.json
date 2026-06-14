@@ -13,8 +13,8 @@
     "build": "npm run build:main && vite build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.main.json --noEmit",
     "lint": "echo \"No linter configured yet.\"",
-    "package": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder",
+    "package": "npm run build && electron-builder --dir --publish never",
+    "dist": "npm run build && electron-builder --publish never",
     "test": "npm run test:git-sync && npm run test:git-project-connection && npm run test:git-sync-workflow",
     "test:git-sync": "tsx tests/gitSync.unit.test.ts",
     "test:git-project-connection": "tsx tests/gitProjectConnector.unit.test.ts",
@@ -24,10 +24,12 @@
     "test:git-review-package": "tsx tests/gitReviewPackageStore.unit.test.ts",
     "test:git-conflict-safe": "npm run test:git-open-save-guard && npm run test:git-review-package && npm run test:git-review-resolver",
     "test:git-review-resolver": "tsx tests/gitReviewResolver.unit.test.ts",
-    "package:win": "npm run build && electron-builder --win --dir",
-    "dist:win": "npm run build && electron-builder --win nsis",
+    "package:win": "npm run build && electron-builder --win --dir --publish never",
+    "dist:win": "npm run build && electron-builder --win nsis --publish never",
     "dist:win:clean": "node scripts/clean-release.mjs && npm run dist:win",
-    "installer:win": "npm run dist:win"
+    "installer:win": "npm run dist:win",
+    "dist:win:publish": "npm run build && electron-builder --win nsis --publish always",
+    "dist:win:publish:clean": "node scripts/clean-release.mjs && npm run dist:win:publish"
   },
   "dependencies": {
     "@isomorphic-git/lightning-fs": "^4.6.0",
@@ -112,6 +114,13 @@
     },
     "asarUnpack": [
       "node_modules/keytar/**/*"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "WestForge",
+        "repo": "aidd-app"
+      }
     ]
   }
 }

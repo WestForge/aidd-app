@@ -147,7 +147,22 @@ function App() {
       <main className="min-w-0 flex-1 overflow-hidden">
         {screen === 'projects' && <Projects projects={projects} activeProject={activeProject} onCreateProject={() => setScreen('project-create')} onOpenProject={(project) => { setActiveProject(project); setScreen('home'); }} onOpenExistingProject={openExistingProject} onForgetProject={forgetProject} />}
         {screen === 'project-create' && <ProjectCreate onCreated={projectCreated} onCancel={() => setScreen('projects')} />}
-        {screen === 'home' && <Home packages={packages} selectedId={selectedId} onSelectPackage={selectPackage} onCreatePackage={createPackage} activeProject={activeProject} onProjectUpdated={(project) => refreshProjects(project)} onOpenSetup={() => setScreen('foundation')} onOpenCapabilities={() => setScreen('capabilities')} onOpenComponents={() => setScreen('components')} onOpenDelivery={() => setScreen('delivery-packages')} />}
+        {screen === 'home' && (
+          <Home
+            packages={packages}
+            selectedId={selectedId}
+            onSelectPackage={selectPackage}
+            onCreatePackage={createPackage}
+            activeProject={activeProject}
+            onProjectUpdated={(project) => {
+              void refreshProjects(project);
+            }}
+            onOpenSetup={() => setScreen('foundation')}
+            onOpenCapabilities={() => setScreen('capabilities')}
+            onOpenComponents={() => setScreen('components')}
+            onOpenDelivery={() => setScreen('delivery-packages')}
+          />
+        )}
         {screen === 'foundation' && (
           <SetupWorkflow
             activeProject={activeProject}

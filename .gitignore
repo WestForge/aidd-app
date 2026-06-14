@@ -4,3 +4,10 @@ release/
 *.log
 .DS_Store
 .env
+
+# IDE files
+.idea/
+
+# Vite cache
+.vite/
+
