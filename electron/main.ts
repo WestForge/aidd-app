@@ -16,7 +16,7 @@ import type { AiddSaveGitIdentityInput, AiddSaveGitSyncSettingsInput, AiddGitSyn
 import { cancelGitReview, completeGitReview, listGitReviewFiles, readGitReviewFileContent, resolveGitReviewFile } from './services/gitReviewResolver';
 import { readActiveGitReviewState } from './services/gitReviewPackageStore';
 
-const isDev = process.env.NODE_ENV !== 'production';
+const isDev = !app.isPackaged;
 const TEMPLATE_ID = 'aidd-default';
 const TEMPLATE_VERSION = '0.8.0';
 const AIDD_DEFAULT_BRANCH = 'main';
@@ -841,11 +841,11 @@ function templatePathCandidates() {
   const resourcesPath = (process as any).resourcesPath as string | undefined;
   const candidates = [
     path.join(process.cwd(), 'resources', 'templates', 'aidd-default'),
-    path.join(app.getAppPath(), 'resources', 'templates', 'aidd-default'),
-    resourcesPath ? path.join(resourcesPath, 'resources', 'templates', 'aidd-default') : '',
     resourcesPath ? path.join(resourcesPath, 'templates', 'aidd-default') : '',
+    resourcesPath ? path.join(resourcesPath, 'resources', 'templates', 'aidd-default') : '',
     resourcesPath ? path.join(resourcesPath, 'app.asar.unpacked', 'resources', 'templates', 'aidd-default') : '',
-    resourcesPath ? path.join(resourcesPath, 'app', 'resources', 'templates', 'aidd-default') : ''
+    resourcesPath ? path.join(resourcesPath, 'app', 'resources', 'templates', 'aidd-default') : '',
+    path.join(app.getAppPath(), 'resources', 'templates', 'aidd-default')
   ].filter(Boolean);
 
   return Array.from(new Set(candidates));

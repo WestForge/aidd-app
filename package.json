@@ -8,7 +8,8 @@
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:main\"",
     "dev:renderer": "vite --host 127.0.0.1",
     "dev:main": "wait-on tcp:5173 && tsc -p tsconfig.main.json && electron .",
-    "build": "tsc -p tsconfig.main.json && vite build",
+    "build:main": "tsc -p tsconfig.main.json --noEmit && node scripts/build-main.mjs",
+    "build": "npm run build:main && vite build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.main.json --noEmit",
     "lint": "echo \"No linter configured yet.\"",
     "package": "npm run build && electron-builder --dir",
@@ -21,7 +22,11 @@
     "test:git-open-save-guard": "tsx tests/gitOpenSaveGuard.unit.test.ts",
     "test:git-review-package": "tsx tests/gitReviewPackageStore.unit.test.ts",
     "test:git-conflict-safe": "npm run test:git-open-save-guard && npm run test:git-review-package && npm run test:git-review-resolver",
-    "test:git-review-resolver": "tsx tests/gitReviewResolver.unit.test.ts"
+    "test:git-review-resolver": "tsx tests/gitReviewResolver.unit.test.ts",
+    "package:win": "npm run build && electron-builder --win --dir",
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "dist:win:clean": "node scripts/clean-release.mjs && npm run dist:win",
+    "installer:win": "npm run dist:win"
   },
   "dependencies": {
     "@isomorphic-git/lightning-fs": "^4.6.0",
@@ -47,6 +52,7 @@
     "concurrently": "^9.1.0",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.12",
     "postcss": "^8.5.15",
     "tailwindcss": "^3.4.19",
     "tsx": "^4.20.5",
@@ -63,7 +69,45 @@
       "resources/**/*"
     ],
     "directories": {
-      "output": "release"
-    }
+      "output": "release",
+      "buildResources": "build"
+    },
+    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "asar": true,
+    "extraResources": [
+      {
+        "from": "resources/templates",
+        "to": "templates",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "publisherName": "WestForge"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AIDD",
+      "deleteAppDataOnUninstall": false,
+      "include": "build/installer.nsh"
+    },
+    "asarUnpack": [
+      "node_modules/keytar/**/*"
+    ]
   }
 }

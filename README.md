@@ -20,6 +20,26 @@ npm install
 npm run dev
 ```
 
+
+## Package for Windows
+
+AIDD now includes an NSIS installer configuration through `electron-builder`.
+
+```powershell
+npm ci
+npm run dist:win
+```
+
+The installer is created under `release/` as `AIDD-Setup-<version>.exe`.
+
+For an unpacked smoke-test build, run:
+
+```powershell
+npm run package:win
+```
+
+More detail is in `docs/PACKAGING.md`.
+
 ## Notes
 
 - Git is hidden from product-owner screens.
