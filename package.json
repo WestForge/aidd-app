@@ -23,8 +23,8 @@
     "test:git-review-package": "tsx tests/gitReviewPackageStore.unit.test.ts",
     "test:git-conflict-safe": "npm run test:git-open-save-guard && npm run test:git-review-package && npm run test:git-review-resolver",
     "test:git-review-resolver": "tsx tests/gitReviewResolver.unit.test.ts",
-    "package:win": "npm run build && electron-builder --win --dir",
-    "dist:win": "npm run build && electron-builder --win nsis",
+    "package:win": "npm run build && electron-builder --win --dir --publish never",
+    "dist:win": "npm run build && electron-builder --win nsis --publish never",
     "dist:win:clean": "node scripts/clean-release.mjs && npm run dist:win",
     "installer:win": "npm run dist:win"
   },
