@@ -3,11 +3,11 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  Archive,
   CheckCircle2,
   ClipboardList,
   FileText,
   FolderOpen,
-  Layers3,
   Loader2,
   PackageCheck,
   UploadCloud,
@@ -15,7 +15,6 @@ import {
   Plus,
   RefreshCw,
   Save,
-  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import type { DeliveryBundle } from "../domain/types";
@@ -28,7 +27,6 @@ import {
   CardTitle,
 } from "./ui/card";
 import { Input } from "./ui/input";
-import { Badge } from "./ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Select } from "./ui/select";
 import { Textarea } from "./ui/textarea";
@@ -53,6 +51,91 @@ const statusOptions = [
 
 function statusLabel(value?: string) {
   return (value || "packaging").replace(/-/g, " ");
+}
+
+function isApprovedStatus(value?: string) {
+  return String(value || "").trim().toLowerCase() === "approved";
+}
+
+function isLockedDeliveryStatus(value?: string) {
+  return [
+    "approved",
+    "approved-for-ai",
+    "in-progress",
+    "in-ai-execution",
+    "active",
+    "done",
+    "complete",
+    "accepted",
+  ].includes(String(value || "").trim().toLowerCase());
+}
+
+function joinDisplayPath(base: string, child: string) {
+  if (!base) return child;
+  const separator = base.includes("\\") ? "\\" : "/";
+  return `${base.replace(/[\\/]+$/, "")}${separator}${child.replace(/^[\\/]+/, "")}`;
+}
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back to the older textarea copy path below.
+    }
+  }
+
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.setAttribute("readonly", "true");
+  textArea.style.position = "fixed";
+  textArea.style.left = "-9999px";
+  textArea.style.top = "0";
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textArea);
+
+  if (!copied) {
+    throw new Error("Clipboard copy failed.");
+  }
+}
+
+function buildAgenticAiStartPrompt(detail: AiddDeliveryPackageDetail, activeProject: AiddTrackedProject) {
+  const workspacePath = activeProject.workspacePath?.trim() || "<source workspace>";
+  const packageRelativePath = `delivery/${detail.id}`;
+  const packagePath = detail.workspacePackagePath || joinDisplayPath(workspacePath, packageRelativePath);
+  const phaseFiles = detail.phases.length
+    ? detail.phases.map((phase) => `- ${packageRelativePath}/${phase.fileName}`).join("\n")
+    : `- ${packageRelativePath}/phase-*.md`;
+
+  return [
+    "Start implementing this approved AIDD delivery package.",
+    "",
+    `Workspace: ${workspacePath}`,
+    `Delivery package: ${packagePath}`,
+    `Package id: ${detail.id}`,
+    `Package title: ${detail.title}`,
+    "",
+    "Read these first:",
+    "- AGENTS.md",
+    "- docs/foundation.md",
+    "- docs/standards.md",
+    "- docs/components.md",
+    `- ${packageRelativePath}/implementation-strategy.md`,
+    phaseFiles,
+    "",
+    "Use the Foundation and Standards to steer the implementation. Use the component source map to find the relevant source code. Implement against the source workspace code, not the AIDD authoring project.",
+    "",
+    "As you work:",
+    `- Update the task checkboxes and progress notes in ${packageRelativePath}/phase-*.md or ${packageRelativePath}/stage-*.md.`,
+    `- Record changed files, verification evidence, blockers, and proposed AIDD updates in ${packageRelativePath}.`,
+    "- Do not edit docs/foundation.md, docs/standards.md, or docs/components.md directly; record proposed documentation changes in the delivery package instead.",
+    "- Do not inspect or modify the active AIDD source project unless explicitly asked.",
+    "- Keep changes focused on the approved delivery package scope.",
+  ].join("\n");
 }
 
 const deliveryStatusVisuals: Record<
@@ -136,8 +219,14 @@ export function BundleEditor({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [importingReview, setImportingReview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [publishMessage, setPublishMessage] = useState<string | null>(null);
+  const [reviewMessage, setReviewMessage] = useState<string | null>(null);
+  const [startMessage, setStartMessage] = useState<string | null>(null);
+  const [reviewPackage, setReviewPackage] = useState<AiddDeliveryReviewPackageResult | null>(null);
+  const [reviewPackageDragFilePath, setReviewPackageDragFilePath] = useState<string | null>(null);
   const [dragFilePath, setDragFilePath] = useState<string | null>(null);
   const [dragError, setDragError] = useState<string | null>(null);
   const [newPhaseTitle, setNewPhaseTitle] = useState("");
@@ -172,6 +261,10 @@ export function BundleEditor({
         id: bundle.id,
       });
       setDetail(next);
+      setReviewPackage(null);
+      setReviewPackageDragFilePath(null);
+      setReviewMessage(null);
+      setStartMessage(null);
       onChange({
         ...bundle,
         title: next.title,
@@ -251,6 +344,8 @@ export function BundleEditor({
     return null;
   }, [activeTab, currentPhase, detail]);
 
+  const packageLocked = Boolean(detail && isLockedDeliveryStatus(detail.status));
+
   useEffect(() => {
     if (!activeProject?.path || !detail || !currentDragDocument) {
       setDragFilePath(null);
@@ -282,7 +377,10 @@ export function BundleEditor({
   }, [activeProject?.path, detail?.id, currentDragDocument]);
 
   const updateDetail = (patch: Partial<AiddDeliveryPackageDetail>) => {
-    setDetail((current) => (current ? { ...current, ...patch } : current));
+    setDetail((current) => {
+      if (!current || isLockedDeliveryStatus(current.status)) return current;
+      return { ...current, ...patch };
+    });
   };
 
   const updatePhase = (
@@ -290,7 +388,7 @@ export function BundleEditor({
     patch: Partial<AiddDeliveryPackagePhase>,
   ) => {
     setDetail((current) => {
-      if (!current) return current;
+      if (!current || isLockedDeliveryStatus(current.status)) return current;
       return {
         ...current,
         phases: current.phases.map((phase) =>
@@ -308,30 +406,176 @@ export function BundleEditor({
         projectPath: activeProject.path,
         packageId,
       });
-      setPublishMessage(`Published to ${result.targetPath}`);
+      const writtenCount = Array.isArray(result.writtenFiles) ? result.writtenFiles.length : 0;
+      const skippedCount = Array.isArray(result.skippedFiles) ? result.skippedFiles.length : 0;
+      setPublishMessage(
+        `Published delivery files to ${result.targetPath}. ${writtenCount} written, ${skippedCount} unchanged.`,
+      );
       return result;
     } finally {
       setPublishing(false);
     }
   };
 
+  const saveCurrentPackageState = async () => {
+    if (!activeProject || !detail) return null;
+    return window.aidd.saveDeliveryPackage({
+      projectPath: activeProject.path,
+      id: detail.id,
+      title: detail.title,
+      status: detail.status,
+      snapshotBody: detail.snapshotBody,
+      strategyBody: detail.strategyBody,
+      phases: detail.phases,
+    });
+  };
+
+  const createDeliveryReviewPackage = async () => {
+    if (!activeProject || !detail) return;
+    if (isLockedDeliveryStatus(detail.status)) {
+      setDragError("Approved delivery packages are read-only. Use Start agentic AI for development execution.");
+      return;
+    }
+    setReviewing(true);
+    setError(null);
+    setReviewMessage(null);
+    setDragError(null);
+    try {
+      const saved = await saveCurrentPackageState();
+      if (!saved) return;
+      setDetail(saved);
+      const bundle = await window.aidd.packageDeliveryPackageForReview({
+        projectPath: activeProject.path,
+        packageId: saved.id,
+      });
+      setReviewPackage(bundle);
+      setReviewPackageDragFilePath(bundle.filePath);
+      setReviewMessage(
+        `Created ${bundle.fileName} with ${bundle.strategyFileCount} strategy file(s), ${bundle.phaseFileCount} phase/stage file(s), ${bundle.standardsFileCount} standards file(s), ${bundle.capabilityFileCount} capability file(s), ${bundle.componentFileCount} component file(s), and ${bundle.sourceFileCount} source file(s).`,
+      );
+      await window.aidd.notify({
+        title: "Delivery review package ready",
+        body: `${bundle.sourceFileCount} source file(s) packaged. Drag the Review package tile from the toolbar when ready.`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create the delivery review package.");
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  const startDeliveryReviewPackageDrag = (event: React.DragEvent<HTMLButtonElement>) => {
+    if (!reviewPackageDragFilePath) {
+      event.preventDefault();
+      setDragError("Click Review package before dragging it out.");
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("text/plain", reviewPackageDragFilePath);
+    event.preventDefault();
+    setDragError(null);
+    window.aidd.startNativeFileDrag(reviewPackageDragFilePath);
+  };
+
+  const droppedZipPathFromEvent = (event: React.DragEvent<HTMLButtonElement>) => {
+    const file = event.dataTransfer.files?.[0];
+    if (file) {
+      const nativePath = window.aidd.getDroppedFilePath(file);
+      if (nativePath) return nativePath;
+      const fallbackPath = (file as File & { path?: string }).path;
+      if (fallbackPath) return fallbackPath;
+    }
+    return event.dataTransfer.getData("text/plain");
+  };
+
+  const importDeliveryReviewPackage = async (event: React.DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!activeProject?.path || !detail) return;
+    if (isLockedDeliveryStatus(detail.status)) {
+      setDragError("Approved delivery packages are read-only. Returned review zips cannot update a locked package.");
+      return;
+    }
+
+    const zipPath = droppedZipPathFromEvent(event);
+    if (!zipPath) {
+      setDragError("Drop a returned delivery review .zip onto this tile.");
+      return;
+    }
+    if (!zipPath.toLowerCase().endsWith(".zip")) {
+      setDragError("Delivery review response rejected: drop a .zip file.");
+      return;
+    }
+
+    setImportingReview(true);
+    setError(null);
+    setDragError(null);
+    setReviewMessage(null);
+    try {
+      const result = await window.aidd.importDeliveryReviewPackage({
+        projectPath: activeProject.path,
+        packageId: detail.id,
+        zipPath,
+      });
+      setReviewPackage(null);
+      setReviewPackageDragFilePath(null);
+      const refreshed = await window.aidd.readDeliveryPackage({
+        projectPath: activeProject.path,
+        id: detail.id,
+      });
+      setDetail(refreshed);
+      const importedFiles = Array.isArray(result?.importedFiles) ? result.importedFiles : [];
+      const backedUpFiles = Array.isArray(result?.backedUpFiles) ? result.backedUpFiles : [];
+      const skippedFiles = Array.isArray(result?.skippedFiles) ? result.skippedFiles : [];
+      const assembledPackageUpdated = Boolean(result?.assembledPackageUpdated);
+      if (assembledPackageUpdated) setActiveTab("packaged");
+      onChange({
+        ...bundle,
+        title: refreshed.title,
+        status: refreshed.status as DeliveryBundle["status"],
+      });
+      const importDetails = [
+        assembledPackageUpdated
+          ? `Imported ${importedFiles.length} delivery file(s) and regenerated the packaged implementation plan.`
+          : `Imported ${importedFiles.length} delivery file(s) from returned review zip.`,
+        backedUpFiles.length
+          ? `Backed up ${backedUpFiles.length} existing file(s) before replacing them.`
+          : null,
+        skippedFiles.length
+          ? `Skipped ${skippedFiles.length} file(s) that were unsafe, unsupported, or too empty to import.`
+          : null,
+      ].filter(Boolean);
+      setReviewMessage(importDetails.join(" "));
+      await window.aidd.notify({
+        title: "Delivery review imported",
+        body: assembledPackageUpdated
+          ? `${importedFiles.length} delivery file(s) imported. Implementation plan regenerated.`
+          : `${importedFiles.length} delivery file(s) imported.`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not import the delivery review package.");
+    } finally {
+      setImportingReview(false);
+    }
+  };
+
   const savePackage = async () => {
     if (!activeProject || !detail) return;
+    if (isLockedDeliveryStatus(detail.status)) {
+      setError("Approved delivery packages are read-only. Use Republish workspace or create a revision before changing files.");
+      return;
+    }
+    const wasApproved = isApprovedStatus(detail.status);
     setSaving(true);
     setError(null);
     setPublishMessage(null);
     try {
-      const next = await window.aidd.saveDeliveryPackage({
-        projectPath: activeProject.path,
-        id: detail.id,
-        title: detail.title,
-        status: detail.status,
-        snapshotBody: detail.snapshotBody,
-        strategyBody: detail.strategyBody,
-        phases: detail.phases,
-      });
+      const next = await saveCurrentPackageState();
+      if (!next) return;
       let refreshed = next;
-      if (next.status === "approved") {
+      const becameApproved = isApprovedStatus(next.status) && !wasApproved;
+      if (becameApproved) {
         await publishSavedPackage(next.id);
         refreshed = await window.aidd.readDeliveryPackage({
           projectPath: activeProject.path,
@@ -339,6 +583,9 @@ export function BundleEditor({
         });
       }
       setDetail(refreshed);
+      setReviewPackage(null);
+      setReviewPackageDragFilePath(null);
+      setReviewMessage(null);
       onChange({
         ...bundle,
         title: refreshed.title,
@@ -346,7 +593,7 @@ export function BundleEditor({
         lastUpdated: new Date().toISOString().slice(0, 10),
       });
       await window.aidd.notify({
-        title: refreshed.status === "approved" ? "Delivery package approved and published" : "Delivery package saved",
+        title: becameApproved ? "Delivery package approved and published" : "Delivery package saved",
         body: refreshed.id,
       });
     } catch (err) {
@@ -402,8 +649,68 @@ export function BundleEditor({
     }
   };
 
+  const republishLockedPackage = async () => {
+    if (!activeProject || !detail) return;
+    setError(null);
+    setPublishMessage(null);
+    try {
+      await publishSavedPackage(detail.id);
+      const refreshed = await window.aidd.readDeliveryPackage({
+        projectPath: activeProject.path,
+        id: detail.id,
+      });
+      setDetail(refreshed);
+      onChange({
+        ...bundle,
+        title: refreshed.title,
+        status: refreshed.status as DeliveryBundle["status"],
+        lastUpdated: new Date().toISOString().slice(0, 10),
+      });
+      await window.aidd.notify({
+        title: "Workspace delivery package republished",
+        body: refreshed.id,
+      });
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not republish the delivery package to the workspace.",
+      );
+    }
+  };
+
+  const copyAgenticAiStartPrompt = async () => {
+    if (!activeProject || !detail) return;
+
+    if (!isLockedDeliveryStatus(detail.status)) {
+      setError("Approve and publish this delivery package before starting agentic AI development.");
+      return;
+    }
+
+    if (!detail.workspacePackagePath) {
+      setError("Publish this approved package to the workspace before copying the agentic AI start prompt.");
+      return;
+    }
+
+    try {
+      const prompt = buildAgenticAiStartPrompt(detail, activeProject);
+      await copyTextToClipboard(prompt);
+      setStartMessage(`Copied start prompt for ${detail.id}. Paste it into your agentic AI tool from the source workspace.`);
+      await window.aidd.notify({
+        title: "Agentic AI start prompt copied",
+        body: detail.id,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not copy the agentic AI start prompt.");
+    }
+  };
+
   const createPhase = async () => {
     if (!activeProject || !detail) return;
+    if (isLockedDeliveryStatus(detail.status)) {
+      setError("Approved delivery packages are read-only. Create a revision before changing phases.");
+      return;
+    }
     const title = newPhaseTitle.trim();
     if (!title) {
       setError("Add a phase name before creating the phase.");
@@ -458,7 +765,7 @@ export function BundleEditor({
 
   const movePhase = (phaseId: string, direction: "up" | "down") => {
     setDetail((current) => {
-      if (!current) return current;
+      if (!current || isLockedDeliveryStatus(current.status)) return current;
       const index = current.phases.findIndex((phase) => phase.id === phaseId);
       const targetIndex = direction === "up" ? index - 1 : index + 1;
       if (
@@ -477,6 +784,10 @@ export function BundleEditor({
 
   const assemblePackage = async () => {
     if (!activeProject || !detail) return;
+    if (isLockedDeliveryStatus(detail.status)) {
+      setError("Approved delivery packages are read-only. Create a revision before regenerating the implementation plan.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -526,8 +837,6 @@ export function BundleEditor({
     );
   }
 
-  const phaseTabs = detail?.phases ?? [];
-
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <header className="flex h-16 shrink-0 items-center justify-between border-b px-6">
@@ -573,13 +882,13 @@ export function BundleEditor({
           <Button
             variant="outline"
             size="sm"
-            onClick={approveAndPublishPackage}
-            disabled={!detail || saving || publishing}
+            onClick={packageLocked ? republishLockedPackage : approveAndPublishPackage}
+            disabled={!detail || saving || publishing || reviewing || importingReview}
           >
             {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-            {detail?.status === "approved" ? "Publish to workspace" : "Approve & publish"}
+            {packageLocked ? "Republish workspace" : "Approve & publish"}
           </Button>
-          <Button size="sm" onClick={savePackage} disabled={!detail || saving || publishing}>
+          <Button size="sm" onClick={savePackage} disabled={!detail || packageLocked || saving || publishing || reviewing || importingReview}>
             {saving ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
@@ -591,67 +900,70 @@ export function BundleEditor({
       </header>
 
       {detail && (
-        <div className="flex shrink-0 gap-1.5 overflow-x-auto border-b bg-muted/30 px-6 py-2">
-          <ToolbarButton
-            active={activeTab === "strategy"}
-            onClick={() => setActiveTab("strategy")}
-            icon={Sparkles}
-            label="Strategy"
-            title="Implementation strategy"
-            status={detail.status}
-          />
-          {phaseTabs.map((phase, index) => (
-            <ToolbarButton
-              key={phase.id}
-              active={activeTab === phaseTabId(phase)}
-              onClick={() => setActiveTab(phaseTabId(phase))}
-              icon={Layers3}
-              label={`Phase ${index + 1}`}
-              title={`${phase.title}: ${statusLabel(phase.status)}`}
-              status={phase.status}
+        <div className="flex shrink-0 items-center gap-3 overflow-x-auto border-b bg-muted/30 px-6 py-2">
+          <button
+            type="button"
+            draggable={Boolean(reviewPackageDragFilePath) && !reviewing && !importingReview}
+            className={cn(
+              "relative flex h-16 w-36 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-3 text-[11px] transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60",
+              reviewPackageDragFilePath && "cursor-grab border-emerald-500/70 bg-emerald-500/10 active:cursor-grabbing",
+              (reviewing || importingReview) && "cursor-wait opacity-80",
+            )}
+            onClick={() => void createDeliveryReviewPackage()}
+            onDragStart={startDeliveryReviewPackageDrag}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+            }}
+            onDrop={packageLocked ? undefined : importDeliveryReviewPackage}
+            disabled={!detail || packageLocked || saving || publishing || reviewing || importingReview}
+            title={packageLocked ? "Approved delivery packages are read-only. Use Start agentic AI." : reviewPackageDragFilePath ? "Review package is ready. Drag this zip out, or drop a returned delivery zip here." : "Create a delivery review package zip, or drop a returned delivery zip here."}
+          >
+            <DeliveryStatusIcon
+              status={reviewPackageDragFilePath ? "done" : importingReview ? "in-progress" : "packaging"}
+              className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
             />
-          ))}
+            {reviewing || importingReview ? (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            ) : (
+              <Archive className={cn("h-4 w-4 text-muted-foreground", reviewPackageDragFilePath && "text-green-400")} />
+            )}
+            <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
+              Review package
+            </span>
+            <span className="line-clamp-1 text-[10px] text-muted-foreground">
+              {reviewing ? "Creating..." : importingReview ? "Importing..." : reviewPackageDragFilePath ? "Drag/drop zip" : "Create/drop zip"}
+            </span>
+          </button>
+
           <button
             type="button"
             className={cn(
-              "relative flex h-16 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border/80 bg-card/70 px-2 text-[11px] transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60",
-              activeTab === "new-phase" &&
-                "border-ring bg-accent ring-1 ring-ring",
+              "relative flex h-16 w-40 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-3 text-[11px] transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60",
+              packageLocked && detail.workspacePackagePath && "border-blue-500/70 bg-blue-500/10",
             )}
-            onClick={() => setActiveTab("new-phase")}
-            disabled={saving}
-            title="Add implementation phase"
+            onClick={() => void copyAgenticAiStartPrompt()}
+            disabled={!detail || !packageLocked || !detail.workspacePackagePath}
+            title={
+              !packageLocked
+                ? "Approve and publish this package before starting agentic AI development."
+                : detail.workspacePackagePath
+                  ? "Copy a starter prompt for your agentic AI tool."
+                  : "Republish the package to the workspace before starting agentic AI development."
+            }
           >
-            <Plus className="h-4 w-4 text-muted-foreground" />
-            <span className="line-clamp-2 px-1 text-center font-medium leading-tight">
-              Add phase
+            <DeliveryStatusIcon
+              status={packageLocked && detail.workspacePackagePath ? "in-progress" : "packaging"}
+              className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
+            />
+            <PlayCircle className={cn("h-4 w-4 text-muted-foreground", packageLocked && detail.workspacePackagePath && "text-blue-400")} />
+            <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
+              Start agentic AI
+            </span>
+            <span className="line-clamp-1 text-[10px] text-muted-foreground">
+              {packageLocked ? detail.workspacePackagePath ? "Copy prompt" : "Publish first" : "Approve first"}
             </span>
           </button>
-          <div className="mx-1 my-2 w-px shrink-0 bg-border" />
-          <ToolbarButton
-            active={activeTab === "snapshot"}
-            onClick={() => setActiveTab("snapshot")}
-            icon={FileText}
-            label="Context"
-            title="Snapshot/context used to refine strategy, not included in the packaged AI instructions"
-            status="packaging"
-            muted
-          />
-          <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
-            <Badge variant="outline" className="gap-1.5 capitalize">
-              <DeliveryStatusIcon
-                status={detail.status}
-                className="h-3.5 w-3.5"
-              />
-              {statusLabel(detail.status)}
-            </Badge>
-            <Badge variant="outline">
-              {detail.phaseCount} phase{detail.phaseCount === 1 ? "" : "s"}
-            </Badge>
-            <Badge variant="outline">
-              {detail.workspacePublishStatus === "published" ? "workspace published" : detail.workspacePublishStatus === "stale" ? "workspace stale" : "not published"}
-            </Badge>
-          </div>
         </div>
       )}
 
@@ -663,10 +975,40 @@ export function BundleEditor({
           </Alert>
         )}
 
+        {detail && packageLocked && (
+          <Alert className="mb-4">
+            <AlertTitle>Delivery package approved and locked</AlertTitle>
+            <AlertDescription>
+              The approved delivery files are read-only in AIDD. Use Republish workspace to refresh <code>workspace/delivery/{detail.id}</code>, then use Start agentic AI to copy the development prompt.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {startMessage && (
+          <Alert className="mb-4">
+            <AlertTitle>Agentic AI start prompt</AlertTitle>
+            <AlertDescription>{startMessage}</AlertDescription>
+          </Alert>
+        )}
+
         {publishMessage && (
           <Alert className="mb-4">
             <AlertTitle>Workspace delivery package published</AlertTitle>
             <AlertDescription>{publishMessage}</AlertDescription>
+          </Alert>
+        )}
+
+        {reviewMessage && (
+          <Alert className="mb-4">
+            <AlertTitle>Delivery review package</AlertTitle>
+            <AlertDescription>
+              {reviewMessage}
+              {reviewPackage?.warnings.length ? (
+                <span className="mt-2 block text-xs">
+                  Warnings: {reviewPackage.warnings.join(" · ")}
+                </span>
+              ) : null}
+            </AlertDescription>
           </Alert>
         )}
 
@@ -689,12 +1031,14 @@ export function BundleEditor({
                         updateDetail({ title: event.target.value })
                       }
                       placeholder="Package title"
+                      disabled={packageLocked}
                     />
                     <Select
                       value={detail.status}
                       onChange={(event) =>
                         updateDetail({ status: event.target.value })
                       }
+                      disabled
                     >
                       {statusOptions.map((status) => (
                         <option key={status} value={status}>
@@ -711,8 +1055,9 @@ export function BundleEditor({
                     description="Use the wider package context to refine this, but keep this file focused on what the AI/dev needs to implement."
                   >
                     <Textarea
-                      className="min-h-[620px] resize-none font-mono text-sm"
+                      className={cn("min-h-[620px] resize-none font-mono text-sm", packageLocked && "bg-muted/40")}
                       value={detail.strategyBody}
+                      readOnly={packageLocked}
                       onChange={(event) =>
                         updateDetail({ strategyBody: event.target.value })
                       }
@@ -726,8 +1071,9 @@ export function BundleEditor({
                     description="Working context from Foundation, capability, and component documents. This is not included in the assembled AI implementation instructions."
                   >
                     <Textarea
-                      className="min-h-[620px] resize-none font-mono text-sm"
+                      className={cn("min-h-[620px] resize-none font-mono text-sm", packageLocked && "bg-muted/40")}
                       value={detail.snapshotBody}
+                      readOnly={packageLocked}
                       onChange={(event) =>
                         updateDetail({ snapshotBody: event.target.value })
                       }
@@ -741,7 +1087,7 @@ export function BundleEditor({
                     description="Generated handoff containing only the implementation strategy and implementation phases to reduce unnecessary token load."
                   >
                     <Textarea
-                      className="min-h-[620px] resize-none font-mono text-sm"
+                      className={cn("min-h-[620px] resize-none font-mono text-sm", packageLocked && "bg-muted/40")}
                       value={
                         detail.packagedBody ||
                         "Use Package document to generate delivery-package.md from the strategy and phases."
@@ -763,18 +1109,20 @@ export function BundleEditor({
                           setNewPhaseTitle(event.target.value)
                         }
                         placeholder="Phase name"
+                        disabled={packageLocked}
                       />
                       <Button
                         onClick={createPhase}
-                        disabled={saving || !newPhaseTitle.trim()}
+                        disabled={packageLocked || saving || !newPhaseTitle.trim()}
                       >
                         <Plus className="h-4 w-4" />
                         Create phase
                       </Button>
                     </div>
                     <Textarea
-                      className="min-h-[560px] resize-none font-mono text-sm"
+                      className={cn("min-h-[560px] resize-none font-mono text-sm", packageLocked && "bg-muted/40")}
                       value={newPhaseBody}
+                      readOnly={packageLocked}
                       onChange={(event) => setNewPhaseBody(event.target.value)}
                     />
                   </EditorCard>
@@ -794,6 +1142,7 @@ export function BundleEditor({
                           })
                         }
                         placeholder="Phase name"
+                        disabled={packageLocked}
                       />
                       <Select
                         value={currentPhase.status}
@@ -802,6 +1151,7 @@ export function BundleEditor({
                             status: event.target.value,
                           })
                         }
+                        disabled={packageLocked}
                       >
                         {statusOptions.map((status) => (
                           <option key={status} value={status}>
@@ -817,6 +1167,7 @@ export function BundleEditor({
                           className="h-9 w-9"
                           onClick={() => movePhase(currentPhase.id, "up")}
                           disabled={
+                            packageLocked ||
                             saving ||
                             !detail.phases.find(
                               (phase, index) =>
@@ -834,6 +1185,7 @@ export function BundleEditor({
                           className="h-9 w-9"
                           onClick={() => movePhase(currentPhase.id, "down")}
                           disabled={
+                            packageLocked ||
                             saving ||
                             !detail.phases.find(
                               (phase, index) =>
@@ -859,8 +1211,9 @@ export function BundleEditor({
                       .
                     </p>
                     <Textarea
-                      className="min-h-[560px] resize-none font-mono text-sm"
+                      className={cn("min-h-[560px] resize-none font-mono text-sm", packageLocked && "bg-muted/40")}
                       value={currentPhase.body}
+                      readOnly={packageLocked}
                       onChange={(event) =>
                         updatePhase(currentPhase.id, { body: event.target.value })
                       }
@@ -876,6 +1229,7 @@ export function BundleEditor({
               onSelect={setActiveTab}
               onMovePhase={movePhase}
               saving={saving}
+              locked={packageLocked}
               dragFilePath={dragFilePath}
               activeDragFileName={currentDragDocument?.fileName}
               packagePath={detail.packagePath}
@@ -905,6 +1259,7 @@ function FileNavigationPanel({
   onSelect,
   onMovePhase,
   saving,
+  locked,
   dragFilePath,
   activeDragFileName,
   packagePath,
@@ -915,6 +1270,7 @@ function FileNavigationPanel({
   onSelect: (tab: EditorTab) => void;
   onMovePhase: (phaseId: string, direction: "up" | "down") => void;
   saving: boolean;
+  locked: boolean;
   dragFilePath: string | null;
   activeDragFileName?: string;
   packagePath?: string;
@@ -1053,7 +1409,7 @@ function FileNavigationPanel({
                           size="icon"
                           className="h-6 w-6"
                           onClick={() => onMovePhase(phaseInfo.phase.id, "up")}
-                          disabled={saving || phaseInfo.index === 0}
+                          disabled={locked || saving || phaseInfo.index === 0}
                           title="Move phase up"
                         >
                           <ArrowUp className="h-3 w-3" />
@@ -1064,7 +1420,7 @@ function FileNavigationPanel({
                           size="icon"
                           className="h-6 w-6"
                           onClick={() => onMovePhase(phaseInfo.phase.id, "down")}
-                          disabled={saving || phaseInfo.index === detail.phases.length - 1}
+                          disabled={locked || saving || phaseInfo.index === detail.phases.length - 1}
                           title="Move phase down"
                         >
                           <ArrowDown className="h-3 w-3" />
@@ -1080,7 +1436,7 @@ function FileNavigationPanel({
           <button
             type="button"
             onClick={() => onSelect("new-phase")}
-            disabled={saving}
+            disabled={locked || saving}
             className={cn(
               "flex w-full items-center gap-2 rounded-md border border-dashed border-border/80 px-3 py-2 text-left text-xs transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60",
               activeTab === "new-phase" &&
@@ -1143,48 +1499,6 @@ function FileNavButton({
       {status && (
         <DeliveryStatusIcon status={status} className="mt-0.5 h-3.5 w-3.5" />
       )}
-    </button>
-  );
-}
-
-function ToolbarButton({
-  active,
-  onClick,
-  icon: Icon,
-  label,
-  title,
-  status,
-  muted,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: LucideIcon;
-  label: string;
-  title: string;
-  status?: string;
-  muted?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      className={cn(
-        "relative flex h-16 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent",
-        active && "border-ring bg-accent ring-1 ring-ring",
-        muted && !active && "text-muted-foreground",
-      )}
-    >
-      {status && (
-        <DeliveryStatusIcon
-          status={status}
-          className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
-        />
-      )}
-      <Icon className="h-4 w-4 text-muted-foreground" />
-      <span className="line-clamp-2 px-1 text-center font-medium leading-tight">
-        {label}
-      </span>
     </button>
   );
 }

@@ -39,6 +39,9 @@ type DeliveryWorkItem = {
   workspacePublished?: boolean;
   workspacePublishedAt?: string;
   workspacePublishStatus?: 'not-configured' | 'missing' | 'published' | 'stale';
+  workspaceStatus?: string;
+  workspacePhaseCount?: number;
+  workspaceDeliveryFiles?: string[];
 };
 
 const columns: Array<{
@@ -119,6 +122,15 @@ function formatDate(value?: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+
+function workspacePublishLabel(item: DeliveryWorkItem) {
+  if (item.workspacePublishStatus === 'published') return 'Workspace current';
+  if (item.workspacePublishStatus === 'stale') return 'Workspace stale';
+  if (item.workspacePublishStatus === 'missing') return 'Not in workspace';
+  if (item.workspacePublishStatus === 'not-configured') return 'No workspace';
+  return 'Not published';
 }
 
 export function DeliveryPackages({ packages, selectedId, onSelectPackage, onCreatePackage, activeProject }: DeliveryPackagesProps) {
@@ -283,9 +295,12 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, onCrea
                               {(item.components || []).length > 3 && <Badge variant="outline" className="text-[10px]">+{item.components.length - 3}</Badge>}
                             </div>
                             <div className="flex items-center justify-between gap-2 pt-1">
-                              <span>{item.phaseCount ?? 0} phase{item.phaseCount === 1 ? '' : 's'}</span>
-                              <span>{item.workspacePublishStatus === 'published' ? 'Published' : item.workspacePublishStatus === 'stale' ? 'Workspace stale' : 'Not published'}</span>
+                              <span>{item.workspacePhaseCount ?? item.phaseCount ?? 0} phase{(item.workspacePhaseCount ?? item.phaseCount) === 1 ? '' : 's'}</span>
+                              <span>{workspacePublishLabel(item)}</span>
                             </div>
+                            {item.workspaceStatus && item.workspacePublished && (
+                              <div className="text-[11px]">Workspace status: {statusLabels[item.workspaceStatus] ?? item.workspaceStatus.replace(/-/g, ' ')}</div>
+                            )}
                             {item.workspacePackagePath && (
                               <div className="break-all text-[11px]">Workspace: {item.workspacePackagePath}</div>
                             )}

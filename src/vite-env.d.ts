@@ -601,6 +601,9 @@ interface AiddDeliveryPackageSummary {
   workspacePublished?: boolean;
   workspacePublishedAt?: string;
   workspacePublishStatus?: 'not-configured' | 'missing' | 'published' | 'stale';
+  workspaceStatus?: string;
+  workspacePhaseCount?: number;
+  workspaceDeliveryFiles?: string[];
 }
 
 interface AiddDeliveryWorkspacePublishResult {
@@ -611,7 +614,38 @@ interface AiddDeliveryWorkspacePublishResult {
   writtenFiles: string[];
   skippedFiles: string[];
   createdWritableFiles: string[];
+  removedFiles?: string[];
   message: string;
+}
+
+interface AiddDeliveryReviewPackageResult {
+  filePath: string;
+  fileName: string;
+  packageId: string;
+  strategyFileCount: number;
+  phaseFileCount: number;
+  standardsFileCount: number;
+  capabilityFileCount: number;
+  componentFileCount: number;
+  sourceRootCount: number;
+  sourceFileCount: number;
+  entryCount: number;
+  warnings: string[];
+}
+
+interface AiddDeliveryReviewPackageImportResult {
+  accepted: boolean;
+  zipPath: string;
+  packageId: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  backedUpFiles: string[];
+  backupDirectory?: string;
+  strategyImported: boolean;
+  phaseFileCount: number;
+  assembledPackageUpdated: boolean;
+  reviewIncluded: boolean;
+  reviewMarkdown?: string;
 }
 
 interface AiddDeliveryPackagePhase {
@@ -889,6 +923,8 @@ interface Window {
     createDeliveryPackagePhase: (input: { projectPath: string; packageId: string; title: string; body?: string }) => Promise<AiddDeliveryPackageDetail>;
     assembleDeliveryPackage: (input: { projectPath: string; packageId: string }) => Promise<AiddDeliveryPackageDetail>;
     publishDeliveryPackageToWorkspace: (input: { projectPath: string; packageId: string }) => Promise<AiddDeliveryWorkspacePublishResult>;
+    packageDeliveryPackageForReview: (input: { projectPath: string; packageId: string }) => Promise<AiddDeliveryReviewPackageResult>;
+    importDeliveryReviewPackage: (input: { projectPath: string; packageId: string; zipPath: string }) => Promise<AiddDeliveryReviewPackageImportResult>;
     readDecisions: (projectPath: string) => Promise<AiddDecisionRecord[]>;
     createDecision: (input: AiddCreateDecisionInput) => Promise<AiddDecisionRecord[]>;
     readSourceReference: (projectPath: string) => Promise<AiddSourceReference | null>;

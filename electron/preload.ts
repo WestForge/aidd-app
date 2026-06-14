@@ -62,6 +62,8 @@ contextBridge.exposeInMainWorld('aidd', {
   createDeliveryPackagePhase: (input: unknown) => ipcRenderer.invoke('project:createDeliveryPackagePhase', input),
   assembleDeliveryPackage: (input: unknown) => ipcRenderer.invoke('project:assembleDeliveryPackage', input),
   publishDeliveryPackageToWorkspace: (input: unknown) => ipcRenderer.invoke('project:publishDeliveryPackageToWorkspace', input),
+  packageDeliveryPackageForReview: (input: unknown) => ipcRenderer.invoke('project:packageDeliveryPackageForReview', input),
+  importDeliveryReviewPackage: (input: unknown) => ipcRenderer.invoke('project:importDeliveryReviewPackage', input),
   readDecisions: (projectPath: string) => ipcRenderer.invoke('project:readDecisions', projectPath),
   createDecision: (input: unknown) => ipcRenderer.invoke('project:createDecision', input),
   readSourceReference: (projectPath: string) => ipcRenderer.invoke('project:readSourceReference', projectPath),

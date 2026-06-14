@@ -603,6 +603,9 @@ interface DeliveryPackageSummary {
   workspacePublished?: boolean;
   workspacePublishedAt?: string;
   workspacePublishStatus?: 'not-configured' | 'missing' | 'published' | 'stale';
+  workspaceStatus?: string;
+  workspacePhaseCount?: number;
+  workspaceDeliveryFiles?: string[];
 }
 
 interface DeliveryWorkspacePublishInput {
@@ -618,7 +621,49 @@ interface DeliveryWorkspacePublishResult {
   writtenFiles: string[];
   skippedFiles: string[];
   createdWritableFiles: string[];
+  removedFiles?: string[];
   message: string;
+}
+
+interface DeliveryReviewPackageInput {
+  projectPath: string;
+  packageId: string;
+}
+
+interface DeliveryReviewPackageResult {
+  filePath: string;
+  fileName: string;
+  packageId: string;
+  strategyFileCount: number;
+  phaseFileCount: number;
+  standardsFileCount: number;
+  capabilityFileCount: number;
+  componentFileCount: number;
+  sourceRootCount: number;
+  sourceFileCount: number;
+  entryCount: number;
+  warnings: string[];
+}
+
+interface ImportDeliveryReviewPackageInput {
+  projectPath: string;
+  packageId: string;
+  zipPath: string;
+}
+
+interface DeliveryReviewPackageImportResult {
+  accepted: boolean;
+  zipPath: string;
+  packageId: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  backedUpFiles: string[];
+  backupDirectory?: string;
+  strategyImported: boolean;
+  phaseFileCount: number;
+  assembledPackageUpdated: boolean;
+  reviewIncluded: boolean;
+  reviewMarkdown?: string;
 }
 
 interface DeleteDeliveryPackageInput {
@@ -1727,6 +1772,48 @@ function buildPublishedComponentsMarkdown(projectName: string, components: any[]
   return `${lines.join('\n').trim()}\n`;
 }
 
+
+function buildPublishedCapabilityMarkdown(projectName: string, capability: Awaited<ReturnType<typeof readCapability>>) {
+  const lines = [
+    generatedDocHeader(`AIDD capability ${capability.slug}`),
+    `# AIDD Capability: ${capability.title}`,
+    '',
+    `Project: ${projectName}`,
+    `Slug: \`${capability.slug}\``,
+    `Status: \`${setupStatusLabel(capability.status)}\``,
+    capability.components.length ? `Components: ${capability.components.map((component: string) => `\`${component}\``).join(', ')}` : 'Components: _none captured_',
+    '',
+    'This file is a generated snapshot of the linked capability at the time the delivery review package was created.',
+    'Treat it as read-only review context. If the delivery work reveals needed AIDD updates, record them in the delivery files rather than editing this snapshot.',
+    ''
+  ];
+
+  if (capability.body.trim()) {
+    lines.push('## Capability index', '', capability.body.trim(), '');
+  }
+
+  for (const section of capability.sections || []) {
+    lines.push(
+      '---',
+      '',
+      `## ${section.title}`,
+      '',
+      `Source: \`capabilities/${capability.slug}/${section.fileName}\``,
+      `Status: \`${setupStatusLabel(section.status)}\``,
+      '',
+      section.body.trim() || '_No content captured._',
+      ''
+    );
+  }
+
+  return `${lines.join('\n').trim()}\n`;
+}
+
+function deliveryReviewCapabilitySnapshotFileName(capabilitySlug: string | null | undefined) {
+  const slug = slugify(capabilitySlug || 'capability');
+  return `capability-${slug || 'context'}.md`;
+}
+
 function buildDeliveryBriefMarkdown(detail: DeliveryPackageDetail) {
   const lines = [
     generatedDocHeader(`AIDD delivery package ${detail.id}`),
@@ -1776,13 +1863,13 @@ function buildPublishedDeliveryIndexMarkdown(projectName: string, deliveries: De
     '## Active delivery packages',
     '',
     deliveries.length
-      ? deliveries.map((item) => `- [${item.id} · ${item.title}](./${item.id}/brief.md) — ${setupStatusLabel(item.status)}`).join('\n')
+      ? deliveries.map((item) => `- [${item.id} · ${item.title}](../delivery/${item.id}/implementation-strategy.md) — ${setupStatusLabel(item.status)}`).join('\n')
       : 'No active delivery packages are currently published.',
     ''
   ];
 
   if (deliveries.length) {
-    lines.push('## Writable files per package', '', 'Agents may update these files inside each delivery package folder:', '', ...DELIVERY_WRITABLE_FILE_TEMPLATES.map((item) => `- ${item.fileName}`), '');
+    lines.push('## Workspace delivery files', '', 'Agents may update the implementation strategy and phase/stage Markdown files inside each workspace delivery package folder:', '', '- `implementation-strategy.md`', '- `phase-*.md`', '- `stage-*.md`', '');
   }
 
   return `${lines.join('\n').trim()}\n`;
@@ -7896,7 +7983,9 @@ async function readCapability(input: ReadCapabilityInput) {
   const parsedIndex = matter(rawIndex);
   const aidd = (parsedIndex.data as any)?.aidd || {};
   const title = String(manifest.title || aidd.title || slug);
-  const components = Array.isArray(manifest.components) ? manifest.components : Array.isArray(manifest.modules) ? manifest.modules : (Array.isArray(aidd.components) ? aidd.components : []);
+  const components: string[] = (Array.isArray(manifest.components) ? manifest.components : Array.isArray(manifest.modules) ? manifest.modules : (Array.isArray(aidd.components) ? aidd.components : []))
+    .map((component: unknown) => String(component))
+    .filter(Boolean);
   const status = String(manifest.status || aidd.status || 'draft');
 
   const fallbackFromLegacyIndex: Partial<Record<string, string>> = {
@@ -8062,6 +8151,93 @@ function deliveryPackageSourceHash(detail: DeliveryPackageDetail) {
   }));
 }
 
+
+function isDeliveryPhaseFileName(fileName: string) {
+  return /^(phase|stage)-[\w-]+\.md$/i.test(fileName);
+}
+
+function isWorkspaceDeliveryFileName(fileName: string) {
+  return fileName === 'implementation-strategy.md' || isDeliveryPhaseFileName(fileName);
+}
+
+function buildPublishedDeliveryStrategyFileMarkdown(detail: DeliveryPackageDetail) {
+  return matter.stringify((detail.strategyBody || '').trim() + '\n', {
+    aidd: { type: 'workspace-delivery-strategy', templateVersion: TEMPLATE_VERSION },
+    deliveryPackage: detail.id,
+    title: detail.title,
+    status: detail.status,
+    sourceCapability: detail.sourceCapability || '',
+    components: detail.components || [],
+    publishedBy: 'AIDD'
+  });
+}
+
+function buildPublishedDeliveryPhaseFileMarkdown(detail: DeliveryPackageDetail, phase: DeliveryPackagePhaseDetail, index: number) {
+  const title = phase.title?.trim() || `Phase ${index + 1}`;
+  return matter.stringify((phase.body || '').trim() + '\n', {
+    aidd: { type: 'workspace-delivery-phase', templateVersion: TEMPLATE_VERSION },
+    id: phase.id || phaseIdFromFileName(phase.fileName),
+    title,
+    status: phase.status || detail.status || 'approved',
+    deliveryPackage: detail.id,
+    order: index + 1,
+    publishedBy: 'AIDD'
+  });
+}
+
+function extractWorkspacePhaseStatus(markdown: string) {
+  try {
+    const parsed = matter(markdown);
+    const frontmatterStatus = String((parsed.data as any)?.status || '').trim();
+    if (frontmatterStatus) return normaliseStatusForDelivery(frontmatterStatus);
+    const inlineStatus = parsed.content.match(/^\s*Status\s*:\s*([^\n]+)/im)?.[1]?.trim();
+    if (inlineStatus) return normaliseStatusForDelivery(inlineStatus);
+  } catch {
+    const inlineStatus = markdown.match(/^\s*Status\s*:\s*([^\n]+)/im)?.[1]?.trim();
+    if (inlineStatus) return normaliseStatusForDelivery(inlineStatus);
+  }
+  return '';
+}
+
+function markdownHasCheckedTask(markdown: string) {
+  return /-\s*\[[xX]\]/.test(markdown);
+}
+
+async function readWorkspaceDeliveryExecutionState(targetPath: string, publishedManifest?: any) {
+  const files: string[] = [];
+  const phaseStatuses: string[] = [];
+  let hasCheckedTask = false;
+
+  if (await exists(targetPath)) {
+    const entries = await fsp.readdir(targetPath, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    for (const entry of entries) {
+      if (!entry.isFile() || !isWorkspaceDeliveryFileName(entry.name)) continue;
+      files.push(entry.name);
+      if (!isDeliveryPhaseFileName(entry.name)) continue;
+      const content = await fsp.readFile(path.join(targetPath, entry.name), 'utf8');
+      const phaseStatus = extractWorkspacePhaseStatus(content);
+      if (phaseStatus) phaseStatuses.push(phaseStatus);
+      if (markdownHasCheckedTask(content)) hasCheckedTask = true;
+    }
+  }
+
+  const phaseCount = files.filter(isDeliveryPhaseFileName).length;
+  const manifestStatusRaw = String(publishedManifest?.status || '').trim();
+  const manifestStatus = manifestStatusRaw ? normaliseStatusForDelivery(manifestStatusRaw) : '';
+  const completeStatuses = new Set(['done', 'accepted', 'complete']);
+  const inProgressStatuses = new Set(['in-progress', 'active']);
+
+  let workspaceStatus = manifestStatus && manifestStatus !== 'packaging' ? manifestStatus : 'approved';
+  if (phaseCount > 0 && phaseStatuses.length === phaseCount && phaseStatuses.every((status) => completeStatuses.has(status))) {
+    workspaceStatus = 'done';
+  } else if (phaseStatuses.some((status) => inProgressStatuses.has(status) || completeStatuses.has(status)) || hasCheckedTask) {
+    workspaceStatus = 'in-progress';
+  }
+
+  return { files, phaseCount, workspaceStatus };
+}
+
 function buildPublishedDeliveryBriefMarkdown(detail: DeliveryPackageDetail) {
   const phaseSections = detail.phases.length
     ? detail.phases.map((phase, index) => [
@@ -8150,20 +8326,34 @@ async function readDeliveryWorkspacePublicationState(projectPath: string, packag
   }
 
   let publishedAt = manifest?.workspaceDelivery?.publishedAt || '';
+  let publishedManifest: any = {};
   try {
-    const publishedManifest = await readJson<any>(manifestPath);
+    publishedManifest = await readJson<any>(manifestPath);
     publishedAt = String(publishedManifest.publishedAt || publishedAt || '');
   } catch {
     // Keep the package visible; the Health Check can flag corrupt workspace files later.
   }
 
+  const execution = await readWorkspaceDeliveryExecutionState(targetPath, publishedManifest);
+  const sourceStatus = normaliseStatusForDelivery(manifest?.status || '');
+  const effectiveWorkspaceStatus = sourceStatus === 'done' ? 'done' : execution.workspaceStatus;
   const updatedAt = manifest?.updatedAt || manifest?.createdAt || '';
-  const isStale = Boolean(publishedAt && updatedAt && Date.parse(updatedAt) > Date.parse(publishedAt));
+  const manifestSourceHash = String(manifest?.workspaceDelivery?.sourceHash || '');
+  const publishedSourceHash = String(publishedManifest?.sourceHash || '');
+  const staleByHash = Boolean(manifestSourceHash && publishedSourceHash && manifestSourceHash !== publishedSourceHash);
+  const staleByDate = Boolean(publishedAt && updatedAt && Date.parse(updatedAt) > Date.parse(publishedAt));
+  const isStale = staleByHash || staleByDate;
+
   return {
     workspacePackagePath: targetPath,
     workspacePublished: true,
     workspacePublishedAt: publishedAt || undefined,
-    workspacePublishStatus: isStale ? 'stale' : 'published'
+    workspacePublishStatus: isStale ? 'stale' : 'published',
+    workspaceStatus: effectiveWorkspaceStatus,
+    workspacePhaseCount: execution.phaseCount,
+    workspaceDeliveryFiles: execution.files,
+    status: effectiveWorkspaceStatus,
+    ...(execution.phaseCount ? { phaseCount: execution.phaseCount } : {})
   };
 }
 
@@ -8301,7 +8491,7 @@ function normaliseStatusForDelivery(status?: string) {
 async function countPackagePhases(dir: string) {
   if (!(await exists(dir))) return 0;
   const entries = await fsp.readdir(dir, { withFileTypes: true });
-  return entries.filter((entry) => entry.isFile() && /^phase-[\w-]+\.md$/i.test(entry.name)).length;
+  return entries.filter((entry) => entry.isFile() && /^(phase|stage)-[\w-]+\.md$/i.test(entry.name)).length;
 }
 
 async function readDeliveryPackageSummariesFrom(root: string, relativeDir: string, manifestName: string): Promise<DeliveryPackageSummary[]> {
@@ -8459,12 +8649,12 @@ async function readDeliveryPackage(input: { projectPath: string; id: string }): 
   const entries = await fsp.readdir(target.dir, { withFileTypes: true });
   const phases: DeliveryPackagePhaseDetail[] = [];
   for (const entry of entries) {
-    if (!entry.isFile() || !/^phase-[\w-]+\.md$/i.test(entry.name)) continue;
+    if (!entry.isFile() || !/^(phase|stage)-[\w-]+\.md$/i.test(entry.name)) continue;
     const filePath = path.join(target.dir, entry.name);
     const parsed = matter(await fsp.readFile(filePath, 'utf8'));
     phases.push({
       id: String(parsed.data.id || phaseIdFromFileName(entry.name)),
-      title: String(parsed.data.title || phaseIdFromFileName(entry.name).replace(/^phase-/, '').replace(/-/g, ' ')),
+      title: String(parsed.data.title || phaseIdFromFileName(entry.name).replace(/^(phase|stage)-/, '').replace(/-/g, ' ')),
       status: String(parsed.data.status || 'draft'),
       fileName: entry.name,
       body: parsed.content.trim()
@@ -8514,7 +8704,7 @@ async function saveDeliveryPackage(input: SaveDeliveryPackageInput): Promise<Del
   if (Array.isArray(input.phases)) {
     const existingEntries = await fsp.readdir(target.dir, { withFileTypes: true });
     for (const entry of existingEntries) {
-      if (entry.isFile() && /^phase-[\w-]+\.md$/i.test(entry.name)) {
+      if (entry.isFile() && /^(phase|stage)-[\w-]+\.md$/i.test(entry.name)) {
         await fsp.rm(path.join(target.dir, entry.name), { force: true });
       }
     }
@@ -8540,7 +8730,7 @@ async function createDeliveryPackagePhase(input: CreateDeliveryPackagePhaseInput
   const target = await findDeliveryPackageTarget(input.projectPath, input.packageId);
   const title = input.title.trim() || 'Implementation Phase';
   const entries = await fsp.readdir(target.dir, { withFileTypes: true });
-  const phaseNumber = entries.filter((entry) => entry.isFile() && /^phase-[\w-]+\.md$/i.test(entry.name)).length + 1;
+  const phaseNumber = entries.filter((entry) => entry.isFile() && /^(phase|stage)-[\w-]+\.md$/i.test(entry.name)).length + 1;
   const fileName = `phase-${String(phaseNumber).padStart(2, '0')}-${slugify(title)}.md`;
   const body = input.body?.trim() || [
     `# ${title}`,
@@ -8611,6 +8801,1019 @@ async function assembleDeliveryPackage(input: { projectPath: string; packageId: 
 }
 
 
+const DELIVERY_REVIEW_SOURCE_EXTENSIONS = new Set([
+  '.c', '.cc', '.cpp', '.cxx', '.h', '.hh', '.hpp', '.hxx', '.inl', '.ipp',
+  '.m', '.mm', '.cs', '.java', '.kt', '.kts', '.swift',
+  '.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx',
+  '.py', '.pyw', '.go', '.rs', '.php', '.rb', '.lua', '.gd',
+  '.vue', '.svelte', '.astro', '.qml',
+  '.sh', '.bash', '.zsh', '.fish', '.ps1', '.psm1', '.bat', '.cmd',
+  '.glsl', '.hlsl', '.wgsl', '.metal', '.shader', '.usf', '.ush'
+]);
+
+const DELIVERY_REVIEW_EXCLUDED_SOURCE_DIRECTORIES = new Set([
+  '.git', '.hg', '.svn', '.idea', '.vscode', '.vs',
+  'node_modules', 'bower_components', 'vendor',
+  'dist', 'build', 'out', 'output', 'bin', 'obj', 'target', 'coverage',
+  '.next', '.nuxt', '.svelte-kit', '.turbo', '.cache', '.parcel-cache',
+  'intermediate', 'saved', 'binaries', 'deriveddatacache',
+  '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox', '.venv', 'venv',
+  'docs', 'delivery', '.aidd', '.aidd-app'
+]);
+
+interface DeliveryReviewSourceRoot {
+  absolutePath: string;
+  configuredDirectory: string;
+  isInsideWorkspace: boolean;
+  componentSlugs: string[];
+  componentTitles: string[];
+  packagePrefix: string;
+}
+
+interface DeliveryReviewCollectedSource {
+  entries: ZipEntryInput[];
+  roots: DeliveryReviewSourceRoot[];
+  skippedNestedRoots: Array<{ configuredDirectory: string; absolutePath: string; coveredBy: string; componentSlugs: string[] }>;
+  includedFiles: string[];
+  warnings: string[];
+}
+
+function deliveryReviewSourceFileAllowed(fileName: string) {
+  return DELIVERY_REVIEW_SOURCE_EXTENSIONS.has(path.extname(fileName).toLowerCase());
+}
+
+function deliveryReviewSourceDirectoryExcluded(directoryName: string) {
+  const lower = directoryName.toLowerCase();
+  if (DELIVERY_REVIEW_EXCLUDED_SOURCE_DIRECTORIES.has(lower)) return true;
+  return lower.startsWith('.') && lower !== '.github';
+}
+
+function shortHash(value: string) {
+  return createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 8);
+}
+
+function packagePrefixForDeliveryReviewSourceRoot(rootPath: string, workspacePath: string) {
+  if (workspacePath && isSameOrInsideDiskPath(rootPath, workspacePath)) {
+    const relative = normaliseRelativePath(path.relative(workspacePath, rootPath)).replace(/^\.\/?$/, '');
+    return relative;
+  }
+  const baseName = slugify(path.basename(rootPath) || 'external-source');
+  return `_external/${baseName}-${shortHash(rootPath)}`;
+}
+
+function deliveryReviewSourceEntryPath(root: DeliveryReviewSourceRoot, relativeFile: string) {
+  return ['src', root.packagePrefix, normaliseRelativePath(relativeFile)].filter(Boolean).join('/');
+}
+
+function buildDeliveryReviewStrategyMarkdown(detail: DeliveryPackageDetail) {
+  const body = (detail.strategyBody || '').trim() || [
+    '# Implementation Strategy',
+    '',
+    '## Objective',
+    '',
+    'TODO: Describe the implementation objective for this delivery package.',
+    '',
+    '## Proposed Approach',
+    '',
+    'TODO: Describe the planned implementation approach.',
+    '',
+    '## Source Code Reference',
+    '',
+    'TODO: List the source files, components, or directories that should be reviewed.',
+    '',
+    '## Risks / Unknowns',
+    '',
+    'TODO: Capture risks, assumptions, and open questions.',
+    '',
+    '## Verification Strategy',
+    '',
+    'TODO: Define how the implementation will be verified.',
+    ''
+  ].join('\n');
+
+  return matter.stringify(`${body}\n`, {
+    aidd: { type: 'implementation-strategy', templateVersion: TEMPLATE_VERSION },
+    id: `${detail.id}-strategy`,
+    deliveryPackage: detail.id,
+    status: detail.status || 'packaging',
+    generatedForReview: true
+  });
+}
+
+function buildDeliveryReviewSamplePhaseMarkdown(detail: DeliveryPackageDetail) {
+  const title = 'Sample Implementation Phase';
+  const body = [
+    `# Phase 01 — ${title}`,
+    '',
+    '> AIDD generated this sample phase because the delivery package did not contain any phase or stage files when the review bundle was created.',
+    '',
+    '## Objective',
+    '',
+    'Describe the goal of this phase.',
+    '',
+    '## Scope',
+    '',
+    'This phase includes:',
+    '',
+    '- [ ] Understand the delivery objective and linked context.',
+    '- [ ] Inspect the listed source areas.',
+    '- [ ] Implement the required changes.',
+    '',
+    'This phase does not include:',
+    '',
+    '- Out-of-scope item 1',
+    '- Out-of-scope item 2',
+    '',
+    '## Source areas',
+    '',
+    'Expected source locations:',
+    '',
+    '- `src/...`',
+    '',
+    '## Implementation notes',
+    '',
+    '- Keep changes within the listed source areas unless the package explicitly requires otherwise.',
+    '- Follow `package/standards.md`.',
+    '- Use `package/components.md` and the delivery package files for component/capability context.',
+    '- Record required AIDD updates in this delivery package rather than changing the snapshot context files.',
+    '',
+    '## Progress',
+    '',
+    'Status: Not started',
+    '',
+    'Allowed values:',
+    '',
+    '- Not started',
+    '- In progress',
+    '- Blocked',
+    '- Complete',
+    '- Needs review',
+    '',
+    '## Tasks',
+    '',
+    '- [ ] Understand the phase objective and relevant context.',
+    '- [ ] Inspect the listed source areas.',
+    '- [ ] Implement the required changes.',
+    '- [ ] Add or update tests where appropriate.',
+    '- [ ] Run the relevant verification steps.',
+    '- [ ] Record changed files.',
+    '- [ ] Record evidence.',
+    '- [ ] Record any questions or blockers.',
+    '- [ ] Mark the phase complete only when acceptance criteria are satisfied.',
+    '',
+    '## Acceptance criteria',
+    '',
+    '- [ ] Criterion 1',
+    '- [ ] Criterion 2',
+    '- [ ] Criterion 3',
+    '',
+    '## Changed files',
+    '',
+    'Record files changed during this phase:',
+    '',
+    '```text',
+    '',
+    '```',
+    '',
+    '## Verification evidence',
+    '',
+    'Record commands run, test results, screenshots, logs, or manual checks:',
+    '',
+    '```text',
+    '',
+    '```',
+    '',
+    '## Questions / blockers',
+    '',
+    '- None',
+    '',
+    '## Proposed AIDD updates',
+    '',
+    '- None',
+    '',
+    '## Completion note',
+    '',
+    'Summarise what was completed in this phase.',
+    ''
+  ].join('\n');
+
+  return matter.stringify(`${body}\n`, {
+    aidd: { type: 'delivery-package-phase', templateVersion: TEMPLATE_VERSION },
+    id: `${detail.id}-sample-phase`,
+    title,
+    status: 'packaging',
+    deliveryPackage: detail.id,
+    order: 1,
+    generatedForReview: true
+  });
+}
+
+function buildDeliveryPhaseTemplateMarkdown(input: { packageId: string }) {
+  return [
+    '# Delivery Phase Template',
+    '',
+    `Delivery package: ${input.packageId}`,
+    '',
+    'Use this template when creating or updating phase files in the returned delivery package.',
+    '',
+    '## File naming rules',
+    '',
+    'Place phase files directly under `delivery/`.',
+    '',
+    'Use this naming format:',
+    '',
+    '```text',
+    'delivery/phase-01-short-kebab-name.md',
+    'delivery/phase-02-short-kebab-name.md',
+    'delivery/phase-03-short-kebab-name.md',
+    '```',
+    '',
+    'Rules:',
+    '',
+    '- Use `phase-` as the prefix for new phase files.',
+    '- Use a two-digit sequence number: `01`, `02`, `03`.',
+    '- Use lowercase kebab-case after the sequence number.',
+    '- Keep one phase per file.',
+    '- Existing `stage-*.md` files may be edited if the package already contains them, but new files should use the `phase-##-name.md` pattern.',
+    '',
+    'AIDD import accepts returned updates from:',
+    '',
+    '- `delivery/implementation-strategy.md`',
+    '- `delivery/phase-*.md`',
+    '- `delivery/stage-*.md`',
+    '',
+    'Do not return snapshot context files, `_templates/`, or `src/`.',
+    '',
+    '---',
+    '',
+    '# Phase {{phase_number}} — {{phase_title}}',
+    '',
+    '## Objective',
+    '',
+    'Describe the goal of this phase.',
+    '',
+    '## Scope',
+    '',
+    'This phase includes:',
+    '',
+    '- [ ] Task 1',
+    '- [ ] Task 2',
+    '- [ ] Task 3',
+    '',
+    'This phase does not include:',
+    '',
+    '- Out-of-scope item 1',
+    '- Out-of-scope item 2',
+    '',
+    '## Source areas',
+    '',
+    'Expected source locations:',
+    '',
+    '- `src/...`',
+    '',
+    '## Implementation notes',
+    '',
+    'Guidance for the agentic AI:',
+    '',
+    '- Keep changes within the listed source areas unless the package explicitly requires otherwise.',
+    '- Follow `package/standards.md`.',
+    '- Use `package/components.md` and the delivery package files for component/capability context.',
+    '- Record any required AIDD updates in the delivery notes rather than changing the snapshot context files.',
+    '',
+    '## Progress',
+    '',
+    'Status: Not started',
+    '',
+    'Allowed values:',
+    '',
+    '- Not started',
+    '- In progress',
+    '- Blocked',
+    '- Complete',
+    '- Needs review',
+    '',
+    '## Tasks',
+    '',
+    '- [ ] Understand the phase objective and relevant context.',
+    '- [ ] Inspect the listed source areas.',
+    '- [ ] Implement the required changes.',
+    '- [ ] Add or update tests where appropriate.',
+    '- [ ] Run the relevant verification steps.',
+    '- [ ] Record changed files.',
+    '- [ ] Record evidence.',
+    '- [ ] Record any questions or blockers.',
+    '- [ ] Mark the phase complete only when acceptance criteria are satisfied.',
+    '',
+    '## Acceptance criteria',
+    '',
+    '- [ ] Criterion 1',
+    '- [ ] Criterion 2',
+    '- [ ] Criterion 3',
+    '',
+    '## Changed files',
+    '',
+    'Record files changed during this phase:',
+    '',
+    '```text',
+    '',
+    '```',
+    '',
+    '## Verification evidence',
+    '',
+    'Record commands run, test results, screenshots, logs, or manual checks:',
+    '',
+    '```text',
+    '',
+    '```',
+    '',
+    '## Questions / blockers',
+    '',
+    '- None',
+    '',
+    '## Proposed AIDD updates',
+    '',
+    '- None',
+    '',
+    '## Completion note',
+    '',
+    'Summarise what was completed in this phase.',
+    ''
+  ].join('\n');
+}
+
+function isDeliveryPhaseOrStageMarkdownFile(relativePath: string) {
+  return /^(phase|stage)-[\w-]+\.md$/i.test(path.basename(relativePath));
+}
+
+async function collectDeliveryPackageEntries(projectPath: string, detail: DeliveryPackageDetail, warnings: string[]) {
+  const target = await findDeliveryPackageTarget(projectPath, detail.id);
+  const entries: ZipEntryInput[] = [];
+  const includedFiles: string[] = [];
+  const entryNames = new Set<string>();
+  const base = 'delivery';
+  let strategyFileCount = 0;
+  let phaseFileCount = 0;
+
+  async function addBuffer(relativePath: string, data: Buffer | string) {
+    const zipPath = `${base}/${normaliseRelativePath(relativePath)}`;
+    if (entryNames.has(zipPath)) return false;
+    entries.push({ name: zipPath, data: Buffer.isBuffer(data) ? data : Buffer.from(data, 'utf8') });
+    includedFiles.push(zipPath);
+    entryNames.add(zipPath);
+    return true;
+  }
+
+  async function addFile(relativePath: string, absolutePath: string) {
+    if (!(await exists(absolutePath))) return false;
+    const data = await fsp.readFile(absolutePath);
+    return addBuffer(relativePath, data);
+  }
+
+  async function addReviewMarkdownFile(relativePath: string, absolutePath: string) {
+    if (!(await exists(absolutePath))) return false;
+    const raw = await fsp.readFile(absolutePath, 'utf8');
+    if (!shouldIncludeInReviewBundle(raw)) return false;
+    return addBuffer(relativePath, raw);
+  }
+
+  await addFile(target.manifestName, path.join(target.dir, target.manifestName));
+
+  const strategyPath = path.join(target.dir, 'implementation-strategy.md');
+  const addedStrategy = await addReviewMarkdownFile('implementation-strategy.md', strategyPath);
+  if (addedStrategy) {
+    strategyFileCount = 1;
+  } else {
+    await addBuffer('implementation-strategy.md', buildDeliveryReviewStrategyMarkdown(detail));
+    strategyFileCount = 1;
+    if (await exists(strategyPath)) {
+      warnings.push('implementation-strategy.md was excluded from normal review packaging, so AIDD generated a strategy copy from the saved package state.');
+    } else {
+      warnings.push('implementation-strategy.md was missing, so AIDD generated a strategy file for this review bundle.');
+    }
+  }
+
+  const directEntries = await fsp.readdir(target.dir, { withFileTypes: true });
+  const phaseOrStageFiles = directEntries
+    .filter((entry) => entry.isFile() && isDeliveryPhaseOrStageMarkdownFile(entry.name))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+  for (const fileName of phaseOrStageFiles) {
+    const added = await addReviewMarkdownFile(fileName, path.join(target.dir, fileName));
+    if (added) phaseFileCount += 1;
+  }
+
+  if (phaseFileCount === 0) {
+    await addBuffer('phase-01-sample-implementation-phase.md', buildDeliveryReviewSamplePhaseMarkdown(detail));
+    phaseFileCount = 1;
+    if (phaseOrStageFiles.length) {
+      warnings.push('Phase/stage files existed but none were included in the review bundle, so AIDD added a sample phase file.');
+    } else {
+      warnings.push('No phase/stage files were found, so AIDD added a sample phase file to the review bundle.');
+    }
+  }
+
+  const markdownFiles = await collectMarkdownFiles(target.dir);
+  for (const relativeFile of markdownFiles) {
+    if (relativeFile === 'implementation-strategy.md') continue;
+    if (isDeliveryPhaseOrStageMarkdownFile(relativeFile)) continue;
+    const absolutePath = path.join(target.dir, relativeFile);
+    const raw = await fsp.readFile(absolutePath, 'utf8');
+    if (!shouldIncludeInReviewBundle(raw)) continue;
+    await addBuffer(relativeFile, raw);
+  }
+
+  return {
+    entries,
+    includedFiles: includedFiles.sort((a, b) => a.localeCompare(b)),
+    strategyFileCount,
+    phaseFileCount
+  };
+}
+
+async function collectDeliveryReviewComponents(projectPath: string, detail: DeliveryPackageDetail, warnings: string[]) {
+  const componentSlugs = new Set<string>((detail.components || []).map((component) => slugify(component)).filter(Boolean));
+  let capabilitySlug = detail.sourceCapability ? slugify(detail.sourceCapability) : '';
+  let capability: Awaited<ReturnType<typeof readCapability>> | null = null;
+
+  if (capabilitySlug) {
+    try {
+      capability = await readCapability({ projectPath, slug: capabilitySlug });
+      capabilitySlug = capability.slug;
+      for (const component of capability.components || []) {
+        const slug = slugify(String(component));
+        if (slug) componentSlugs.add(slug);
+      }
+    } catch (error) {
+      warnings.push(`The source capability could not be included: ${capabilitySlug} (${error instanceof Error ? error.message : String(error)})`);
+      capability = null;
+    }
+  } else {
+    warnings.push('This delivery package does not reference a source capability.');
+  }
+
+  const components: Awaited<ReturnType<typeof readComponent>>[] = [];
+
+  for (const componentSlug of Array.from(componentSlugs).sort((a, b) => a.localeCompare(b))) {
+    try {
+      const component = await readComponent({ projectPath, slug: componentSlug });
+      components.push(component);
+    } catch (error) {
+      warnings.push(`Component could not be included: ${componentSlug} (${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
+
+  return {
+    capabilitySlug: capability?.slug || capabilitySlug || null,
+    capability,
+    capabilitySnapshotFileName: capability ? deliveryReviewCapabilitySnapshotFileName(capability.slug) : null,
+    components
+  };
+}
+
+async function collectDeliveryReviewSourceRoots(projectPath: string, components: Awaited<ReturnType<typeof readComponent>>[], warnings: string[]) {
+  const workspacePath = await readWorkspacePathForProject(projectPath);
+  if (!workspacePath) warnings.push('No source workspace is configured, so component source paths may not resolve as intended.');
+
+  const byPath = new Map<string, DeliveryReviewSourceRoot>();
+
+  for (const component of components) {
+    const source = normaliseComponentSource(component.source);
+    if (!componentSourceIsConfigured(source)) {
+      warnings.push(`Component ${component.slug} has no source code location configured.`);
+      continue;
+    }
+
+    const absolutePath = path.resolve(resolveComponentSourceDirectory(projectPath, source.directory, workspacePath));
+    if (!(await exists(absolutePath))) {
+      warnings.push(`Component ${component.slug} source location was not found: ${source.directory}`);
+      continue;
+    }
+
+    const stat = await fsp.stat(absolutePath);
+    if (!stat.isDirectory()) {
+      warnings.push(`Component ${component.slug} source location is not a directory: ${source.directory}`);
+      continue;
+    }
+
+    const key = normaliseDiskPath(absolutePath);
+    const existing = byPath.get(key);
+    if (existing) {
+      existing.componentSlugs.push(component.slug);
+      existing.componentTitles.push(component.title);
+      continue;
+    }
+
+    byPath.set(key, {
+      absolutePath,
+      configuredDirectory: source.directory,
+      isInsideWorkspace: Boolean(workspacePath && isSameOrInsideDiskPath(absolutePath, workspacePath)),
+      componentSlugs: [component.slug],
+      componentTitles: [component.title],
+      packagePrefix: ''
+    });
+  }
+
+  const orderedRoots = Array.from(byPath.values()).sort((a, b) => {
+    const lengthDiff = normaliseDiskPath(a.absolutePath).length - normaliseDiskPath(b.absolutePath).length;
+    return lengthDiff || a.absolutePath.localeCompare(b.absolutePath);
+  });
+  const roots: DeliveryReviewSourceRoot[] = [];
+  const skippedNestedRoots: DeliveryReviewCollectedSource['skippedNestedRoots'] = [];
+
+  for (const candidate of orderedRoots) {
+    const parent = roots.find((kept) => isSameOrInsideDiskPath(candidate.absolutePath, kept.absolutePath));
+    if (parent) {
+      skippedNestedRoots.push({
+        configuredDirectory: candidate.configuredDirectory,
+        absolutePath: candidate.absolutePath,
+        coveredBy: parent.absolutePath,
+        componentSlugs: candidate.componentSlugs
+      });
+      warnings.push(`Skipped nested source root ${candidate.configuredDirectory}; it is already covered by ${parent.configuredDirectory}.`);
+      continue;
+    }
+    candidate.packagePrefix = packagePrefixForDeliveryReviewSourceRoot(candidate.absolutePath, workspacePath);
+    roots.push(candidate);
+  }
+
+  return { workspacePath, roots, skippedNestedRoots };
+}
+
+async function collectDeliveryReviewSourceEntries(projectPath: string, components: Awaited<ReturnType<typeof readComponent>>[]): Promise<DeliveryReviewCollectedSource> {
+  const warnings: string[] = [];
+  const { roots, skippedNestedRoots } = await collectDeliveryReviewSourceRoots(projectPath, components, warnings);
+  const entries: ZipEntryInput[] = [];
+  const includedFiles: string[] = [];
+  const entryNames = new Set<string>();
+
+  async function walk(root: DeliveryReviewSourceRoot, currentDir: string, relativeDir = '') {
+    let directoryEntries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }> = [];
+    try {
+      directoryEntries = await fsp.readdir(currentDir, { withFileTypes: true });
+    } catch (error) {
+      warnings.push(`Could not read source directory ${currentDir}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+
+    directoryEntries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    for (const entry of directoryEntries) {
+      const absolutePath = path.join(currentDir, entry.name);
+      const relativePath = relativeDir ? path.join(relativeDir, entry.name) : entry.name;
+
+      if (entry.isDirectory()) {
+        if (deliveryReviewSourceDirectoryExcluded(entry.name)) continue;
+        await walk(root, absolutePath, relativePath);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+      if (!deliveryReviewSourceFileAllowed(entry.name)) continue;
+
+      const zipPath = deliveryReviewSourceEntryPath(root, relativePath);
+      if (entryNames.has(zipPath)) continue;
+      try {
+        const data = await fsp.readFile(absolutePath);
+        entries.push({ name: zipPath, data });
+        includedFiles.push(zipPath);
+        entryNames.add(zipPath);
+      } catch (error) {
+        warnings.push(`Could not include source file ${absolutePath}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+
+  for (const root of roots) {
+    await walk(root, root.absolutePath);
+  }
+
+  return {
+    entries,
+    roots,
+    skippedNestedRoots,
+    includedFiles: includedFiles.sort((a, b) => a.localeCompare(b)),
+    warnings
+  };
+}
+
+function buildDeliveryReviewPackageReadme(input: {
+  projectName: string;
+  packageId: string;
+  title: string;
+  strategyFileCount: number;
+  phaseFileCount: number;
+  sourceRootCount: number;
+  sourceFileCount: number;
+  warnings: string[];
+}) {
+  const lines = [
+    '# AIDD Delivery Package Review',
+    '',
+    'This zip was generated by AIDD for delivery package review.',
+    '',
+    'The bundle is a self-contained snapshot. Review it and create an implementation plan for the delivery capability against the included source code. Use the Foundation and Standards snapshots to steer the implementation plan, and use the Components snapshot to understand where the relevant source code lives.',
+    '',
+    '## Bundle layout',
+    '',
+    'Root files:',
+    '',
+    '- `README.md` — these instructions',
+    '- `MANIFEST.json` — machine-readable package metadata for AIDD and tooling',
+    '',
+    'Package context snapshots:',
+    '',
+    '- `package/foundation.md`',
+    '- `package/standards.md`',
+    '- `package/components.md`',
+    '',
+    'Editable delivery package files:',
+    '',
+    '- `delivery/implementation-strategy.md`',
+    '- `delivery/phase-*.md`',
+    '- `delivery/stage-*.md` when existing stages are present',
+    '',
+    'The phase template is included at:',
+    '',
+    '- `_templates/delivery/phase-template.md`',
+    '',
+    'Source code is included for review context under:',
+    '',
+    '- `src/`',
+    '',
+    '## Your task',
+    '',
+    'Review the delivery package and create a practical implementation plan for the capability using the included source code.',
+    '',
+    'Use:',
+    '',
+    '- `package/foundation.md` to understand product intent and project context',
+    '- `package/standards.md` to steer implementation, testing, security, and delivery expectations',
+    '- `package/components.md` to understand the component map and source-code locations',
+    '- `delivery/implementation-strategy.md` as the main plan',
+    '- `delivery/phase-*.md` or `delivery/stage-*.md` as the implementation phases',
+    '- `src/` as read-only source-code context',
+    '',
+    'Do not modify the source-code snapshot in this review bundle. Use it to make the implementation plan specific and grounded.',
+    '',
+    '## Phase file naming',
+    '',
+    'New phase files must be placed directly under `delivery/` and use this structure:',
+    '',
+    '```text',
+    'delivery/phase-01-short-kebab-name.md',
+    'delivery/phase-02-short-kebab-name.md',
+    'delivery/phase-03-short-kebab-name.md',
+    '```',
+    '',
+    'Rules:',
+    '',
+    '- Use `phase-` for new phase files.',
+    '- Use a two-digit phase number.',
+    '- Use lowercase kebab-case after the number.',
+    '- Keep one phase per file.',
+    '- Existing `stage-*.md` files may be edited if they were included in the package, but new files should use `phase-##-name.md`.',
+    '',
+    '## Source-code snapshot rules',
+    '',
+    'AIDD has included a source-code snapshot under `src/` so the delivery package can be reviewed against the actual implementation surface.',
+    '',
+    'AIDD includes only source-code files under `src/`. It excludes build output, dependencies, generated folders, docs, delivery folders, and other non-source directories.',
+    '',
+    'When components point to nested source locations, AIDD keeps the highest source root and skips child roots so the same files are not included twice.',
+    '',
+    '## Progress tracking',
+    '',
+    'Markdown checkboxes are useful, but they are not enough on their own. When marking work as complete, also record changed files, verification evidence, blockers, and proposed AIDD updates in the delivery phase files.',
+    '',
+    '## Return package rule',
+    '',
+    'When returning a revised package, provide a download zip that contains only the updated `delivery/` folder and its matching files.',
+    '',
+    'AIDD will import returned files from:',
+    '',
+    '- `delivery/implementation-strategy.md`',
+    '- `delivery/phase-*.md`',
+    '- `delivery/stage-*.md`',
+    '',
+    'Do not include `src/`, `package/`, `_templates/`, `MANIFEST.json`, or duplicated review context in the returned zip. The included source code and package context are snapshots for review only.',
+    '',
+    '## Package summary',
+    '',
+    `- Project: ${input.projectName}`,
+    `- Delivery package: ${input.packageId} — ${input.title}`,
+    `- Strategy files: ${input.strategyFileCount}`,
+    `- Phase/stage files: ${input.phaseFileCount}`,
+    `- Source roots: ${input.sourceRootCount}`,
+    `- Source files: ${input.sourceFileCount}`,
+    ''
+  ];
+
+  if (input.warnings.length) {
+    lines.push('## Warnings', '', ...input.warnings.map((warning) => `- ${warning}`), '');
+  }
+
+  return `${lines.join('\n')}\n`;
+}
+
+function isSafeDeliveryReviewReturnPath(relativePath: string) {
+  const normalised = safeZipReadEntryName(relativePath);
+  if (!normalised || !normalised.startsWith('delivery/')) return false;
+  if (!normalised.toLowerCase().endsWith('.md')) return false;
+  const parts = normalised.split('/');
+  if (parts.length !== 2) return false;
+  const fileName = parts[1].toLowerCase();
+  if (fileName === 'implementation-strategy.md') return true;
+  return /^(phase|stage)-\d{2}-[a-z0-9][a-z0-9-]*\.md$/.test(fileName);
+}
+
+function deliveryReviewImportBodyFromMarkdown(raw: Buffer | string) {
+  const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw || '');
+  try {
+    return matter(text).content.trim();
+  } catch {
+    return text.trim();
+  }
+}
+
+function deliveryReviewImportHasSubstantialContent(body: string) {
+  const cleaned = String(body || '')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[>#*_`\-\[\]()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned) return false;
+  if (/^(todo|tbd|n\/?a|none|no content|not provided|placeholder)$/i.test(cleaned)) return false;
+  return cleaned.split(/\s+/).filter(Boolean).length >= 8;
+}
+
+async function backupDeliveryReviewImportTarget(input: {
+  projectRoot: string;
+  packageId: string;
+  stamp: string;
+  deliveryRelativePath: string;
+  targetPath: string;
+}) {
+  if (!(await exists(input.targetPath))) return null;
+  const backupRoot = path.join(input.projectRoot, '.aidd', 'backups', 'delivery-review-imports', slugify(input.packageId), input.stamp);
+  const backupPath = path.join(backupRoot, input.deliveryRelativePath);
+  await fsp.mkdir(path.dirname(backupPath), { recursive: true });
+  await fsp.copyFile(input.targetPath, backupPath);
+  return { backupRoot, backupPath };
+}
+
+async function importDeliveryReviewPackage(input: ImportDeliveryReviewPackageInput): Promise<DeliveryReviewPackageImportResult> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.packageId) throw new Error('Delivery package id is required.');
+  if (!input.zipPath) throw new Error('Delivery review response zip path is required.');
+
+  const root = path.resolve(input.projectPath);
+  const zipPath = path.resolve(input.zipPath);
+  if (!(await exists(root))) throw new Error(`Project path does not exist: ${input.projectPath}`);
+  if (!(await exists(zipPath))) throw new Error(`Delivery review response zip does not exist: ${input.zipPath}`);
+  if (path.extname(zipPath).toLowerCase() !== '.zip') throw new Error('Delivery review response must be a .zip file.');
+
+  const target = await findDeliveryPackageTarget(root, input.packageId);
+  const entries = await readZipFile(zipPath);
+  const hasDeliveryDirectory = entries.some((entry) => {
+    const name = normaliseRelativePath(entry.name).replace(/^\/+/, '');
+    return name === 'delivery/' || name.startsWith('delivery/');
+  });
+  if (!hasDeliveryDirectory) {
+    throw new Error('Delivery review response rejected: the zip must contain a delivery/ directory.');
+  }
+
+  const importedFiles: string[] = [];
+  const skippedFiles: string[] = [];
+  const backedUpFiles: string[] = [];
+  const importStamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  let backupDirectory: string | undefined;
+  let reviewMarkdown: string | undefined;
+  let strategyImported = false;
+  let phaseFileCount = 0;
+
+  for (const entry of entries) {
+    const relativePath = safeZipReadEntryName(entry.name);
+    if (!relativePath || entry.directory) continue;
+    if (relativePath === 'REVIEW.md') {
+      reviewMarkdown = entry.data.toString('utf8');
+      continue;
+    }
+    if (!isSafeDeliveryReviewReturnPath(relativePath)) {
+      skippedFiles.push(relativePath);
+      continue;
+    }
+
+    const deliveryRelativePath = normaliseRelativePath(relativePath.slice('delivery/'.length));
+    if (!deliveryRelativePath || deliveryRelativePath.startsWith('../') || path.isAbsolute(deliveryRelativePath)) {
+      skippedFiles.push(relativePath);
+      continue;
+    }
+
+    const targetPath = path.resolve(target.dir, deliveryRelativePath);
+    if (!isSameOrInsideDiskPath(targetPath, target.dir)) {
+      skippedFiles.push(relativePath);
+      continue;
+    }
+
+    const importedBody = deliveryReviewImportBodyFromMarkdown(entry.data);
+    const importedHasContent = deliveryReviewImportHasSubstantialContent(importedBody);
+    if (!importedHasContent) {
+      const existingBody = await readMarkdownBody(targetPath);
+      const existingHasContent = deliveryReviewImportHasSubstantialContent(existingBody);
+      skippedFiles.push(`${relativePath} was skipped because it did not contain enough content${existingHasContent ? ' to safely replace the existing file' : ''}.`);
+      continue;
+    }
+
+    const backup = await backupDeliveryReviewImportTarget({
+      projectRoot: root,
+      packageId: input.packageId,
+      stamp: importStamp,
+      deliveryRelativePath,
+      targetPath
+    });
+    if (backup) {
+      backupDirectory = backup.backupRoot;
+      backedUpFiles.push(deliveryRelativePath);
+    }
+
+    await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+    await fsp.writeFile(targetPath, entry.data);
+    importedFiles.push(relativePath);
+    if (deliveryRelativePath === 'implementation-strategy.md') strategyImported = true;
+    if (/^(phase|stage)-/i.test(path.basename(deliveryRelativePath))) phaseFileCount += 1;
+  }
+
+  if (!importedFiles.length) {
+    throw new Error('Delivery review response did not contain any importable delivery files. Expected delivery/implementation-strategy.md or delivery/phase-*.md files. Existing delivery files were not changed.');
+  }
+
+  let assembledPackageUpdated = false;
+  try {
+    const assembled = await assembleDeliveryPackage({ projectPath: root, packageId: input.packageId });
+    assembledPackageUpdated = Boolean(assembled.packagedBody);
+  } catch (error) {
+    skippedFiles.push(`delivery-package.md could not be regenerated: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  return {
+    accepted: true,
+    zipPath,
+    packageId: input.packageId,
+    importedFiles: importedFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    skippedFiles: skippedFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    backedUpFiles: backedUpFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    ...(backupDirectory ? { backupDirectory } : {}),
+    strategyImported,
+    phaseFileCount,
+    assembledPackageUpdated,
+    reviewIncluded: Boolean(reviewMarkdown),
+    ...(reviewMarkdown ? { reviewMarkdown } : {})
+  };
+}
+
+async function createDeliveryPackageReviewBundle(input: DeliveryReviewPackageInput): Promise<DeliveryReviewPackageResult> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.packageId) throw new Error('Delivery package id is required.');
+  const root = path.resolve(input.projectPath);
+  if (!(await exists(root))) throw new Error(`Project path does not exist: ${input.projectPath}`);
+
+  const detail = await readDeliveryPackage({ projectPath: root, id: input.packageId });
+  const projectName = await readProjectName(root);
+  const createdAt = new Date().toISOString();
+  const stamp = createdAt.replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const fileName = `${slugify(projectName)}-${slugify(detail.id)}-delivery-review-${stamp}.zip`;
+  const outputDir = path.join(app.getPath('userData'), 'review-bundles', slugify(projectName), 'delivery', slugify(detail.id));
+  const filePath = path.join(outputDir, fileName);
+  const warnings: string[] = [];
+
+  const delivery = await collectDeliveryPackageEntries(root, detail, warnings);
+  const related = await collectDeliveryReviewComponents(root, detail, warnings);
+  const source = await collectDeliveryReviewSourceEntries(root, related.components);
+  warnings.push(...source.warnings);
+
+  const foundation = await readFoundationDocuments(root);
+  const standards = await readStandardSections(root);
+  const components = (await readEntities(root, 'components', 'component.json')).concat(await readEntities(root, 'modules', 'module.json'));
+  const sourceProjects = await readSourceProjects(root);
+  const contextEntries: ZipEntryInput[] = [
+    { name: 'package/foundation.md', data: Buffer.from(buildPublishedFoundationMarkdown(projectName, foundation), 'utf8') },
+    { name: 'package/standards.md', data: Buffer.from(buildPublishedStandardsMarkdown(projectName, standards), 'utf8') },
+    { name: 'package/components.md', data: Buffer.from(buildPublishedComponentsMarkdown(projectName, components, sourceProjects), 'utf8') }
+  ];
+
+  const templateEntries: ZipEntryInput[] = [
+    {
+      name: '_templates/delivery/phase-template.md',
+      data: Buffer.from(buildDeliveryPhaseTemplateMarkdown({ packageId: detail.id }), 'utf8')
+    }
+  ];
+
+  const contextFiles = contextEntries.map((entry) => entry.name).sort((a, b) => a.localeCompare(b));
+  const templateFiles = templateEntries.map((entry) => entry.name).sort((a, b) => a.localeCompare(b));
+
+  const allEntries: ZipEntryInput[] = [
+    { name: 'README.md', data: Buffer.from(buildDeliveryReviewPackageReadme({
+      projectName,
+      packageId: detail.id,
+      title: detail.title,
+      strategyFileCount: delivery.strategyFileCount,
+      phaseFileCount: delivery.phaseFileCount,
+      sourceRootCount: source.roots.length,
+      sourceFileCount: source.includedFiles.length,
+      warnings
+    }), 'utf8') },
+    ...contextEntries,
+    ...delivery.entries,
+    ...templateEntries,
+    ...source.entries
+  ];
+
+  const manifest = {
+    bundleType: 'delivery-package-review',
+    schemaVersion: 2,
+    projectName,
+    createdAt,
+    generatedBy: 'AIDD',
+    outputIsOutsideProject: true,
+    snapshotIsSelfContained: true,
+    packageId: detail.id,
+    packageTitle: detail.title,
+    sourceCapability: related.capabilitySlug,
+    components: related.components.map((component) => ({
+      slug: component.slug,
+      title: component.title,
+      source: normaliseComponentSource(component.source)
+    })),
+    deliveryPackage: {
+      directory: 'delivery',
+      strategyFileCount: delivery.strategyFileCount,
+      phaseFileCount: delivery.phaseFileCount,
+      strategyPath: 'delivery/implementation-strategy.md',
+      phasePatterns: ['delivery/phase-##-short-kebab-name.md'],
+      acceptedReturnPaths: ['delivery/implementation-strategy.md', 'delivery/phase-*.md', 'delivery/stage-*.md']
+    },
+    includedFiles: {
+      context: contextFiles,
+      delivery: delivery.includedFiles,
+      templates: templateFiles,
+      source: source.includedFiles
+    },
+    sourceSnapshot: {
+      directory: 'src',
+      allowedExtensions: Array.from(DELIVERY_REVIEW_SOURCE_EXTENSIONS).sort((a, b) => a.localeCompare(b)),
+      excludedDirectories: Array.from(DELIVERY_REVIEW_EXCLUDED_SOURCE_DIRECTORIES).sort((a, b) => a.localeCompare(b)),
+      roots: source.roots.map((sourceRoot) => ({
+        configuredDirectory: sourceRoot.configuredDirectory,
+        absolutePath: sourceRoot.absolutePath,
+        packagePrefix: sourceRoot.packagePrefix ? `src/${sourceRoot.packagePrefix}` : 'src',
+        isInsideWorkspace: sourceRoot.isInsideWorkspace,
+        componentSlugs: sourceRoot.componentSlugs,
+        componentTitles: sourceRoot.componentTitles
+      })),
+      skippedNestedRoots: source.skippedNestedRoots
+    },
+    warnings,
+    returnInstructions: {
+      returnedZipShouldContainOnly: ['delivery/'],
+      deliveryDirectory: 'delivery',
+      strategyPath: 'delivery/implementation-strategy.md',
+      phasePatterns: ['delivery/phase-*.md', 'delivery/stage-*.md'],
+      newPhaseNaming: 'delivery/phase-##-short-kebab-name.md',
+      sourceCodeIsIncludedForReview: true,
+      sourceCodeIsContextOnly: true,
+      doNotReturnBundledSourceCodeAsEditedFiles: true,
+      doNotReturnSnapshotContext: ['package/foundation.md', 'package/standards.md', 'package/components.md']
+    }
+  };
+
+  allEntries.push({ name: 'MANIFEST.json', data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8') });
+
+  const uniqueEntries = new Map<string, ZipEntryInput>();
+  for (const entry of allEntries) {
+    const name = safeZipEntryName(entry.name);
+    if (!uniqueEntries.has(name)) uniqueEntries.set(name, { ...entry, name });
+  }
+
+  await writeZipFile(filePath, Array.from(uniqueEntries.values()));
+  return {
+    filePath,
+    fileName,
+    packageId: detail.id,
+    strategyFileCount: delivery.strategyFileCount,
+    phaseFileCount: delivery.phaseFileCount,
+    standardsFileCount: 1,
+    capabilityFileCount: 0,
+    componentFileCount: 1,
+    sourceRootCount: source.roots.length,
+    sourceFileCount: source.includedFiles.length,
+    entryCount: uniqueEntries.size,
+    warnings
+  };
+}
+
+
 async function publishDeliveryPackageToWorkspace(input: DeliveryWorkspacePublishInput): Promise<DeliveryWorkspacePublishResult> {
   const packageId = String(input.packageId || '').trim();
   if (!input.projectPath || !packageId) throw new Error('Project path and delivery package id are required.');
@@ -8627,39 +9830,48 @@ async function publishDeliveryPackageToWorkspace(input: DeliveryWorkspacePublish
   const writtenFiles: string[] = [];
   const skippedFiles: string[] = [];
   const createdWritableFiles: string[] = [];
+  const removedFiles: string[] = [];
 
-  const generatedFiles = [
-    { relativePath: 'brief.md', content: buildPublishedDeliveryBriefMarkdown(detail) },
-    { relativePath: 'context.md', content: buildPublishedDeliveryContextMarkdown(detail) }
+  const deliveryFiles = [
+    { relativePath: 'implementation-strategy.md', content: buildPublishedDeliveryStrategyFileMarkdown(detail) },
+    ...detail.phases.map((phase, index) => ({
+      relativePath: phase.fileName,
+      content: buildPublishedDeliveryPhaseFileMarkdown(detail, phase, index)
+    }))
   ];
 
-  for (const file of generatedFiles) {
+  for (const file of deliveryFiles) {
     await writeDeliveryGeneratedFile(path.join(targetPath, file.relativePath), file.content, writtenFiles, skippedFiles, file.relativePath);
   }
 
-  for (const template of DELIVERY_WRITABLE_FILE_TEMPLATES) {
-    const relativePath = template.fileName;
-    const absolutePath = path.join(targetPath, relativePath);
-    if (await exists(absolutePath)) continue;
-    await fsp.mkdir(path.dirname(absolutePath), { recursive: true });
-    await fsp.writeFile(absolutePath, buildWorkspaceDeliveryWritableMarkdown(template.title, template.body), 'utf8');
-    createdWritableFiles.push(relativePath);
+  // Older AIDD builds wrote brief/context/progress-style files into workspace delivery packages.
+  // Do not remove agent-authored notes, but remove generated read-only files that no longer form part of the package contract.
+  for (const obsoleteFile of ['brief.md', 'context.md']) {
+    const obsoletePath = path.join(targetPath, obsoleteFile);
+    if (await exists(obsoletePath)) {
+      await fsp.rm(obsoletePath, { force: true });
+      removedFiles.push(obsoleteFile);
+    }
   }
 
   const workspaceManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    type: 'aidd-workspace-delivery-package',
     packageId: detail.id,
     title: detail.title,
-    status: detail.status,
+    status: 'approved',
     sourceCapability: detail.sourceCapability || '',
     components: detail.components,
     aiddProjectPath: input.projectPath,
     workspacePath,
     publishedAt,
     sourceHash,
-    readOnlyFiles: generatedFiles.map((file) => file.relativePath).concat(['manifest.json']),
-    writableFiles: DELIVERY_WRITABLE_FILE_TEMPLATES.map((template) => template.fileName),
-    instructions: 'AIDD owns brief.md and context.md. The implementation agent may update the writable files and source code.'
+    deliveryDirectory: 'delivery',
+    generatedFiles: deliveryFiles.map((file) => file.relativePath).concat(['manifest.json']),
+    editableFiles: deliveryFiles.map((file) => file.relativePath),
+    strategyPath: 'implementation-strategy.md',
+    phasePatterns: ['phase-*.md', 'stage-*.md'],
+    instructions: 'This folder is the agent-facing delivery package. Implement against the source workspace, update implementation-strategy.md and phase/stage Markdown files as progress is made, and return/import the delivery folder when review is complete.'
   };
 
   const manifestContent = JSON.stringify(workspaceManifest, null, 2) + '\n';
@@ -8677,7 +9889,8 @@ async function publishDeliveryPackageToWorkspace(input: DeliveryWorkspacePublish
       path: targetPath,
       publishedAt,
       sourceHash,
-      manifestPath: path.join(targetPath, 'manifest.json')
+      manifestPath: path.join(targetPath, 'manifest.json'),
+      deliveryFiles: deliveryFiles.map((file) => file.relativePath)
     }
   });
 
@@ -8689,7 +9902,8 @@ async function publishDeliveryPackageToWorkspace(input: DeliveryWorkspacePublish
     writtenFiles,
     skippedFiles,
     createdWritableFiles,
-    message: `Published ${detail.id} to ${targetPath}`
+    removedFiles,
+    message: `Published ${detail.id} delivery files to ${targetPath}`
   };
 }
 
@@ -9484,6 +10698,16 @@ ipcMain.handle('project:createDeliveryPackagePhase', async (_event, input: Creat
 ipcMain.handle('project:assembleDeliveryPackage', async (_event, input: { projectPath: string; packageId: string }) => assembleDeliveryPackage(input));
 ipcMain.handle('project:publishDeliveryPackageToWorkspace', async (_event, input: DeliveryWorkspacePublishInput) => {
   return withProjectSaveSync(input.projectPath, () => publishDeliveryPackageToWorkspace(input));
+});
+
+ipcMain.handle('project:packageDeliveryPackageForReview', async (_event, input: DeliveryReviewPackageInput) => {
+  if (!input?.projectPath || !input?.packageId) throw new Error('Project path and delivery package id are required.');
+  return createDeliveryPackageReviewBundle(input);
+});
+
+ipcMain.handle('project:importDeliveryReviewPackage', async (_event, input: ImportDeliveryReviewPackageInput) => {
+  if (!input?.projectPath || !input?.packageId || !input?.zipPath) throw new Error('Project path, delivery package id and review response zip path are required.');
+  return withProjectSaveSync(input.projectPath, () => importDeliveryReviewPackage(input));
 });
 
 ipcMain.handle('project:deleteDeliveryPackage', async (_event, input: DeleteDeliveryPackageInput) => {
