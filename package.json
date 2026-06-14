@@ -2,6 +2,7 @@
   "name": "aidd-app-starter",
   "version": "0.8.0",
   "private": true,
+  "author": "WestForge",
   "description": "AIDD desktop app starter: project creation, workflow-first, Markdown-backed, Git-ready.",
   "main": "dist/main/main.js",
   "scripts": {
@@ -47,18 +48,22 @@
     "@types/node": "^22.10.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.0.2",
     "autoprefixer": "^10.5.0",
-    "concurrently": "^9.1.0",
-    "electron": "^33.2.1",
-    "electron-builder": "^25.1.8",
-    "esbuild": "^0.25.12",
+    "concurrently": "^9.2.1",
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.1",
     "postcss": "^8.5.15",
     "tailwindcss": "^3.4.19",
     "tsx": "^4.20.5",
     "typescript": "^5.7.2",
-    "vite": "^6.0.3",
+    "vite": "^8.0.16",
     "wait-on": "^8.0.1"
+  },
+  "overrides": {
+    "dompurify": "^3.4.8",
+    "shell-quote": "1.8.4"
   },
   "build": {
     "appId": "net.westforge.aidd",
@@ -92,8 +97,7 @@
           ]
         }
       ],
-      "icon": "build/icon.ico",
-      "publisherName": "WestForge"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
