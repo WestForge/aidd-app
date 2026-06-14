@@ -201,7 +201,7 @@ interface ProjectValidationReport {
 
 interface WorkspacePublishOutput {
   path: string;
-  kind: 'agents' | 'doc' | 'delivery-brief';
+  kind: 'agents' | 'doc';
   sourceHash: string;
   outputHash: string;
   status: 'missing' | 'stale' | 'modified' | 'up-to-date';
@@ -599,6 +599,26 @@ interface DeliveryPackageSummary {
   packaged: boolean;
   phaseCount: number;
   priority?: number;
+  workspacePackagePath?: string;
+  workspacePublished?: boolean;
+  workspacePublishedAt?: string;
+  workspacePublishStatus?: 'not-configured' | 'missing' | 'published' | 'stale';
+}
+
+interface DeliveryWorkspacePublishInput {
+  projectPath: string;
+  packageId: string;
+}
+
+interface DeliveryWorkspacePublishResult {
+  packageId: string;
+  workspacePath: string;
+  targetPath: string;
+  published: boolean;
+  writtenFiles: string[];
+  skippedFiles: string[];
+  createdWritableFiles: string[];
+  message: string;
 }
 
 interface DeleteDeliveryPackageInput {
@@ -1549,6 +1569,14 @@ function workspacePublishManifestPath(workspacePath: string) {
   return path.join(workspacePath, 'docs', '.aidd-publish-manifest.json');
 }
 
+function workspaceDeliveryRootPath(workspacePath: string) {
+  return path.join(workspacePath, 'delivery');
+}
+
+function workspaceDeliveryPackagePath(workspacePath: string, packageId: string) {
+  return path.join(workspaceDeliveryRootPath(workspacePath), packageId);
+}
+
 function toWorkspacePublishPath(relativePath: string) {
   return normaliseRelativePath(relativePath).replace(/^\/+/, '');
 }
@@ -1766,7 +1794,6 @@ function buildAgentsManagedBlock(input: {
   workspacePath: string;
   components: any[];
   sourceProjects: SourceCodeProject[];
-  deliveries: DeliveryPackageDetail[];
 }) {
   const lines = [
     AGENTS_START_MARKER,
@@ -1783,7 +1810,6 @@ function buildAgentsManagedBlock(input: {
     '- `docs/foundation.md`',
     '- `docs/standards.md`',
     '- `docs/components.md`',
-    '- `docs/delivery/index.md`',
     '',
     '## Source and component map',
     ''
@@ -1805,18 +1831,19 @@ function buildAgentsManagedBlock(input: {
     lines.push('');
   }
 
-  lines.push('## Active delivery packages', '');
-  if (input.deliveries.length) {
-    for (const delivery of input.deliveries) {
-      lines.push(`- ${delivery.id}: \`docs/delivery/${delivery.id}/brief.md\``);
-      lines.push(`  - Writable progress: \`docs/delivery/${delivery.id}/progress.md\``);
-      lines.push(`  - Writable evidence: \`docs/delivery/${delivery.id}/evidence.md\``);
-      lines.push(`  - Proposed AIDD updates: \`docs/delivery/${delivery.id}/proposed-aidd-updates.md\``);
-    }
-  } else {
-    lines.push('No active delivery package is currently published.');
-  }
-  lines.push('', '## Operating rules', '', '- Use `AGENTS.md` as the entry point and the files above as the approved AIDD context.', '- Do not scan or modify the AIDD source project unless the user explicitly asks.', '- Treat `docs/foundation.md`, `docs/standards.md`, and `docs/components.md` as read-only generated context.', '- During implementation, update only the writable files inside the active delivery package folder when reporting progress, evidence, questions, or proposed AIDD updates.', '- Work in the implementation source workspace and stay within the delivery package scope.', '', AGENTS_END_MARKER, '');
+  lines.push(
+    '## Operating rules',
+    '',
+    '- Use `AGENTS.md` as the entry point and the files above as the approved AIDD context.',
+    '- Do not scan or modify the AIDD source project unless the user explicitly asks.',
+    '- Treat `docs/foundation.md`, `docs/standards.md`, and `docs/components.md` as read-only generated context.',
+    '- Use the component source map to find implementation files before searching the wider workspace.',
+    '- Approved delivery packages are published under `delivery/<package-id>/`; use that folder as the writable execution record.',
+    '- Work in the implementation source workspace and avoid unrelated files unless the user or delivery instructions require it.',
+    '',
+    AGENTS_END_MARKER,
+    ''
+  );
 
   return lines.join('\n');
 }
@@ -1882,8 +1909,8 @@ async function buildWorkspacePublishPlan(projectPath: string) {
       if (!stat.isDirectory()) blockers.push(`The configured source workspace is not a directory: ${workspacePath}`);
       if (sameDiskPath(workspacePath, projectPath)) blockers.push('The source workspace cannot be the active AIDD project.');
       else {
-        if (isSameOrInsideDiskPath(projectPath, workspacePath)) blockers.push('The source workspace contains the active AIDD project. Choose the source-code workspace only.');
-        if (isSameOrInsideDiskPath(workspacePath, projectPath)) blockers.push('The source workspace is inside the active AIDD project.');
+        if (isSameOrInsideDiskPath(projectPath, workspacePath)) warnings.push('The source workspace contains the active AIDD project. Publishing is allowed, but agents may scan AIDD source files from this workspace.');
+        if (isSameOrInsideDiskPath(workspacePath, projectPath)) warnings.push('The source workspace is inside the active AIDD project. Publishing is allowed, but this layout may confuse agents and generated docs.');
       }
       const markers = stat.isDirectory() ? await detectSourceWorkspaceMarkers(workspacePath) : [];
       if (!markers.length) warnings.push('The configured workspace does not look like a source-code directory. Publishing is allowed, but check the workspace path.');
@@ -1902,21 +1929,12 @@ async function buildWorkspacePublishPlan(projectPath: string) {
 
   const components = (await readEntities(projectPath, 'components', 'component.json')).concat(await readEntities(projectPath, 'modules', 'module.json'));
   const sourceProjects = await readSourceProjects(projectPath);
-  const deliveries = await readActiveDeliveryPackageDetails(projectPath);
 
   if (workspacePath) {
     outputs.push(buildPublishOutput('doc', 'docs/foundation.md', buildPublishedFoundationMarkdown(projectName, foundation)));
     outputs.push(buildPublishOutput('doc', 'docs/standards.md', buildPublishedStandardsMarkdown(projectName, standards)));
     outputs.push(buildPublishOutput('doc', 'docs/components.md', buildPublishedComponentsMarkdown(projectName, components, sourceProjects)));
-    outputs.push(buildPublishOutput('doc', 'docs/delivery/index.md', buildPublishedDeliveryIndexMarkdown(projectName, deliveries)));
-    for (const delivery of deliveries) {
-      outputs.push(buildPublishOutput('delivery-brief', `docs/delivery/${delivery.id}/brief.md`, buildDeliveryBriefMarkdown(delivery)));
-      for (const template of DELIVERY_WRITABLE_FILE_TEMPLATES) {
-        const content = buildDeliveryWritableMarkdown(delivery.id, template.title, template.body);
-        writableFiles.push({ path: toWorkspacePublishPath(`docs/delivery/${delivery.id}/${template.fileName}`), content, outputHash: sha256Text(content) });
-      }
-    }
-    const agentsBlock = buildAgentsManagedBlock({ projectName, projectPath, workspacePath, components, sourceProjects, deliveries });
+    const agentsBlock = buildAgentsManagedBlock({ projectName, projectPath, workspacePath, components, sourceProjects });
     outputs.unshift(buildPublishOutput('agents', 'AGENTS.md', agentsBlock));
   }
 
@@ -1928,6 +1946,7 @@ async function evaluateWorkspacePublishStatus(projectPath: string): Promise<Work
   const workspacePath = plan.workspacePath;
   const checkedAt = new Date().toISOString();
   const manifest = workspacePath ? await readWorkspacePublishManifest(workspacePath) : null;
+  const hasPublishedManifest = Boolean(manifest?.publishedAt);
   const manifestOutputByPath = new Map((manifest?.outputs || []).map((output) => [output.path, output]));
 
   const outputs: WorkspacePublishOutput[] = [];
@@ -1952,7 +1971,13 @@ async function evaluateWorkspacePublishStatus(projectPath: string): Promise<Work
     let message = 'Published output is up to date.';
     if (!fileExists || (output.kind === 'agents' && !hasManagedAgentsBlock)) {
       status = 'missing';
-      message = output.kind === 'agents' ? 'AGENTS.md is missing the AIDD managed block.' : 'Published file is missing.';
+      if (!hasPublishedManifest) {
+        message = output.kind === 'agents'
+          ? 'AGENTS.md will receive the generated AIDD managed block on first publish.'
+          : 'This generated file will be created on first publish.';
+      } else {
+        message = output.kind === 'agents' ? 'AGENTS.md is missing the AIDD managed block.' : 'Published file is missing.';
+      }
     } else if (!previous) {
       status = 'stale';
       message = 'Published file is not tracked in the AIDD publish manifest.';
@@ -1988,8 +2013,13 @@ async function evaluateWorkspacePublishStatus(projectPath: string): Promise<Work
     message = plan.blockers[0];
   } else if (summary.missing) {
     state = 'missing';
-    label = 'Published docs missing';
-    message = `${summary.missing} publish output${summary.missing === 1 ? '' : 's'} need to be created.`;
+    if (!hasPublishedManifest) {
+      label = 'Not published yet';
+      message = 'Publish will create AGENTS.md plus docs/foundation.md, docs/standards.md, and docs/components.md.';
+    } else {
+      label = 'Published docs missing';
+      message = `${summary.missing} publish output${summary.missing === 1 ? '' : 's'} need to be recreated.`;
+    }
   } else if (summary.modified) {
     state = 'modified';
     label = 'Published docs modified';
@@ -2894,6 +2924,18 @@ async function validateWorkspacePublishing(projectPath: string, section: Project
     return;
   }
 
+  if (status.state === 'missing' && !status.publishedAt) {
+    pushValidation(section, {
+      id: 'workspace-publishing-not-yet-published',
+      title: 'Workspace docs have not been published yet',
+      message: 'Use Home > Publish workspace docs to create AGENTS.md, docs/foundation.md, docs/standards.md, and docs/components.md.',
+      severity: 'warning',
+      path: status.docsPath,
+      action: 'Open Home and click Publish workspace docs.'
+    });
+    return;
+  }
+
   const issueParts = [
     status.summary.missing ? `${status.summary.missing} missing` : '',
     status.summary.stale ? `${status.summary.stale} stale` : '',
@@ -3071,6 +3113,49 @@ function buildValidationReport(sections: ProjectValidationSection[]): ProjectVal
     nextActions
   };
 }
+
+async function validateWorkspaceDeliveryPackages(projectPath: string, section: ProjectValidationSection) {
+  const packages = await readDeliveryPackages(projectPath);
+  const approvedPackages = packages.filter((item) => normaliseStatusForDelivery(item.status) === 'approved');
+
+  if (!approvedPackages.length) {
+    pushValidation(section, {
+      id: 'workspace-delivery-no-approved-packages',
+      title: 'No approved delivery packages to publish',
+      message: 'Delivery packages will be published to workspace/delivery when they are approved.',
+      severity: 'info'
+    });
+    return;
+  }
+
+  let issueCount = 0;
+  for (const item of approvedPackages) {
+    if (item.workspacePublishStatus === 'published') continue;
+    issueCount++;
+    pushValidation(section, {
+      id: `workspace-delivery-${item.id}-${item.workspacePublishStatus || 'missing'}`,
+      title: `${item.id} is approved but not current in workspace/delivery`,
+      message: item.workspacePublishStatus === 'not-configured'
+        ? 'Set the source workspace on Home so the approved delivery package can be published.'
+        : item.workspacePublishStatus === 'stale'
+          ? 'The AIDD delivery package changed after it was published. Republish it to workspace/delivery.'
+          : 'Publish the approved package to workspace/delivery so the implementation agent can work from it.',
+      severity: 'warning',
+      path: item.workspacePackagePath,
+      action: 'Open Delivery, select the package, then use Approve & publish or Publish to workspace.'
+    });
+  }
+
+  if (issueCount === 0) {
+    pushValidation(section, {
+      id: 'workspace-delivery-published',
+      title: 'Approved delivery packages are published',
+      message: `${approvedPackages.length} approved delivery package${approvedPackages.length === 1 ? '' : 's'} available in workspace/delivery.`,
+      severity: 'success'
+    });
+  }
+}
+
 async function validateProject(projectPath: string): Promise<ProjectValidationReport> {
   const manifestSection = validationSection('template-manifest', 'Template manifest');
   const templateSection = validationSection('templates', 'Template files');
@@ -3080,6 +3165,7 @@ async function validateProject(projectPath: string): Promise<ProjectValidationRe
   const workspaceSection = validationSection('workspace', 'Source workspace configuration');
   const componentSourceSection = validationSection('component-source-locations', 'Component source locations');
   const publishSection = validationSection('workspace-publishing', 'Workspace publishing');
+  const deliveryPublishSection = validationSection('workspace-delivery', 'Workspace delivery packages');
 
   if (!projectPath || !(await exists(projectPath))) {
     pushValidation(dataSection, {
@@ -3089,7 +3175,7 @@ async function validateProject(projectPath: string): Promise<ProjectValidationRe
       severity: 'error',
       action: 'Open a valid AIDD project from the Projects screen.'
     });
-    return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection, workspaceSection, componentSourceSection, publishSection]);
+    return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection, workspaceSection, componentSourceSection, publishSection, deliveryPublishSection]);
   }
 
   await validateTemplateManifest(projectPath, manifestSection);
@@ -3100,8 +3186,9 @@ async function validateProject(projectPath: string): Promise<ProjectValidationRe
   await validateWorkspaceConfiguration(projectPath, workspaceSection);
   await validateComponentSourceLocations(projectPath, componentSourceSection);
   await validateWorkspacePublishing(projectPath, publishSection);
+  await validateWorkspaceDeliveryPackages(projectPath, deliveryPublishSection);
 
-  return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection, workspaceSection, componentSourceSection, publishSection]);
+  return buildValidationReport([manifestSection, templateSection, frontmatterSection, dataSection, entitySection, workspaceSection, componentSourceSection, publishSection, deliveryPublishSection]);
 }
 
 function pushRepairLog(
@@ -7949,6 +8036,137 @@ function buildProjectFoundationSnapshot(foundation: FoundationDocument[], standa
   ].join('\n');
 }
 
+
+async function requireDeliveryWorkspace(projectPath: string) {
+  const trackedProject = await readTrackedProjectByPath(projectPath);
+  const workspacePath = trackedProject?.workspacePath?.trim();
+  if (!workspacePath) throw new Error('Choose the implementation/source-code workspace on Home before publishing delivery packages.');
+  if (!(await exists(workspacePath))) throw new Error(`The configured source workspace does not exist: ${workspacePath}`);
+  const stat = await fsp.stat(workspacePath);
+  if (!stat.isDirectory()) throw new Error(`The configured source workspace is not a directory: ${workspacePath}`);
+  if (sameDiskPath(workspacePath, projectPath)) throw new Error('The source workspace cannot be the active AIDD project.');
+  return workspacePath;
+}
+
+function deliveryPackageSourceHash(detail: DeliveryPackageDetail) {
+  return sha256Text(JSON.stringify({
+    templateVersion: WORKSPACE_PUBLISH_TEMPLATE_VERSION,
+    id: detail.id,
+    title: detail.title,
+    status: detail.status,
+    sourceCapability: detail.sourceCapability,
+    components: detail.components,
+    strategyBody: detail.strategyBody,
+    snapshotBody: detail.snapshotBody,
+    phases: detail.phases.map((phase) => ({ id: phase.id, title: phase.title, status: phase.status, fileName: phase.fileName, body: phase.body }))
+  }));
+}
+
+function buildPublishedDeliveryBriefMarkdown(detail: DeliveryPackageDetail) {
+  const phaseSections = detail.phases.length
+    ? detail.phases.map((phase, index) => [
+        `## Phase ${index + 1}: ${phase.title}`,
+        '',
+        `Status: ${phase.status}`,
+        '',
+        phase.body?.trim() || '_No phase content._'
+      ].join('\n')).join('\n\n')
+    : '_No implementation phases have been created._';
+
+  return [
+    `# ${detail.id} ${detail.title}`,
+    '',
+    '<!-- Generated by AIDD. Update the delivery package in AIDD and republish rather than editing this file directly. -->',
+    '',
+    `Status: ${detail.status}`,
+    detail.sourceCapability ? `Source capability: ${detail.sourceCapability}` : '',
+    detail.components.length ? `Components: ${detail.components.join(', ')}` : '',
+    '',
+    '## Operating context',
+    '',
+    'Read these generated workspace docs before implementing this delivery package:',
+    '',
+    '- `../../docs/foundation.md`',
+    '- `../../docs/standards.md`',
+    '- `../../docs/components.md`',
+    '',
+    'Update the writable files in this folder as work progresses. Do not edit generated workspace docs directly.',
+    '',
+    '## Implementation strategy',
+    '',
+    detail.strategyBody?.trim() || '_No implementation strategy has been captured._',
+    '',
+    '## Implementation phases',
+    '',
+    phaseSections,
+    ''
+  ].join('\n');
+}
+
+function buildPublishedDeliveryContextMarkdown(detail: DeliveryPackageDetail) {
+  return [
+    `# ${detail.id} Context`,
+    '',
+    '<!-- Generated by AIDD. Update the delivery package in AIDD and republish rather than editing this file directly. -->',
+    '',
+    'This file contains the delivery context snapshot captured in AIDD when the package was created or updated.',
+    '',
+    detail.snapshotBody?.trim() || '_No context snapshot has been captured._',
+    ''
+  ].join('\n');
+}
+
+function buildWorkspaceDeliveryWritableMarkdown(title: string, body: string) {
+  return [
+    `# ${title}`,
+    '',
+    '<!-- Writable by the implementation agent. AIDD will preserve this file when republishing the package. -->',
+    '',
+    body,
+    ''
+  ].join('\n');
+}
+
+async function writeDeliveryGeneratedFile(targetPath: string, content: string, writtenFiles: string[], skippedFiles: string[], relativePath: string) {
+  await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+  if (await exists(targetPath)) {
+    const current = await fsp.readFile(targetPath, 'utf8');
+    if (sha256Text(current) === sha256Text(content)) {
+      skippedFiles.push(relativePath);
+      return;
+    }
+  }
+  await fsp.writeFile(targetPath, content, 'utf8');
+  writtenFiles.push(relativePath);
+}
+
+async function readDeliveryWorkspacePublicationState(projectPath: string, packageId: string, manifest?: any): Promise<Partial<DeliveryPackageSummary>> {
+  const workspacePath = await readWorkspacePathForProject(projectPath);
+  if (!workspacePath) return { workspacePublishStatus: 'not-configured', workspacePublished: false };
+  const targetPath = workspaceDeliveryPackagePath(workspacePath, packageId);
+  const manifestPath = path.join(targetPath, 'manifest.json');
+  if (!(await exists(manifestPath))) {
+    return { workspacePackagePath: targetPath, workspacePublishStatus: 'missing', workspacePublished: false };
+  }
+
+  let publishedAt = manifest?.workspaceDelivery?.publishedAt || '';
+  try {
+    const publishedManifest = await readJson<any>(manifestPath);
+    publishedAt = String(publishedManifest.publishedAt || publishedAt || '');
+  } catch {
+    // Keep the package visible; the Health Check can flag corrupt workspace files later.
+  }
+
+  const updatedAt = manifest?.updatedAt || manifest?.createdAt || '';
+  const isStale = Boolean(publishedAt && updatedAt && Date.parse(updatedAt) > Date.parse(publishedAt));
+  return {
+    workspacePackagePath: targetPath,
+    workspacePublished: true,
+    workspacePublishedAt: publishedAt || undefined,
+    workspacePublishStatus: isStale ? 'stale' : 'published'
+  };
+}
+
 async function createDeliveryPackageFromCapability(input: CreateDeliveryPackageFromCapabilityInput) {
   const { foundation, standardSections } = await assertProjectFoundationReady(input.projectPath);
   const foundationSnapshot = buildProjectFoundationSnapshot(foundation, standardSections);
@@ -8061,13 +8279,23 @@ async function createDeliveryPackageFromCapability(input: CreateDeliveryPackageF
 
 function deliveryStatusFromManifest(manifest: any, packaged: boolean, phaseCount: number): string {
   const raw = String(manifest.status || '').trim().toLowerCase();
-  if (raw) return raw;
+  if (raw) return normaliseStatusForDelivery(raw);
   if (manifest.acceptedAt || manifest.completedAt) return 'done';
   if (manifest.startedAt || manifest.inProgressAt) return 'in-progress';
   if (manifest.approvedAt) return 'approved';
-  if (manifest.reviewRequestedAt || manifest.submittedAt) return 'review';
-  if (packaged || phaseCount > 0) return 'review';
+  if (manifest.reviewRequestedAt || manifest.submittedAt) return 'packaging';
+  if (packaged || phaseCount > 0) return 'packaging';
   return 'draft';
+}
+
+function normaliseStatusForDelivery(status?: string) {
+  const value = String(status || 'draft').trim().toLowerCase();
+  if (value === 'approved-for-ai') return 'approved';
+  if (value === 'in-ai-execution' || value === 'active') return 'in-progress';
+  if (value === 'complete' || value === 'accepted') return 'done';
+  if (value === 'review' || value === 'in-review' || value === 'needs-review' || value === 'needs-verification') return 'packaging';
+  if (value === 'approved' || value === 'in-progress' || value === 'done') return value;
+  return 'packaging';
 }
 
 async function countPackagePhases(dir: string) {
@@ -8094,8 +8322,10 @@ async function readDeliveryPackageSummariesFrom(root: string, relativeDir: strin
     const phaseCount = await countPackagePhases(packageDir);
     const packaged = Boolean(assembledExists || (snapshotExists && strategyExists));
 
+    const id = String(manifest.id || entry.name);
+    const workspacePublication = await readDeliveryWorkspacePublicationState(root, id, manifest);
     items.push({
-      id: String(manifest.id || entry.name),
+      id,
       title: String(manifest.title || manifest.name || entry.name),
       status: deliveryStatusFromManifest(manifest, packaged, phaseCount),
       sourceCapability: manifest.sourceCapability || manifest.capability || manifest.capabilitySlug,
@@ -8103,7 +8333,8 @@ async function readDeliveryPackageSummariesFrom(root: string, relativeDir: strin
       createdAt: manifest.createdAt || manifest.updatedAt,
       packaged,
       phaseCount,
-      priority: typeof manifest.priority === 'number' ? manifest.priority : undefined
+      priority: typeof manifest.priority === 'number' ? manifest.priority : undefined,
+      ...workspacePublication
     });
   }
 
@@ -8212,15 +8443,17 @@ async function readDeliveryPackage(input: { projectPath: string; id: string }): 
   const target = await findDeliveryPackageTarget(input.projectPath, input.id);
   const manifestPath = path.join(target.dir, target.manifestName);
   const manifest = await readJson<any>(manifestPath);
-  const summary = (await readDeliveryPackages(input.projectPath)).find((item) => item.id === String(manifest.id || input.id)) || {
-    id: String(manifest.id || input.id),
+  const fallbackId = String(manifest.id || input.id);
+  const summary = (await readDeliveryPackages(input.projectPath)).find((item) => item.id === fallbackId) || {
+    id: fallbackId,
     title: String(manifest.title || manifest.name || input.id),
     status: String(manifest.status || 'draft'),
     sourceCapability: manifest.sourceCapability || manifest.capability || manifest.capabilitySlug,
     components: Array.isArray(manifest.components) ? manifest.components.map(String) : [],
     createdAt: manifest.createdAt || manifest.updatedAt,
     packaged: false,
-    phaseCount: 0
+    phaseCount: 0,
+    ...(await readDeliveryWorkspacePublicationState(input.projectPath, fallbackId, manifest))
   };
 
   const entries = await fsp.readdir(target.dir, { withFileTypes: true });
@@ -8375,6 +8608,89 @@ async function assembleDeliveryPackage(input: { projectPath: string; packageId: 
   });
 
   return readDeliveryPackage({ projectPath: input.projectPath, id: input.packageId });
+}
+
+
+async function publishDeliveryPackageToWorkspace(input: DeliveryWorkspacePublishInput): Promise<DeliveryWorkspacePublishResult> {
+  const packageId = String(input.packageId || '').trim();
+  if (!input.projectPath || !packageId) throw new Error('Project path and delivery package id are required.');
+
+  const detail = await readDeliveryPackage({ projectPath: input.projectPath, id: packageId });
+  if (normaliseStatusForDelivery(detail.status) !== 'approved') {
+    throw new Error('Only approved delivery packages can be published to the workspace. Mark the package as approved first.');
+  }
+
+  const workspacePath = await requireDeliveryWorkspace(input.projectPath);
+  const targetPath = workspaceDeliveryPackagePath(workspacePath, detail.id);
+  const sourceHash = deliveryPackageSourceHash(detail);
+  const publishedAt = new Date().toISOString();
+  const writtenFiles: string[] = [];
+  const skippedFiles: string[] = [];
+  const createdWritableFiles: string[] = [];
+
+  const generatedFiles = [
+    { relativePath: 'brief.md', content: buildPublishedDeliveryBriefMarkdown(detail) },
+    { relativePath: 'context.md', content: buildPublishedDeliveryContextMarkdown(detail) }
+  ];
+
+  for (const file of generatedFiles) {
+    await writeDeliveryGeneratedFile(path.join(targetPath, file.relativePath), file.content, writtenFiles, skippedFiles, file.relativePath);
+  }
+
+  for (const template of DELIVERY_WRITABLE_FILE_TEMPLATES) {
+    const relativePath = template.fileName;
+    const absolutePath = path.join(targetPath, relativePath);
+    if (await exists(absolutePath)) continue;
+    await fsp.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fsp.writeFile(absolutePath, buildWorkspaceDeliveryWritableMarkdown(template.title, template.body), 'utf8');
+    createdWritableFiles.push(relativePath);
+  }
+
+  const workspaceManifest = {
+    schemaVersion: 1,
+    packageId: detail.id,
+    title: detail.title,
+    status: detail.status,
+    sourceCapability: detail.sourceCapability || '',
+    components: detail.components,
+    aiddProjectPath: input.projectPath,
+    workspacePath,
+    publishedAt,
+    sourceHash,
+    readOnlyFiles: generatedFiles.map((file) => file.relativePath).concat(['manifest.json']),
+    writableFiles: DELIVERY_WRITABLE_FILE_TEMPLATES.map((template) => template.fileName),
+    instructions: 'AIDD owns brief.md and context.md. The implementation agent may update the writable files and source code.'
+  };
+
+  const manifestContent = JSON.stringify(workspaceManifest, null, 2) + '\n';
+  await writeDeliveryGeneratedFile(path.join(targetPath, 'manifest.json'), manifestContent, writtenFiles, skippedFiles, 'manifest.json');
+
+  const sourceTarget = await findDeliveryPackageTarget(input.projectPath, detail.id);
+  const sourceManifestPath = path.join(sourceTarget.dir, sourceTarget.manifestName);
+  const sourceManifest = await readJson<any>(sourceManifestPath);
+  await writeJson(sourceManifestPath, {
+    ...sourceManifest,
+    status: 'approved',
+    approvedAt: sourceManifest.approvedAt || publishedAt,
+    updatedAt: publishedAt,
+    workspaceDelivery: {
+      path: targetPath,
+      publishedAt,
+      sourceHash,
+      manifestPath: path.join(targetPath, 'manifest.json')
+    }
+  });
+
+  return {
+    packageId: detail.id,
+    workspacePath,
+    targetPath,
+    published: true,
+    writtenFiles,
+    skippedFiles,
+    createdWritableFiles,
+    message: `Published ${detail.id} to ${targetPath}`
+  };
 }
 
 async function deleteDeliveryPackage(input: DeleteDeliveryPackageInput) {
@@ -9166,6 +9482,9 @@ ipcMain.handle('project:createDeliveryPackagePhase', async (_event, input: Creat
   return withProjectSaveSync(input.projectPath, () => createDeliveryPackagePhase(input));
 });
 ipcMain.handle('project:assembleDeliveryPackage', async (_event, input: { projectPath: string; packageId: string }) => assembleDeliveryPackage(input));
+ipcMain.handle('project:publishDeliveryPackageToWorkspace', async (_event, input: DeliveryWorkspacePublishInput) => {
+  return withProjectSaveSync(input.projectPath, () => publishDeliveryPackageToWorkspace(input));
+});
 
 ipcMain.handle('project:deleteDeliveryPackage', async (_event, input: DeleteDeliveryPackageInput) => {
   return withProjectSaveSync(input.projectPath, () => deleteDeliveryPackage(input));

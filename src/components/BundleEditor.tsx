@@ -5,12 +5,12 @@ import {
   ArrowUp,
   CheckCircle2,
   ClipboardList,
-  Eye,
   FileText,
   FolderOpen,
   Layers3,
   Loader2,
   PackageCheck,
+  UploadCloud,
   PlayCircle,
   Plus,
   RefreshCw,
@@ -46,7 +46,6 @@ type EditorTab = "snapshot" | "strategy" | "packaged" | "new-phase" | string;
 
 const statusOptions = [
   "packaging",
-  "review",
   "approved",
   "in-progress",
   "done",
@@ -61,7 +60,6 @@ const deliveryStatusVisuals: Record<
   { icon: LucideIcon; className: string }
 > = {
   packaging: { icon: ClipboardList, className: "text-sky-400" },
-  review: { icon: Eye, className: "text-amber-400" },
   approved: { icon: CheckCircle2, className: "text-emerald-400" },
   "in-progress": { icon: PlayCircle, className: "text-blue-400" },
   done: { icon: PackageCheck, className: "text-green-400" },
@@ -137,7 +135,9 @@ export function BundleEditor({
   const [activeTab, setActiveTab] = useState<EditorTab>("strategy");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [publishMessage, setPublishMessage] = useState<string | null>(null);
   const [dragFilePath, setDragFilePath] = useState<string | null>(null);
   const [dragError, setDragError] = useState<string | null>(null);
   const [newPhaseTitle, setNewPhaseTitle] = useState("");
@@ -300,10 +300,26 @@ export function BundleEditor({
     });
   };
 
+  const publishSavedPackage = async (packageId: string) => {
+    if (!activeProject) return null;
+    setPublishing(true);
+    try {
+      const result = await window.aidd.publishDeliveryPackageToWorkspace({
+        projectPath: activeProject.path,
+        packageId,
+      });
+      setPublishMessage(`Published to ${result.targetPath}`);
+      return result;
+    } finally {
+      setPublishing(false);
+    }
+  };
+
   const savePackage = async () => {
     if (!activeProject || !detail) return;
     setSaving(true);
     setError(null);
+    setPublishMessage(null);
     try {
       const next = await window.aidd.saveDeliveryPackage({
         projectPath: activeProject.path,
@@ -314,22 +330,72 @@ export function BundleEditor({
         strategyBody: detail.strategyBody,
         phases: detail.phases,
       });
-      setDetail(next);
+      let refreshed = next;
+      if (next.status === "approved") {
+        await publishSavedPackage(next.id);
+        refreshed = await window.aidd.readDeliveryPackage({
+          projectPath: activeProject.path,
+          id: next.id,
+        });
+      }
+      setDetail(refreshed);
       onChange({
         ...bundle,
-        title: next.title,
-        status: next.status as DeliveryBundle["status"],
+        title: refreshed.title,
+        status: refreshed.status as DeliveryBundle["status"],
         lastUpdated: new Date().toISOString().slice(0, 10),
       });
       await window.aidd.notify({
-        title: "Delivery package saved",
-        body: next.id,
+        title: refreshed.status === "approved" ? "Delivery package approved and published" : "Delivery package saved",
+        body: refreshed.id,
       });
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
           : "Could not save the delivery package.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const approveAndPublishPackage = async () => {
+    if (!activeProject || !detail) return;
+    setSaving(true);
+    setError(null);
+    setPublishMessage(null);
+    try {
+      const next = await window.aidd.saveDeliveryPackage({
+        projectPath: activeProject.path,
+        id: detail.id,
+        title: detail.title,
+        status: "approved",
+        snapshotBody: detail.snapshotBody,
+        strategyBody: detail.strategyBody,
+        phases: detail.phases,
+      });
+      await publishSavedPackage(next.id);
+      const refreshed = await window.aidd.readDeliveryPackage({
+        projectPath: activeProject.path,
+        id: next.id,
+      });
+      setDetail(refreshed);
+      onChange({
+        ...bundle,
+        title: refreshed.title,
+        status: refreshed.status as DeliveryBundle["status"],
+        lastUpdated: new Date().toISOString().slice(0, 10),
+      });
+      await window.aidd.notify({
+        title: "Delivery package approved and published",
+        body: refreshed.id,
+      });
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not approve and publish the delivery package.",
       );
     } finally {
       setSaving(false);
@@ -482,8 +548,7 @@ export function BundleEditor({
               {detail?.title || bundle.title || bundle.id}
             </h1>
             <p className="truncate text-sm text-muted-foreground">
-              Edit package context, refine the implementation strategy, then
-              assemble the AI handoff.
+              Edit package context, refine the implementation strategy, then approve it to publish into the source workspace.
             </p>
           </div>
         </div>
@@ -508,13 +573,13 @@ export function BundleEditor({
           <Button
             variant="outline"
             size="sm"
-            onClick={assemblePackage}
-            disabled={!detail || saving}
+            onClick={approveAndPublishPackage}
+            disabled={!detail || saving || publishing}
           >
-            <PackageCheck className="h-4 w-4" />
-            Package document
+            {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+            {detail?.status === "approved" ? "Publish to workspace" : "Approve & publish"}
           </Button>
-          <Button size="sm" onClick={savePackage} disabled={!detail || saving}>
+          <Button size="sm" onClick={savePackage} disabled={!detail || saving || publishing}>
             {saving ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
@@ -572,14 +637,6 @@ export function BundleEditor({
             status="packaging"
             muted
           />
-          <ToolbarButton
-            active={activeTab === "packaged"}
-            onClick={() => setActiveTab("packaged")}
-            icon={PackageCheck}
-            label="Packaged"
-            title="Assembled AI implementation instructions"
-            status={detail.packaged ? "done" : "packaging"}
-          />
           <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
             <Badge variant="outline" className="gap-1.5 capitalize">
               <DeliveryStatusIcon
@@ -592,7 +649,7 @@ export function BundleEditor({
               {detail.phaseCount} phase{detail.phaseCount === 1 ? "" : "s"}
             </Badge>
             <Badge variant="outline">
-              {detail.packaged ? "packaged" : "not packaged"}
+              {detail.workspacePublishStatus === "published" ? "workspace published" : detail.workspacePublishStatus === "stale" ? "workspace stale" : "not published"}
             </Badge>
           </div>
         </div>
@@ -603,6 +660,13 @@ export function BundleEditor({
           <Alert variant="destructive" className="mb-4">
             <AlertTitle>Delivery package problem</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {publishMessage && (
+          <Alert className="mb-4">
+            <AlertTitle>Workspace delivery package published</AlertTitle>
+            <AlertDescription>{publishMessage}</AlertDescription>
           </Alert>
         )}
 

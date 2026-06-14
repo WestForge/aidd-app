@@ -227,7 +227,7 @@ interface AiddProjectValidationReport {
 
 interface AiddWorkspacePublishOutput {
   path: string;
-  kind: 'agents' | 'doc' | 'delivery-brief';
+  kind: 'agents' | 'doc';
   sourceHash: string;
   outputHash: string;
   status: 'missing' | 'stale' | 'modified' | 'up-to-date';
@@ -597,6 +597,21 @@ interface AiddDeliveryPackageSummary {
   packaged: boolean;
   phaseCount: number;
   priority?: number;
+  workspacePackagePath?: string;
+  workspacePublished?: boolean;
+  workspacePublishedAt?: string;
+  workspacePublishStatus?: 'not-configured' | 'missing' | 'published' | 'stale';
+}
+
+interface AiddDeliveryWorkspacePublishResult {
+  packageId: string;
+  workspacePath: string;
+  targetPath: string;
+  published: boolean;
+  writtenFiles: string[];
+  skippedFiles: string[];
+  createdWritableFiles: string[];
+  message: string;
 }
 
 interface AiddDeliveryPackagePhase {
@@ -873,6 +888,7 @@ interface Window {
     saveDeliveryPackage: (input: { projectPath: string; id: string; title?: string; status?: string; snapshotBody?: string; strategyBody?: string; phases?: AiddDeliveryPackagePhase[] }) => Promise<AiddDeliveryPackageDetail>;
     createDeliveryPackagePhase: (input: { projectPath: string; packageId: string; title: string; body?: string }) => Promise<AiddDeliveryPackageDetail>;
     assembleDeliveryPackage: (input: { projectPath: string; packageId: string }) => Promise<AiddDeliveryPackageDetail>;
+    publishDeliveryPackageToWorkspace: (input: { projectPath: string; packageId: string }) => Promise<AiddDeliveryWorkspacePublishResult>;
     readDecisions: (projectPath: string) => Promise<AiddDecisionRecord[]>;
     createDecision: (input: AiddCreateDecisionInput) => Promise<AiddDecisionRecord[]>;
     readSourceReference: (projectPath: string) => Promise<AiddSourceReference | null>;

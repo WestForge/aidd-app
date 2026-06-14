@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle2,
-  ClipboardCheck,
   Clock3,
   Loader2,
   PackageOpen,
+  FolderOpen,
+  UploadCloud,
   RefreshCw,
   Trash2,
 } from 'lucide-react';
@@ -22,7 +23,7 @@ interface DeliveryPackagesProps {
   activeProject?: AiddTrackedProject | null;
 }
 
-type DeliveryColumnId = 'packaging' | 'review' | 'approved' | 'in-progress' | 'done';
+type DeliveryColumnId = 'packaging' | 'approved' | 'in-progress' | 'done';
 
 type DeliveryWorkItem = {
   id: string;
@@ -34,6 +35,10 @@ type DeliveryWorkItem = {
   packaged?: boolean;
   phaseCount?: number;
   priority?: number;
+  workspacePackagePath?: string;
+  workspacePublished?: boolean;
+  workspacePublishedAt?: string;
+  workspacePublishStatus?: 'not-configured' | 'missing' | 'published' | 'stale';
 };
 
 const columns: Array<{
@@ -43,8 +48,7 @@ const columns: Array<{
   icon: typeof PackageOpen;
 }> = [
   { id: 'packaging', title: 'Packaging', description: 'Package context still being completed.', icon: PackageOpen },
-  { id: 'review', title: 'Review', description: 'Ready for review or awaiting changes.', icon: ClipboardCheck },
-  { id: 'approved', title: 'Approved', description: 'Accepted and ready to start.', icon: CheckCircle2 },
+  { id: 'approved', title: 'Approved', description: 'Accepted and published to the workspace.', icon: CheckCircle2 },
   { id: 'in-progress', title: 'In Progress', description: 'Implementation is underway.', icon: Loader2 },
   { id: 'done', title: 'Done', description: 'Delivered and accepted.', icon: CheckCircle2 },
 ];
@@ -54,10 +58,10 @@ const statusLabels: Record<string, string> = {
   'not-started': 'Packaging',
   packaging: 'Packaging',
   'changes-requested': 'Packaging',
-  'needs-review': 'Review',
-  review: 'Review',
-  'in-review': 'Review',
-  'needs-verification': 'Review',
+  'needs-review': 'Packaging',
+  review: 'Packaging',
+  'in-review': 'Packaging',
+  'needs-verification': 'Packaging',
   approved: 'Approved',
   'approved-for-ai': 'Approved',
   'in-progress': 'In Progress',
@@ -74,7 +78,7 @@ function normaliseStatus(status?: string): DeliveryColumnId {
     case 'review':
     case 'in-review':
     case 'needs-verification':
-      return 'review';
+      return 'packaging';
     case 'approved':
     case 'approved-for-ai':
       return 'approved';
@@ -105,6 +109,8 @@ function fromBundle(bundle: DeliveryBundle): DeliveryWorkItem {
     createdAt: bundle.lastUpdated,
     packaged: false,
     phaseCount: 0,
+    workspacePublished: false,
+    workspacePublishStatus: 'not-configured',
   };
 }
 
@@ -118,6 +124,7 @@ function formatDate(value?: string) {
 export function DeliveryPackages({ packages, selectedId, onSelectPackage, onCreatePackage, activeProject }: DeliveryPackagesProps) {
   const [items, setItems] = useState<DeliveryWorkItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadPackages = async () => {
@@ -156,6 +163,26 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, onCrea
     }
     return next;
   }, [items]);
+
+  const publishPackage = async (item: DeliveryWorkItem) => {
+    if (!activeProject) return;
+    setPublishingId(item.id);
+    setError(null);
+    try {
+      await window.aidd.publishDeliveryPackageToWorkspace({ projectPath: activeProject.path, packageId: item.id });
+      await loadPackages();
+      await window.aidd.notify({ title: 'Delivery package published', body: item.id });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not publish delivery package to workspace.');
+    } finally {
+      setPublishingId(null);
+    }
+  };
+
+  const openWorkspacePackage = async (item: DeliveryWorkItem) => {
+    if (!item.workspacePackagePath) return;
+    await window.aidd.showItemInFolder(item.workspacePackagePath);
+  };
 
   const deletePackage = async (item: DeliveryWorkItem) => {
     if (!activeProject) return;
@@ -206,13 +233,13 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, onCrea
 
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold">Kanban flow</h2>
-            <p className="text-sm text-muted-foreground">Columns are read-only for now. Status changes will be handled by the delivery process.</p>
+            <h2 className="text-lg font-semibold">Delivery flow</h2>
+            <p className="text-sm text-muted-foreground">Approved packages publish into the source workspace at <code>delivery/&lt;package-id&gt;</code>.</p>
           </div>
           <Badge variant="outline">{total} active item{total === 1 ? '' : 's'}</Badge>
         </div>
 
-        <div className="grid min-w-[1120px] gap-4 xl:grid-cols-5">
+        <div className="grid min-w-[920px] gap-4 xl:grid-cols-4">
           {columns.map((column) => {
             const columnItems = grouped.get(column.id) ?? [];
             const Icon = column.icon;
@@ -256,15 +283,30 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, onCrea
                               {(item.components || []).length > 3 && <Badge variant="outline" className="text-[10px]">+{item.components.length - 3}</Badge>}
                             </div>
                             <div className="flex items-center justify-between gap-2 pt-1">
-                              <span>{item.packaged ? 'Package assembled' : 'Package incomplete'}</span>
                               <span>{item.phaseCount ?? 0} phase{item.phaseCount === 1 ? '' : 's'}</span>
+                              <span>{item.workspacePublishStatus === 'published' ? 'Published' : item.workspacePublishStatus === 'stale' ? 'Workspace stale' : 'Not published'}</span>
                             </div>
+                            {item.workspacePackagePath && (
+                              <div className="break-all text-[11px]">Workspace: {item.workspacePackagePath}</div>
+                            )}
                             {created && <div className="flex items-center gap-1"><Clock3 className="h-3 w-3" />{created}</div>}
                           </div>
                         </button>
 
                         {activeProject && (
-                          <div className="mt-3 flex justify-end border-t pt-2 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
+                          <div className="mt-3 flex flex-wrap justify-end gap-1 border-t pt-2 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
+                            {normaliseStatus(item.status) === 'approved' && (
+                              <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => publishPackage(item)} disabled={publishingId === item.id}>
+                                {publishingId === item.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />}
+                                {item.workspacePublishStatus === 'published' ? 'Republish' : 'Publish'}
+                              </Button>
+                            )}
+                            {item.workspacePackagePath && (
+                              <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openWorkspacePackage(item)}>
+                                <FolderOpen className="h-3.5 w-3.5" />
+                                Workspace
+                              </Button>
+                            )}
                             <Button variant="ghost" size="sm" className="h-7 px-2 text-destructive hover:text-destructive" onClick={() => deletePackage(item)}>
                               <Trash2 className="h-3.5 w-3.5" />
                               Delete

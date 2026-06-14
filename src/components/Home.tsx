@@ -134,6 +134,12 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
   const workspaceHasAiddBoundaryIssue = Boolean(configuredWorkspacePath && (workspaceContainsAiddProject || workspaceInsideAiddProject));
   const agentsPath = agentsTargetPath(configuredWorkspacePath);
   const docsPath = publishStatus?.docsPath || docsTargetPath(configuredWorkspacePath);
+  const hasPublishedWorkspaceDocs = Boolean(publishStatus?.publishedAt);
+  const publishOutputIssues = publishStatus?.outputs.filter((output) => output.status !== 'up-to-date' && (hasPublishedWorkspaceDocs || output.status !== 'missing')) ?? [];
+  const publishFilesToCreate = publishStatus && !hasPublishedWorkspaceDocs ? publishStatus.outputs.map((output) => output.path) : [];
+  const publishBlockingReason = publishStatus?.blockers.length
+    ? `${publishStatus.blockers.length} blocking issue${publishStatus.blockers.length === 1 ? '' : 's'}`
+    : '';
 
   const refreshPublishStatus = async () => {
     if (!activeProject?.path) return;
@@ -379,17 +385,34 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
 
                 {publishStatus ? (
                   <>
-                    <div className="grid grid-cols-3 gap-2 text-xs">
-                      <div className="rounded-md border p-2"><div className="font-medium">Missing</div><div>{publishStatus.summary.missing}</div></div>
-                      <div className="rounded-md border p-2"><div className="font-medium">Stale</div><div>{publishStatus.summary.stale}</div></div>
-                      <div className="rounded-md border p-2"><div className="font-medium">Edited</div><div>{publishStatus.summary.modified}</div></div>
-                    </div>
+                    {hasPublishedWorkspaceDocs ? (
+                      <div className="grid grid-cols-3 gap-2 text-xs">
+                        <div className="rounded-md border p-2"><div className="font-medium">Missing</div><div>{publishStatus.summary.missing}</div></div>
+                        <div className="rounded-md border p-2"><div className="font-medium">Stale</div><div>{publishStatus.summary.stale}</div></div>
+                        <div className="rounded-md border p-2"><div className="font-medium">Edited</div><div>{publishStatus.summary.modified}</div></div>
+                      </div>
+                    ) : publishFilesToCreate.length > 0 ? (
+                      <div className="rounded-lg border bg-muted/40 p-3 text-xs">
+                        <div className="mb-2 font-medium text-foreground">First publish will create</div>
+                        <ul className="list-disc space-y-1 pl-4 text-muted-foreground">
+                          {publishFilesToCreate.map((filePath) => (
+                            <li key={filePath}>{filePath}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
 
                     {publishStatus.blockers.length > 0 && (
                       <Alert>
                         <CircleAlert className="h-4 w-4" />
-                        <AlertTitle>Publishing blocked</AlertTitle>
-                        <AlertDescription>{publishStatus.blockers[0]}</AlertDescription>
+                        <AlertTitle>Publishing blocked — {publishBlockingReason}</AlertTitle>
+                        <AlertDescription>
+                          <ul className="mt-2 list-disc space-y-1 pl-4">
+                            {publishStatus.blockers.map((blocker) => (
+                              <li key={blocker}>{blocker}</li>
+                            ))}
+                          </ul>
+                        </AlertDescription>
                       </Alert>
                     )}
 
@@ -401,13 +424,36 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
                       </Alert>
                     )}
 
+                    {publishOutputIssues.length > 0 && (
+                      <div className="rounded-lg border p-3 text-xs">
+                        <div className="mb-2 font-medium text-foreground">Published file issues</div>
+                        <ul className="list-disc space-y-1 pl-4 text-muted-foreground">
+                          {publishOutputIssues.slice(0, 8).map((output) => (
+                            <li key={output.path}>
+                              <span className="font-medium text-foreground">{output.path}</span>: {output.status} — {output.message}
+                            </li>
+                          ))}
+                        </ul>
+                        {publishOutputIssues.length > 8 && (
+                          <div className="mt-2 text-muted-foreground">+{publishOutputIssues.length - 8} more published file issue{publishOutputIssues.length - 8 === 1 ? '' : 's'}.</div>
+                        )}
+                      </div>
+                    )}
+
                     {publishStatus.warnings.length > 0 && (
-                      <div className="rounded-lg border p-3 text-xs text-muted-foreground">{publishStatus.warnings[0]}</div>
+                      <div className="rounded-lg border p-3 text-xs">
+                        <div className="mb-2 font-medium text-foreground">Warnings</div>
+                        <ul className="list-disc space-y-1 pl-4 text-muted-foreground">
+                          {publishStatus.warnings.map((warning) => (
+                            <li key={warning}>{warning}</li>
+                          ))}
+                        </ul>
+                      </div>
                     )}
 
                     {publishResult && (
                       <div className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
-                        Published: {publishResult.writtenFiles.length} generated file{publishResult.writtenFiles.length === 1 ? '' : 's'} updated, {publishResult.createdWritableFiles.length} writable file{publishResult.createdWritableFiles.length === 1 ? '' : 's'} created, {publishResult.skippedFiles.length} skipped.
+                        Published: {publishResult.writtenFiles.length} generated file{publishResult.writtenFiles.length === 1 ? '' : 's'} updated, {publishResult.skippedFiles.length} skipped.
                       </div>
                     )}
 
@@ -419,6 +465,9 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
 
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" onClick={publishWorkspaceDocs} disabled={publishBusy || !publishStatus?.canPublish}>Publish workspace docs</Button>
+                  {publishStatus && !publishStatus.canPublish && (
+                    <div className="basis-full text-xs text-muted-foreground">Resolve the blocking issue{publishStatus.blockers.length === 1 ? '' : 's'} above before publishing.</div>
+                  )}
                   <Button variant="outline" size="sm" onClick={refreshPublishStatus} disabled={publishBusy}>Refresh</Button>
                   {publishStatus?.docsPath && <Button variant="outline" size="sm" onClick={() => window.aidd.showItemInFolder(publishStatus.docsPath!)}>Open docs</Button>}
                 </div>
