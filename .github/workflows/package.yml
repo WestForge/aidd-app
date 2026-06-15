@@ -37,22 +37,59 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Build Windows installer artifact
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+      - name: Build Windows installer
         run: npm run dist:win:clean
-
-      - name: Build and publish Windows release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        run: npm run dist:win:publish:clean
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload installer artifact
+      - name: Upload Windows installer artifact
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v4
         with:
-          name: aidd-windows-installer
+          name: aidd-windows-installer-${{ github.sha }}
           path: |
-            release/*.exe
-            release/*.exe.blockmap
-            release/win-unpacked/**
+            dist/**/*.exe
+            dist/**/*.msi
+            dist/**/*.zip
+            dist/**/*.blockmap
+            dist/**/*.yml
+            release/**/*.exe
+            release/**/*.msi
+            release/**/*.zip
+            release/**/*.blockmap
+            release/**/*.yml
+          if-no-files-found: warn
+
+      - name: Create GitHub Release
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+
+          $roots = @("dist", "release") | Where-Object { Test-Path $_ }
+
+          if (-not $roots -or $roots.Count -eq 0) {
+            Write-Error "No dist or release directory found."
+            exit 1
+          }
+
+          $assets = Get-ChildItem -Path $roots -Recurse -File |
+            Where-Object {
+              $_.Extension -in @(".exe", ".msi", ".zip", ".blockmap", ".yml")
+            } |
+            Sort-Object FullName -Unique
+
+          if (-not $assets -or $assets.Count -eq 0) {
+            Write-Error "No release assets found."
+            exit 1
+          }
+
+          Write-Host "Release assets:"
+          $assets | ForEach-Object { Write-Host $_.FullName }
+
+          gh release create $tag $assets.FullName `
+            --title "AIDD $tag" `
+            --generate-notes `
+            --verify-tag
