@@ -1021,9 +1021,9 @@ export function BundleEditor({
           </div>
         ) : detail ? (
           <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="min-h-0 overflow-auto">
-              <div className="mx-auto max-w-7xl space-y-4 pb-6">
-                <Card>
+            <div className="flex min-h-0 flex-col overflow-hidden">
+              <div className="mx-auto flex h-full min-h-0 w-full max-w-7xl flex-col gap-4">
+                <Card className="shrink-0">
                   <CardContent className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_180px]">
                     <Input
                       value={detail.title}
@@ -1056,7 +1056,7 @@ export function BundleEditor({
                   >
                     <MarkdownEditor
                       editorKey={`package-${detail.id}-strategy`}
-                      className={cn("min-h-[620px]", packageLocked && "bg-muted/40")}
+                      className={cn("flex-1", packageLocked && "bg-muted/40")}
                       value={detail.strategyBody}
                       initialValue={detail.strategyBody}
                       readOnly={packageLocked}
@@ -1072,7 +1072,7 @@ export function BundleEditor({
                   >
                     <MarkdownEditor
                       editorKey={`package-${detail.id}-snapshot`}
-                      className={cn("min-h-[620px]", packageLocked && "bg-muted/40")}
+                      className={cn("flex-1", packageLocked && "bg-muted/40")}
                       value={detail.snapshotBody}
                       initialValue={detail.snapshotBody}
                       readOnly={packageLocked}
@@ -1088,7 +1088,7 @@ export function BundleEditor({
                   >
                     <MarkdownEditor
                       editorKey={`package-${detail.id}-packaged`}
-                      className={cn("min-h-[620px]", packageLocked && "bg-muted/40")}
+                      className={cn("flex-1", packageLocked && "bg-muted/40")}
                       value={
                         detail.packagedBody ||
                         "Use Package document to generate delivery-package.md from the strategy and phases."
@@ -1122,7 +1122,7 @@ export function BundleEditor({
                     </div>
                     <MarkdownEditor
                       editorKey={`package-${detail.id}-new-phase`}
-                      className={cn("min-h-[560px]", packageLocked && "bg-muted/40")}
+                      className={cn("flex-1", packageLocked && "bg-muted/40")}
                       value={newPhaseBody}
                       initialValue={newPhaseBody}
                       readOnly={packageLocked}
@@ -1215,7 +1215,7 @@ export function BundleEditor({
                     </p>
                     <MarkdownEditor
                       editorKey={`package-${detail.id}-${currentPhase.id}`}
-                      className={cn("min-h-[560px]", packageLocked && "bg-muted/40")}
+                      className={cn("flex-1", packageLocked && "bg-muted/40")}
                       value={currentPhase.body}
                       initialValue={currentPhase.body}
                       readOnly={packageLocked}
@@ -1516,12 +1516,12 @@ function EditorCard({
   children: ReactNode;
 }) {
   return (
-    <Card className="min-w-0">
-      <CardHeader className="pb-3">
+    <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <CardHeader className="shrink-0 pb-3">
         <CardTitle>{title}</CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>
-      <CardContent>{children}</CardContent>
+      <CardContent className="flex min-h-0 flex-1 flex-col">{children}</CardContent>
     </Card>
   );
 }

@@ -915,8 +915,8 @@ export function Capabilities({
         </div>
       )}
       <main className="min-h-0 flex-1 overflow-auto p-6">
-        <div className="flex min-w-0 flex-col gap-4">
-          <Card className="flex min-h-[460px] flex-col overflow-hidden">
+        <div className="flex h-full min-h-0 min-w-0 flex-col gap-4">
+          <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <CardHeader className="shrink-0">
               <div>
                 <CardTitle>{activeSection?.title}</CardTitle>
@@ -926,7 +926,7 @@ export function Capabilities({
             <CardContent className="min-h-0 flex-1 overflow-hidden p-4">
               <MarkdownEditor
                 editorKey={`capability-${selectedSlug}-${activeSection?.fileName ?? "section"}`}
-                className="h-[420px] min-h-[360px]"
+                className="h-full"
                 value={activeSection?.body || ""}
                 initialValue={activeSection?.body || ""}
                 onChange={updateActiveSectionBody}

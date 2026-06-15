@@ -143,7 +143,7 @@ function App() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full bg-background text-foreground">
+    <div className="flex h-screen min-h-0 w-full overflow-hidden bg-background text-foreground">
       <Sidebar active={screen} onChange={setScreen} activeProject={activeProject} collapsed={sidebarCollapsed} onToggleCollapsed={() => setSidebarCollapsed((value) => !value)} />
       <main className="min-w-0 flex-1 overflow-hidden">
         {screen === 'projects' && <Projects projects={projects} activeProject={activeProject} onCreateProject={() => setScreen('project-create')} onOpenProject={(project) => { setActiveProject(project); setScreen('home'); }} onOpenExistingProject={openExistingProject} onForgetProject={forgetProject} />}
