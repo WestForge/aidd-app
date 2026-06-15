@@ -963,3 +963,13 @@ declare module '*.json' {
   const value: { version?: string; [key: string]: unknown };
   export default value;
 }
+
+declare module 'prismjs/prism.js' {
+  const Prism: {
+    languages: Record<string, unknown>;
+    manual?: boolean;
+    disableWorkerMessageHandler?: boolean;
+    [key: string]: unknown;
+  };
+  export default Prism;
+}

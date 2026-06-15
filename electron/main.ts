@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, dialog, shell, Notification } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, dialog, shell, Notification, protocol } from 'electron';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import fs from 'node:fs';
@@ -51,6 +51,206 @@ function installDevToolsShortcuts(win: BrowserWindow) {
     event.preventDefault();
     toggleDevTools(win);
   });
+}
+
+const RENDERER_PROTOCOL = 'aidd';
+
+interface RendererProtocolState {
+  rootPath: string;
+  indexPath: string;
+  candidates: string[];
+}
+
+let rendererProtocolState: RendererProtocolState | null = null;
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: RENDERER_PROTOCOL,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true
+    }
+  }
+]);
+
+function uniqueExistingPathCandidates(paths: string[]) {
+  const seen = new Set<string>();
+  return paths.filter((candidate) => {
+    const normal = path.normalize(candidate);
+    if (seen.has(normal)) return false;
+    seen.add(normal);
+    return true;
+  });
+}
+
+function rendererIndexCandidates() {
+  return uniqueExistingPathCandidates([
+    path.join(__dirname, '../renderer/index.html'),
+    path.join(__dirname, '../../dist/renderer/index.html'),
+    path.join(app.getAppPath(), 'dist/renderer/index.html'),
+    path.join(process.resourcesPath, 'app/dist/renderer/index.html'),
+    path.join(process.resourcesPath, 'app.asar/dist/renderer/index.html')
+  ]);
+}
+
+function resolveRendererIndexPath() {
+  const candidates = rendererIndexCandidates();
+  const indexPath = candidates.find((candidate) => fs.existsSync(candidate));
+  return { indexPath, candidates };
+}
+
+function normaliseRendererRequestPath(requestUrl: string) {
+  const url = new URL(requestUrl);
+  const pathname = decodeURIComponent(url.pathname || '/index.html');
+  return pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+}
+
+function isPathInside(parentPath: string, candidatePath: string) {
+  const parent = path.resolve(parentPath);
+  const candidate = path.resolve(candidatePath);
+  const relative = path.relative(parent, candidate);
+  return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function registerRendererProtocol() {
+  if (isDev) return;
+
+  const { indexPath, candidates } = resolveRendererIndexPath();
+  if (!indexPath) {
+    rendererProtocolState = {
+      rootPath: '',
+      indexPath: '',
+      candidates
+    };
+    console.error('AIDD renderer index.html was not found. Checked:', candidates);
+    return;
+  }
+
+  rendererProtocolState = {
+    rootPath: path.dirname(indexPath),
+    indexPath,
+    candidates
+  };
+
+  protocol.registerFileProtocol(RENDERER_PROTOCOL, (request, callback) => {
+    try {
+      const relativePath = normaliseRendererRequestPath(request.url);
+      const filePath = path.resolve(rendererProtocolState!.rootPath, relativePath);
+
+      if (!isPathInside(rendererProtocolState!.rootPath, filePath)) {
+        callback({ error: -10 });
+        return;
+      }
+
+      callback({ path: filePath });
+    } catch (error) {
+      console.error('Failed to resolve renderer asset.', error);
+      callback({ error: -2 });
+    }
+  });
+}
+
+function htmlDocument(title: string, body: string) {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#0f172a;color:#e2e8f0}main{max-width:900px;margin:64px auto;padding:32px}code,pre{background:#111827;border:1px solid #334155;border-radius:8px}code{padding:2px 5px}pre{padding:16px;overflow:auto;white-space:pre-wrap}.card{background:#111827;border:1px solid #334155;border-radius:16px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.35)}h1{margin-top:0}</style></head><body><main><div class="card">${body}</div></main></body></html>`;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function dataUrlForHtml(html: string) {
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+function missingRendererPage() {
+  const candidates = rendererProtocolState?.candidates ?? rendererIndexCandidates();
+  return htmlDocument(
+    'AIDD renderer missing',
+    `<h1>AIDD could not load the renderer build.</h1><p>The packaged app could not find <code>dist/renderer/index.html</code>.</p><p>Run the renderer build before packaging, and make sure electron-builder includes <code>dist/**/*</code>.</p><h2>Checked paths</h2><pre>${escapeHtml(candidates.join('\n'))}</pre>`
+  );
+}
+
+function rendererCrashPage(reason: string) {
+  return htmlDocument(
+    'AIDD renderer failed',
+    `<h1>AIDD could not display the app window.</h1><p>${escapeHtml(reason)}</p><p>This usually means the packaged renderer JavaScript did not load, the preload script failed, or React crashed during startup.</p><p>Open DevTools with <code>F12</code> or run with <code>AIDD_DEVTOOLS=1</code> for the renderer console.</p>`
+  );
+}
+
+function blankRendererPage(detail: string) {
+  return htmlDocument(
+    'AIDD renderer blank',
+    `<h1>AIDD loaded the HTML, but React did not start.</h1><p>${escapeHtml(detail)}</p><p>The most common cause is Vite building absolute asset paths. Make sure <code>vite.config.ts</code> contains <code>base: './'</code> and rebuild with a clean <code>dist</code> directory.</p><h2>Renderer path</h2><pre>${escapeHtml(rendererProtocolState?.indexPath || 'unknown')}</pre>`
+  );
+}
+
+function installRendererBlankPageGuard(win: BrowserWindow) {
+  if (isDev) return;
+
+  let guardCompleted = false;
+
+  win.webContents.once('did-finish-load', () => {
+    setTimeout(() => {
+      if (win.isDestroyed() || win.webContents.isDestroyed() || guardCompleted) return;
+
+      win.webContents.executeJavaScript(`
+        (() => {
+          const root = document.getElementById('root');
+          const bootState = window.__AIDD_RENDERER_BOOT_STATE__ || null;
+          return {
+            href: window.location.href,
+            hasRoot: Boolean(root),
+            childCount: root ? root.childElementCount : 0,
+            textLength: root && root.textContent ? root.textContent.trim().length : 0,
+            bootState
+          };
+        })();
+      `)
+        .then((state) => {
+          guardCompleted = true;
+          const hasVisibleRoot = Boolean(state?.hasRoot) && ((state?.childCount ?? 0) > 0 || (state?.textLength ?? 0) > 0);
+          const bootState = state?.bootState;
+          const appMounted = bootState?.mounted === true;
+
+          if (hasVisibleRoot && appMounted) return;
+
+          const detail = [
+            `URL: ${state?.href || 'unknown'}`,
+            `Root element found: ${state?.hasRoot ? 'yes' : 'no'}`,
+            `Root child count: ${state?.childCount ?? 0}`,
+            `Root text length: ${state?.textLength ?? 0}`,
+            `Renderer boot state: ${JSON.stringify(bootState ?? null)}`
+          ].join('\n');
+
+          void win.loadURL(dataUrlForHtml(blankRendererPage(detail)));
+        })
+        .catch((error) => {
+          guardCompleted = true;
+          console.error('AIDD renderer blank-page guard failed.', error);
+        });
+    }, 2500);
+  });
+}
+
+async function loadAppWindow(win: BrowserWindow) {
+  if (isDev) {
+    await win.loadURL('http://127.0.0.1:5173');
+    return;
+  }
+
+  if (!rendererProtocolState?.indexPath) {
+    await win.loadURL(dataUrlForHtml(missingRendererPage()));
+    return;
+  }
+
+  await win.loadURL(`${RENDERER_PROTOCOL}://renderer/index.html`);
 }
 
 const OBSOLETE_TEMPLATE_FILES = new Set([
@@ -812,12 +1012,34 @@ function createWindow() {
 
   win.setMenuBarVisibility(false);
   installDevToolsShortcuts(win);
+  installRendererBlankPageGuard(win);
 
-  const loadWindow = isDev
-    ? win.loadURL('http://127.0.0.1:5173')
-    : win.loadFile(path.join(__dirname, '../renderer/index.html'));
+  win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const source = sourceId ? `${sourceId}:${line}` : `line ${line}`;
+    console.log(`[AIDD renderer:${level}] ${message} (${source})`);
+  });
 
-  loadWindow
+  win.webContents.on('preload-error', (_event, preloadPath, error) => {
+    console.error('AIDD preload failed.', { preloadPath, error });
+    if (!isDev) {
+      void win.loadURL(dataUrlForHtml(rendererCrashPage(`Preload failed: ${error instanceof Error ? error.message : String(error)}`)));
+    }
+  });
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error('AIDD renderer process gone.', details);
+    if (!isDev && !win.isDestroyed()) {
+      void win.loadURL(dataUrlForHtml(rendererCrashPage(`Renderer process exited: ${details.reason}.`)));
+    }
+  });
+
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    console.error('AIDD renderer failed to load.', { errorCode, errorDescription, validatedURL, isMainFrame });
+    if (!isMainFrame || isDev) return;
+    void win.loadURL(dataUrlForHtml(rendererCrashPage(`Renderer load failed: ${errorDescription} (${errorCode}).`)));
+  });
+
+  loadAppWindow(win)
     .then(() => {
       if (shouldOpenDevToolsOnStart()) {
         win.webContents.openDevTools({ mode: 'detach' });
@@ -825,11 +1047,15 @@ function createWindow() {
     })
     .catch((error) => {
       console.error('Failed to load AIDD window.', error);
+      if (!isDev) {
+        void win.loadURL(dataUrlForHtml(rendererCrashPage(error instanceof Error ? error.message : String(error))));
+      }
     });
 }
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
+  registerRendererProtocol();
   createWindow();
 
   app.on('activate', () => {

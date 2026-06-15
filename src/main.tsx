@@ -22,6 +22,115 @@ export type Screen = 'projects' | 'project-create' | 'home' | 'foundation' | 'st
 
 type ThemeMode = 'system' | 'light' | 'dark';
 
+type RendererBootState = {
+  startedAt: string;
+  stage: string;
+  mounted?: boolean;
+  preloadAvailable?: boolean;
+  error?: string;
+};
+
+const bootWindow = window as Window & { __AIDD_RENDERER_BOOT_STATE__?: RendererBootState };
+
+function setRendererBootState(update: Partial<RendererBootState>) {
+  bootWindow.__AIDD_RENDERER_BOOT_STATE__ = {
+    startedAt: bootWindow.__AIDD_RENDERER_BOOT_STATE__?.startedAt ?? new Date().toISOString(),
+    stage: bootWindow.__AIDD_RENDERER_BOOT_STATE__?.stage ?? 'starting',
+    ...bootWindow.__AIDD_RENDERER_BOOT_STATE__,
+    ...update
+  };
+}
+
+setRendererBootState({
+  stage: 'module-loaded',
+  preloadAvailable: Boolean(window.aidd)
+});
+
+function formatError(error: unknown) {
+  if (error instanceof Error) {
+    return error.stack || error.message;
+  }
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error, null, 2);
+  } catch {
+    return String(error);
+  }
+}
+
+function readLocalStorage(key: string) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalStorage(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Local storage can be unavailable in unusual packaged/protocol states.
+  }
+}
+
+function StartupFailureScreen({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 p-8 text-slate-100">
+      <div className="w-full max-w-3xl rounded-2xl border border-slate-700 bg-slate-900 p-8 shadow-2xl">
+        <div className="mb-5 grid h-12 w-12 place-items-center rounded-xl border border-slate-600 bg-slate-800 text-xl font-bold">A</div>
+        <h1 className="text-2xl font-semibold">{title}</h1>
+        <p className="mt-3 text-sm leading-6 text-slate-300">
+          The packaged window opened, but the renderer could not finish starting. This is normally a build path, preload, or startup exception rather than a UI layout issue.
+        </p>
+        <pre className="mt-5 max-h-80 overflow-auto whitespace-pre-wrap rounded-xl border border-slate-700 bg-slate-950 p-4 text-xs text-slate-200">{detail}</pre>
+        <p className="mt-5 text-sm text-slate-400">
+          Rebuild with a clean dist folder after applying the Vite <code className="rounded bg-slate-800 px-1">base: './'</code> setting.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null; info: string }> {
+  state = { error: null as Error | null, info: '' };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error, info: '' };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    const detail = `${formatError(error)}\n\n${info.componentStack}`;
+    console.error('AIDD renderer crashed during React render.', error, info);
+    setRendererBootState({ stage: 'react-error-boundary', error: detail });
+    this.setState({ error, info: info.componentStack || '' });
+  }
+
+  render() {
+    if (this.state.error) {
+      return <StartupFailureScreen title="AIDD renderer crashed" detail={`${formatError(this.state.error)}\n\n${this.state.info}`} />;
+    }
+
+    return this.props.children;
+  }
+}
+
+function RendererBootMarker({ children }: { children: React.ReactNode }) {
+  useEffect(() => {
+    setRendererBootState({ stage: 'mounted', mounted: true, preloadAvailable: Boolean(window.aidd) });
+  }, []);
+
+  return <>{children}</>;
+}
+
+window.addEventListener('error', (event) => {
+  setRendererBootState({ stage: 'window-error', error: formatError(event.error || event.message) });
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  setRendererBootState({ stage: 'unhandled-rejection', error: formatError(event.reason) });
+});
+
 function nextPackageId(packages: DeliveryBundle[]) {
   const max = packages.reduce((highest, item) => {
     const numeric = Number(item.id.replace(/\D/g, ''));
@@ -57,26 +166,27 @@ function applyStatus(item: DeliveryBundle, status: BundleStatus): DeliveryBundle
 }
 
 function getStoredThemeMode(): ThemeMode {
-  const value = localStorage.getItem('aidd.themeMode');
+  const value = readLocalStorage('aidd.themeMode');
   return value === 'light' || value === 'dark' || value === 'system' ? value : 'system';
 }
 
 function App() {
   const [screen, setScreen] = useState<Screen>('projects');
   const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [startupError, setStartupError] = useState<string | null>(null);
   const [projects, setProjects] = useState<AiddTrackedProject[]>([]);
   const [activeProject, setActiveProject] = useState<AiddTrackedProject | null>(null);
   const [packages, setPackages] = useState<DeliveryBundle[]>([]);
   const [selectedId, setSelectedId] = useState('DP-001');
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => getStoredThemeMode());
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('aidd.sidebarCollapsed') === 'true');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readLocalStorage('aidd.sidebarCollapsed') === 'true');
   const [capabilityToOpen, setCapabilityToOpen] = useState<string | null>(null);
 
   useEffect(() => {
     const applyTheme = () => {
       const isDark = themeMode === 'dark' || (themeMode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
       document.documentElement.classList.toggle('dark', isDark);
-      localStorage.setItem('aidd.themeMode', themeMode);
+      writeLocalStorage('aidd.themeMode', themeMode);
     };
     applyTheme();
     const media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -85,10 +195,27 @@ function App() {
   }, [themeMode]);
 
   useEffect(() => {
-    localStorage.setItem('aidd.sidebarCollapsed', String(sidebarCollapsed));
+    writeLocalStorage('aidd.sidebarCollapsed', String(sidebarCollapsed));
   }, [sidebarCollapsed]);
 
   useEffect(() => {
+    if (!window.aidd?.listProjects) {
+      const message = [
+        'Electron preload API did not load. window.aidd.listProjects is unavailable.',
+        '',
+        'Likely causes:',
+        '- dist/main/preload.js was not built or not packaged.',
+        '- BrowserWindow preload path is pointing at the wrong file after packaging.',
+        '- The packaged app is loading an old main bundle.'
+      ].join('\n');
+      console.error(message);
+      setRendererBootState({ stage: 'preload-missing', error: message, preloadAvailable: false });
+      setStartupError(message);
+      setProjectsLoaded(true);
+      return;
+    }
+
+    setRendererBootState({ stage: 'loading-projects', preloadAvailable: true });
     window.aidd.listProjects().then((trackedProjects) => {
       setProjects(trackedProjects);
       if (trackedProjects[0]) {
@@ -137,6 +264,10 @@ function App() {
   };
 
   const projectCreated = async (project: AiddTrackedProject) => { await refreshProjects(project); setScreen('foundation'); };
+
+  if (startupError) {
+    return <StartupFailureScreen title="AIDD preload did not start" detail={startupError} />;
+  }
 
   if (!projectsLoaded) {
     return <div className="flex h-full items-center justify-center bg-background"><div className="space-y-3 text-center"><div className="mx-auto grid h-12 w-12 place-items-center rounded-lg border bg-card text-lg font-bold">A</div><h1 className="text-2xl font-semibold">Opening AIDD</h1><p className="text-sm text-muted-foreground">Checking tracked projects...</p></div></div>;
@@ -195,4 +326,21 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
+const rootElement = document.getElementById('root');
+
+if (!rootElement) {
+  const detail = 'The packaged index.html does not contain <div id="root"></div>.';
+  setRendererBootState({ stage: 'root-missing', error: detail });
+  document.body.innerHTML = `<main style="font-family: system-ui; margin: 48px; max-width: 760px"><h1>AIDD could not start</h1><p>${detail}</p></main>`;
+} else {
+  setRendererBootState({ stage: 'rendering-react', preloadAvailable: Boolean(window.aidd) });
+  createRoot(rootElement).render(
+    <React.StrictMode>
+      <AppErrorBoundary>
+        <RendererBootMarker>
+          <App />
+        </RendererBootMarker>
+      </AppErrorBoundary>
+    </React.StrictMode>
+  );
+}
