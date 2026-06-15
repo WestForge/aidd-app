@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import '@mdxeditor/editor/style.css';
 import './styles/app.css';
-import { sampleBundles } from './domain/sampleData';
 import type { BundleStatus, DeliveryBundle } from './domain/types';
 import { checkReadiness } from './domain/readiness';
 import { Sidebar } from './components/Sidebar';
@@ -17,6 +16,7 @@ import { BundleEditor } from './components/BundleEditor';
 import { Reviews } from './components/Reviews';
 import { Settings } from './components/Settings';
 import { ProjectValidation } from './components/ProjectValidation';
+import { PageHelp } from './components/PageHelp';
 
 export type Screen = 'projects' | 'project-create' | 'home' | 'foundation' | 'standards' | 'capabilities' | 'components' | 'delivery-packages' | 'bundle-editor' | 'reviews' | 'validation' | 'settings';
 
@@ -35,9 +35,9 @@ function createBlankPackage(id: string): DeliveryBundle {
     id,
     title: 'Untitled Delivery Package',
     status: 'draft',
-    workstream: 'Unassigned',
-    capability: 'Unassigned',
-    owner: 'Francis',
+    workstream: '',
+    capability: '',
+    owner: '',
     goal: '',
     rationale: '',
     inScope: [],
@@ -66,7 +66,7 @@ function App() {
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [projects, setProjects] = useState<AiddTrackedProject[]>([]);
   const [activeProject, setActiveProject] = useState<AiddTrackedProject | null>(null);
-  const [packages, setPackages] = useState<DeliveryBundle[]>(sampleBundles.map((item) => ({ ...item, id: item.id.replace('DB-', 'DP-') })));
+  const [packages, setPackages] = useState<DeliveryBundle[]>([]);
   const [selectedId, setSelectedId] = useState('DP-001');
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => getStoredThemeMode());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('aidd.sidebarCollapsed') === 'true');
@@ -190,6 +190,7 @@ function App() {
         {screen === 'validation' && <ProjectValidation activeProject={activeProject} />}
         {screen === 'settings' && <Settings activeProject={activeProject} themeMode={themeMode} onThemeModeChange={setThemeMode} />}
       </main>
+      <PageHelp screen={screen} />
     </div>
   );
 }

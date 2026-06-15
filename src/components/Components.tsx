@@ -1193,7 +1193,7 @@ export function Components({
                         setSourceWarning(absolute ? "This absolute source path may break for other users. Prefer a directory inside the configured workspace when possible." : "");
                         setSourceDetection(null);
                       }}
-                      placeholder="Source/StormRuntime or src/components/editor-shell"
+                      placeholder="src/components/example-component or Source/ExampleRuntime"
                     />
                     <Button
                       type="button"

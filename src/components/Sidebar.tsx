@@ -3,6 +3,7 @@ import type { Screen } from '../main';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { cn } from '../lib/utils';
+import packageJson from '../../package.json';
 
 interface SidebarProps {
   active: Screen;
@@ -13,6 +14,9 @@ interface SidebarProps {
 }
 
 type SidebarItem = { id: Screen; label: string; icon: LucideIcon };
+
+const APP_VERSION = typeof packageJson.version === 'string' ? packageJson.version : '0.0.0';
+const APP_VERSION_SHORT = APP_VERSION.split('.').slice(0, 2).join('.');
 
 const primaryItems: SidebarItem[] = [
   { id: 'projects', label: 'Projects', icon: FolderGit2 },
@@ -73,7 +77,14 @@ export function Sidebar({ active, onChange, activeProject, collapsed = false, on
       </nav>
 
       <div className="border-t p-3">
-        {!collapsed ? <div className="space-y-2"><Badge variant="outline">v0.8.0</Badge><div className="text-xs text-muted-foreground">Template workflow 0.5.x+</div></div> : <Badge variant="outline" className="px-1">0.8</Badge>}
+        {!collapsed ? (
+          <div className="space-y-2">
+            <Badge variant="outline">v{APP_VERSION}</Badge>
+            <div className="text-xs text-muted-foreground">AIDD app version</div>
+          </div>
+        ) : (
+          <Badge variant="outline" className="px-1">{APP_VERSION_SHORT}</Badge>
+        )}
       </div>
     </aside>
   );

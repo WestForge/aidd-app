@@ -238,8 +238,8 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, onCrea
 
         {!activeProject && (
           <Alert className="mb-4">
-            <AlertTitle>Sample delivery board</AlertTitle>
-            <AlertDescription>Select a project to show real delivery package data from disk.</AlertDescription>
+            <AlertTitle>No active project</AlertTitle>
+            <AlertDescription>Select a project to show delivery package data from disk.</AlertDescription>
           </Alert>
         )}
 

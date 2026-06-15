@@ -86,7 +86,7 @@ export function ProjectCreate({ onCreated, onCancel }: { onCreated: (project: Ai
 
             <div className="grid gap-2">
               <Label>Project name</Label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="StormUI" />
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="example-product" />
             </div>
 
             <div className="grid gap-2">
@@ -97,7 +97,7 @@ export function ProjectCreate({ onCreated, onCancel }: { onCreated: (project: Ai
             <div className="grid gap-2">
               <Label>Location</Label>
               <div className="flex gap-2">
-                <Input value={parentLocation} onChange={(e) => setParentLocation(e.target.value)} placeholder="C:\\src\\aidd" />
+                <Input value={parentLocation} onChange={(e) => setParentLocation(e.target.value)} placeholder="C:\\work\\aidd-projects" />
                 <Button variant="outline" onClick={chooseFolder}><FolderOpen className="h-4 w-4" /> Browse</Button>
               </div>
             </div>
@@ -116,11 +116,11 @@ export function ProjectCreate({ onCreated, onCancel }: { onCreated: (project: Ai
               <div className="grid gap-2 md:grid-cols-2">
                 <div className="grid gap-2">
                   <Label htmlFor="author-name">Author name</Label>
-                  <Input id="author-name" value={authorName} onChange={(e) => setAuthorName(e.target.value)} placeholder="Francis West" />
+                  <Input id="author-name" value={authorName} onChange={(e) => setAuthorName(e.target.value)} placeholder="Your name" />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="author-email">Author email</Label>
-                  <Input id="author-email" value={authorEmail} onChange={(e) => setAuthorEmail(e.target.value)} placeholder="francis@example.com" />
+                  <Input id="author-email" value={authorEmail} onChange={(e) => setAuthorEmail(e.target.value)} placeholder="you@example.com" />
                 </div>
               </div>
             </div>

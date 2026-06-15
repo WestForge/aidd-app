@@ -292,7 +292,7 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
                     value={identity.authorName}
                     disabled={identityBusy}
                     onChange={(event) => setIdentity((current) => ({ ...current, authorName: event.target.value }))}
-                    placeholder="Francis West"
+                    placeholder="Your name"
                   />
                 </div>
 
@@ -303,7 +303,7 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
                     value={identity.authorEmail}
                     disabled={identityBusy}
                     onChange={(event) => setIdentity((current) => ({ ...current, authorEmail: event.target.value }))}
-                    placeholder="francis@example.com"
+                    placeholder="you@example.com"
                   />
                 </div>
               </div>
