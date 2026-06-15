@@ -29,7 +29,7 @@ import {
 import { Input } from "./ui/input";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Select } from "./ui/select";
-import { Textarea } from "./ui/textarea";
+import { MarkdownEditor } from "./MarkdownEditor";
 import { cn } from "../lib/utils";
 
 interface BundleEditorProps {
@@ -1054,13 +1054,13 @@ export function BundleEditor({
                     title="Implementation strategy"
                     description="Use the wider package context to refine this, but keep this file focused on what the AI/dev needs to implement."
                   >
-                    <Textarea
-                      className={cn("min-h-[620px] resize-none font-mono text-sm", packageLocked && "bg-muted/40")}
+                    <MarkdownEditor
+                      editorKey={`package-${detail.id}-strategy`}
+                      className={cn("min-h-[620px]", packageLocked && "bg-muted/40")}
                       value={detail.strategyBody}
+                      initialValue={detail.strategyBody}
                       readOnly={packageLocked}
-                      onChange={(event) =>
-                        updateDetail({ strategyBody: event.target.value })
-                      }
+                      onChange={(markdown) => updateDetail({ strategyBody: markdown })}
                     />
                   </EditorCard>
                 )}
@@ -1070,13 +1070,13 @@ export function BundleEditor({
                     title="Package context snapshot"
                     description="Working context from Foundation, capability, and component documents. This is not included in the assembled AI implementation instructions."
                   >
-                    <Textarea
-                      className={cn("min-h-[620px] resize-none font-mono text-sm", packageLocked && "bg-muted/40")}
+                    <MarkdownEditor
+                      editorKey={`package-${detail.id}-snapshot`}
+                      className={cn("min-h-[620px]", packageLocked && "bg-muted/40")}
                       value={detail.snapshotBody}
+                      initialValue={detail.snapshotBody}
                       readOnly={packageLocked}
-                      onChange={(event) =>
-                        updateDetail({ snapshotBody: event.target.value })
-                      }
+                      onChange={(markdown) => updateDetail({ snapshotBody: markdown })}
                     />
                   </EditorCard>
                 )}
@@ -1086,8 +1086,9 @@ export function BundleEditor({
                     title="Packaged implementation instructions"
                     description="Generated handoff containing only the implementation strategy and implementation phases to reduce unnecessary token load."
                   >
-                    <Textarea
-                      className={cn("min-h-[620px] resize-none font-mono text-sm", packageLocked && "bg-muted/40")}
+                    <MarkdownEditor
+                      editorKey={`package-${detail.id}-packaged`}
+                      className={cn("min-h-[620px]", packageLocked && "bg-muted/40")}
                       value={
                         detail.packagedBody ||
                         "Use Package document to generate delivery-package.md from the strategy and phases."
@@ -1119,11 +1120,13 @@ export function BundleEditor({
                         Create phase
                       </Button>
                     </div>
-                    <Textarea
-                      className={cn("min-h-[560px] resize-none font-mono text-sm", packageLocked && "bg-muted/40")}
+                    <MarkdownEditor
+                      editorKey={`package-${detail.id}-new-phase`}
+                      className={cn("min-h-[560px]", packageLocked && "bg-muted/40")}
                       value={newPhaseBody}
+                      initialValue={newPhaseBody}
                       readOnly={packageLocked}
-                      onChange={(event) => setNewPhaseBody(event.target.value)}
+                      onChange={setNewPhaseBody}
                     />
                   </EditorCard>
                 )}
@@ -1210,13 +1213,13 @@ export function BundleEditor({
                       }.md`}
                       .
                     </p>
-                    <Textarea
-                      className={cn("min-h-[560px] resize-none font-mono text-sm", packageLocked && "bg-muted/40")}
+                    <MarkdownEditor
+                      editorKey={`package-${detail.id}-${currentPhase.id}`}
+                      className={cn("min-h-[560px]", packageLocked && "bg-muted/40")}
                       value={currentPhase.body}
+                      initialValue={currentPhase.body}
                       readOnly={packageLocked}
-                      onChange={(event) =>
-                        updatePhase(currentPhase.id, { body: event.target.value })
-                      }
+                      onChange={(markdown) => updatePhase(currentPhase.id, { body: markdown })}
                     />
                   </EditorCard>
                 )}

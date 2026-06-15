@@ -20,9 +20,7 @@ async function run() {
   await saveGitSyncSettings(userDataPath, projectPath, {
     provider,
     repoUrl: 'https://github.com/org/repo.git',
-    branch: 'main',
-    authorName: 'Francis',
-    authorEmail: 'francis@example.com'
+    branch: 'main'
   });
 
   const settingsPath = getGitSyncSettingsPath(userDataPath, projectPath);
@@ -43,8 +41,6 @@ async function run() {
     provider,
     repoUrl: 'https://github.com/org/repo.git',
     branch: 'main',
-    authorName: 'Francis',
-    authorEmail: 'francis@example.com',
     hasToken: true
   });
 

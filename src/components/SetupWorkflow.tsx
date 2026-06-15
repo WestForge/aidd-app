@@ -26,7 +26,7 @@ import {
   CardTitle,
 } from "./ui/card";
 import { Select } from "./ui/select";
-import { Textarea } from "./ui/textarea";
+import { MarkdownEditor } from "./MarkdownEditor";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { cn } from "../lib/utils";
 
@@ -1088,10 +1088,12 @@ export function SetupWorkflow({
                 </div>
               </CardHeader>
               <CardContent className="min-h-0 flex-1 px-4 pb-4">
-                <Textarea
-                  className="h-full min-h-[520px] resize-none font-mono text-sm"
+                <MarkdownEditor
+                  editorKey={`foundation-${selectedFile}`}
+                  className="h-full min-h-[520px]"
                   value={draftBody}
-                  onChange={(event) => setDraftBody(event.target.value)}
+                  initialValue={selectedDoc?.body ?? draftBody}
+                  onChange={setDraftBody}
                 />
               </CardContent>
             </Card>
@@ -1153,10 +1155,12 @@ export function SetupWorkflow({
                 </div>
               </CardHeader>
               <CardContent className="min-h-0 flex-1 px-4 pb-4">
-                <Textarea
-                  className="h-full min-h-[520px] resize-none font-mono text-sm"
+                <MarkdownEditor
+                  editorKey={`standards-${selectedStandardFile}`}
+                  className="h-full min-h-[520px]"
                   value={standardDraftBody}
-                  onChange={(event) => setStandardDraftBody(event.target.value)}
+                  initialValue={selectedStandardSection.body}
+                  onChange={setStandardDraftBody}
                 />
               </CardContent>
             </Card>

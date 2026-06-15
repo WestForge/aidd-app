@@ -31,7 +31,7 @@ import {
 } from "./ui/card";
 import { Input } from "./ui/input";
 import { Select } from "./ui/select";
-import { Textarea } from "./ui/textarea";
+import { MarkdownEditor } from "./MarkdownEditor";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { cn } from "../lib/utils";
 
@@ -924,10 +924,12 @@ export function Capabilities({
               </div>
             </CardHeader>
             <CardContent className="min-h-0 flex-1 overflow-hidden p-4">
-              <Textarea
-                className="h-[420px] min-h-[360px] resize-none font-mono text-sm"
+              <MarkdownEditor
+                editorKey={`capability-${selectedSlug}-${activeSection?.fileName ?? "section"}`}
+                className="h-[420px] min-h-[360px]"
                 value={activeSection?.body || ""}
-                onChange={(event) => updateActiveSectionBody(event.target.value)}
+                initialValue={activeSection?.body || ""}
+                onChange={updateActiveSectionBody}
               />
             </CardContent>
           </Card>

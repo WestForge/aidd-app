@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import '@mdxeditor/editor/style.css';
 import './styles/app.css';
 import { sampleBundles } from './domain/sampleData';
 import type { BundleStatus, DeliveryBundle } from './domain/types';
