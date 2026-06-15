@@ -68,6 +68,8 @@ jobs:
         run: |
           $tag = "${{ github.ref_name }}"
 
+          Write-Host "Creating release for tag: $tag"
+
           $roots = @("dist", "release") | Where-Object { Test-Path $_ }
 
           if (-not $roots -or $roots.Count -eq 0) {
@@ -86,10 +88,17 @@ jobs:
             exit 1
           }
 
+          if (gh release view $tag 2>$null) {
+            Write-Error "Release $tag already exists. Delete it or use a new tag."
+            exit 1
+          }
+
           Write-Host "Release assets:"
           $assets | ForEach-Object { Write-Host $_.FullName }
 
-          gh release create $tag $assets.FullName `
+          $assetPaths = $assets | ForEach-Object { $_.FullName }
+
+          gh release create $tag $assetPaths `
             --title "AIDD $tag" `
             --generate-notes `
             --verify-tag
