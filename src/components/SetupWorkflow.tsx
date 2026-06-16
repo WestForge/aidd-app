@@ -16,7 +16,7 @@ import {
   TestTube2,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./ui/button";
 import {
   Card,
@@ -371,6 +371,16 @@ export function SetupWorkflow({
   const [standardsReviewBusy, setStandardsReviewBusy] = useState(false);
   const [standardsReviewDropActive, setStandardsReviewDropActive] = useState(false);
   const [standardsReviewError, setStandardsReviewError] = useState<string | null>(null);
+  const selectedFileRef = useRef(selectedFile);
+  const selectedStandardFileRef = useRef(selectedStandardFile);
+
+  useEffect(() => {
+    selectedFileRef.current = selectedFile;
+  }, [selectedFile]);
+
+  useEffect(() => {
+    selectedStandardFileRef.current = selectedStandardFile;
+  }, [selectedStandardFile]);
 
   const selectedDoc = useMemo(
     () => setup?.foundation.find((doc) => doc.fileName === selectedFile),
@@ -383,6 +393,30 @@ export function SetupWorkflow({
   const modelStarted = Boolean(
     setup && (setup.capabilities.length > 0 || setup.components.length > 0),
   );
+
+  const selectFoundationDocument = (doc: AiddFoundationDocument) => {
+    setStep("foundation");
+    setSelectedFile(doc.fileName);
+    setDraftBody(doc.body);
+    setDraftStatus(doc.status);
+  };
+
+  const selectStandardSection = (section: AiddStandardSection) => {
+    setStep("standards");
+    setSelectedStandardFile(section.fileName);
+    setStandardDraftBody(section.body);
+    setStandardDraftStatus(section.status);
+  };
+
+  const updateFoundationDraftBody = (fileName: string, markdown: string) => {
+    if (selectedFileRef.current !== fileName) return;
+    setDraftBody(markdown);
+  };
+
+  const updateStandardDraftBody = (fileName: string, markdown: string) => {
+    if (selectedStandardFileRef.current !== fileName) return;
+    setStandardDraftBody(markdown);
+  };
 
   const load = async () => {
     if (!activeProject?.path) return;
@@ -418,12 +452,12 @@ export function SetupWorkflow({
     if (!selectedDoc) return;
     setDraftBody(selectedDoc.body);
     setDraftStatus(selectedDoc.status);
-  }, [selectedDoc?.fileName]);
+  }, [selectedDoc?.fileName, selectedDoc?.body, selectedDoc?.status]);
   useEffect(() => {
     if (!selectedStandardSection) return;
     setStandardDraftBody(selectedStandardSection.body);
     setStandardDraftStatus(selectedStandardSection.status);
-  }, [selectedStandardSection?.fileName]);
+  }, [selectedStandardSection?.fileName, selectedStandardSection?.body, selectedStandardSection?.status]);
   useEffect(() => {
     if (modelStarted && step === "starting-point")
       setStep(
@@ -572,12 +606,12 @@ export function SetupWorkflow({
         updateFilePath,
       });
       setSetup(nextSetup);
-      setStep("foundation");
-      setSelectedFile(doc.fileName);
       const updatedDoc = nextSetup.foundation.find((item) => item.fileName === doc.fileName);
       if (updatedDoc) {
-        setDraftBody(updatedDoc.body);
-        setDraftStatus(updatedDoc.status);
+        selectFoundationDocument(updatedDoc);
+      } else {
+        setStep("foundation");
+        setSelectedFile(doc.fileName);
       }
       void window.aidd.notify({
         title: "Foundation updated",
@@ -702,12 +736,12 @@ export function SetupWorkflow({
         updateFilePath,
       });
       setSetup(nextSetup);
-      setStep("standards");
-      setSelectedStandardFile(section.fileName);
       const updatedSection = nextSetup.standards.sections?.find((item) => item.fileName === section.fileName);
       if (updatedSection) {
-        setStandardDraftBody(updatedSection.body);
-        setStandardDraftStatus(updatedSection.status);
+        selectStandardSection(updatedSection);
+      } else {
+        setStep("standards");
+        setSelectedStandardFile(section.fileName);
       }
       void window.aidd.notify({
         title: "Standards updated",
@@ -778,9 +812,7 @@ export function SetupWorkflow({
       setSetup(nextSetup);
       const current = nextSetup.standards.sections?.find((section) => section.fileName === selectedStandardFile) ?? nextSetup.standards.sections?.[0];
       if (current) {
-        setSelectedStandardFile(current.fileName);
-        setStandardDraftBody(current.body);
-        setStandardDraftStatus(current.status);
+        selectStandardSection(current);
       }
       void window.aidd.notify({
         title: "Standards review imported",
@@ -812,7 +844,10 @@ export function SetupWorkflow({
       const savedDoc = nextSetup.foundation.find(
         (doc) => doc.fileName === selectedDoc.fileName,
       );
-      if (savedDoc) setDraftBody(savedDoc.body);
+      if (savedDoc) {
+        setDraftBody(savedDoc.body);
+        setDraftStatus(savedDoc.status);
+      }
       void window.aidd.notify({
         title: "Saved",
         body:
@@ -844,7 +879,10 @@ export function SetupWorkflow({
       const savedSection = nextSetup.standards.sections?.find(
         (section) => section.fileName === selectedStandardSection.fileName,
       );
-      if (savedSection) setStandardDraftBody(savedSection.body);
+      if (savedSection) {
+        setStandardDraftBody(savedSection.body);
+        setStandardDraftStatus(savedSection.status);
+      }
       void window.aidd.notify({
         title: "Saved",
         body:
@@ -930,10 +968,7 @@ export function SetupWorkflow({
                 status={doc.status}
                 dragReady={Boolean(foundationDragFiles[doc.fileName])}
                 dropActive={foundationDocDropTarget === doc.fileName}
-                onClick={() => {
-                  setStep("foundation");
-                  setSelectedFile(doc.fileName);
-                }}
+                onClick={() => selectFoundationDocument(doc)}
                 onDragStart={(event) => startFoundationFileDrag(event, doc.fileName)}
                 onDragEnter={(event) => {
                   event.preventDefault();
@@ -995,10 +1030,7 @@ export function SetupWorkflow({
               status={section.status}
               dragReady={Boolean(standardDragFiles[section.fileName])}
               dropActive={standardDocDropTarget === section.fileName}
-              onClick={() => {
-                setStep("standards");
-                setSelectedStandardFile(section.fileName);
-              }}
+              onClick={() => selectStandardSection(section)}
               onDragStart={(event) => startStandardFileDrag(event, section.fileName)}
               onDragEnter={(event) => {
                 event.preventDefault();
@@ -1089,11 +1121,12 @@ export function SetupWorkflow({
               </CardHeader>
               <CardContent className="min-h-0 flex-1 px-4 pb-4">
                 <MarkdownEditor
+                  key={`foundation-editor-${selectedFile}`}
                   editorKey={`foundation-${selectedFile}`}
                   className="h-full min-h-[520px]"
                   value={draftBody}
                   initialValue={selectedDoc?.body ?? draftBody}
-                  onChange={setDraftBody}
+                  onChange={(markdown) => updateFoundationDraftBody(selectedDoc?.fileName ?? selectedFile, markdown)}
                 />
               </CardContent>
             </Card>
@@ -1156,11 +1189,12 @@ export function SetupWorkflow({
               </CardHeader>
               <CardContent className="min-h-0 flex-1 px-4 pb-4">
                 <MarkdownEditor
+                  key={`standards-editor-${selectedStandardFile}`}
                   editorKey={`standards-${selectedStandardFile}`}
                   className="h-full min-h-[520px]"
                   value={standardDraftBody}
                   initialValue={selectedStandardSection.body}
-                  onChange={setStandardDraftBody}
+                  onChange={(markdown) => updateStandardDraftBody(selectedStandardSection.fileName, markdown)}
                 />
               </CardContent>
             </Card>

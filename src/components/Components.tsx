@@ -23,6 +23,7 @@ import {
   Sparkles,
   Workflow,
   Zap,
+  X,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -508,6 +509,17 @@ export function Components({
   useEffect(() => {
     load().catch((err) => setError(String(err)));
   }, [activeProject?.path]);
+
+  useEffect(() => {
+    if (!showSourceConfig) return undefined;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowSourceConfig(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showSourceConfig]);
 
   const statusCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -1144,7 +1156,7 @@ export function Components({
           <StatusBadge status={activeSection?.status} label="Section" />
           <Button
             variant="outline"
-            onClick={() => setShowSourceConfig((current) => !current)}
+            onClick={() => setShowSourceConfig(true)}
             title="Configure the source directory owned by this component"
           >
             <GitBranch className="h-4 w-4" />
@@ -1168,137 +1180,166 @@ export function Components({
         </div>
       )}
       {showSourceConfig && (
-        <div className="shrink-0 border-b bg-muted/20 px-6 py-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Component source</CardTitle>
-              <CardDescription>
-                Reference the implementation directory this component owns. This is stored with
-                the component and included in the generated component contract.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
-                <div className="space-y-1">
-                  <span className="text-sm text-muted-foreground">Source directory</span>
-                  <div className="flex gap-2">
-                    <Input
-                      value={sourceDirectory}
-                      onChange={(event) => {
-                        const nextDirectory = event.target.value;
-                        const absolute = looksLikeAbsoluteSourcePath(nextDirectory);
-                        setSourceDirectory(nextDirectory);
-                        setSourcePathMode(absolute ? "absolute" : "workspace-relative");
-                        setSourceIsInsideWorkspace(!absolute);
-                        setSourceWarning(absolute ? "This absolute source path may break for other users. Prefer a directory inside the configured workspace when possible." : "");
-                        setSourceDetection(null);
-                      }}
-                      placeholder="src/components/example-component or Source/ExampleRuntime"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={browseSourceDirectory}
-                      disabled={detectingSource}
-                    >
-                      <FolderOpen className="h-4 w-4" />
-                      Browse
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={detectSourceDirectory}
-                      disabled={detectingSource || !sourceDirectory.trim()}
-                    >
-                      <Search className="h-4 w-4" />
-                      {detectingSource ? "Detecting..." : "Detect"}
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Select or enter the directory owned by this component. Paths inside the configured workspace
-                    are stored as workspace-relative; paths outside the workspace are allowed but not portable.
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={() => setShowSourceConfig(false)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="component-source-title"
+            className="max-h-[calc(100vh-2rem)] w-full max-w-4xl overflow-hidden rounded-xl border bg-card shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="flex items-start justify-between gap-4 border-b p-5">
+              <div className="min-w-0 space-y-2">
+                <Badge variant="outline" className="w-fit">Component source</Badge>
+                <div>
+                  <h2 id="component-source-title" className="text-2xl font-semibold">Source mapping</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Reference the implementation directory this component owns. This is stored with the
+                    component and included in the generated component contract.
                   </p>
                 </div>
-                <div className="space-y-1">
-                  <span className="text-sm text-muted-foreground">Source type</span>
-                  <Select
-                    className="w-full"
-                    value={sourceType}
-                    onChange={(event) => setSourceType(event.target.value)}
-                  >
-                    {componentSourceTypeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </Select>
-                  {sourceDetection && sourceDetection.suggestedType !== sourceType && (
-                    <p className="text-xs text-muted-foreground">
-                      Auto-detected as {sourceTypeLabel(sourceDetection.suggestedType)}.
-                    </p>
-                  )}
-                </div>
               </div>
-              {sourceDirectory.trim() && (
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <Badge variant={sourceIsInsideWorkspace ? "secondary" : "outline"}>
-                    {sourcePathModeLabel(sourcePathMode)}
-                  </Badge>
-                  <Badge variant={sourceIsInsideWorkspace ? "secondary" : "outline"}>
-                    {sourceIsInsideWorkspace ? "Inside workspace" : "Outside workspace"}
-                  </Badge>
-                  {sourcePathMode === "absolute" && (
-                    <Badge variant="outline">Not portable</Badge>
-                  )}
-                </div>
-              )}
-              {sourceWarning && (
-                <Alert>
-                  <ShieldAlert className="h-4 w-4" />
-                  <AlertTitle>Source path warning</AlertTitle>
-                  <AlertDescription>{sourceWarning}</AlertDescription>
-                </Alert>
-              )}
-              {sourceDetection && (
-                <div className="rounded-md border bg-muted/30 p-3 text-sm">
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className="font-medium">Detected source</span>
-                    <Badge variant="secondary">{sourceTypeLabel(sourceDetection.suggestedType)}</Badge>
-                    <Badge variant="outline">{sourceDetection.confidence} confidence</Badge>
-                    {sourceDetection.packageManager && (
-                      <Badge variant="outline">{sourceDetection.packageManager}</Badge>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowSourceConfig(false)}
+                aria-label="Close component source"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </header>
+
+            <div className="max-h-[calc(100vh-11rem)] overflow-auto p-5">
+              <div className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+                  <div className="space-y-1">
+                    <span className="text-sm text-muted-foreground">Source directory</span>
+                    <div className="flex flex-col gap-2 lg:flex-row">
+                      <Input
+                        value={sourceDirectory}
+                        onChange={(event) => {
+                          const nextDirectory = event.target.value;
+                          const absolute = looksLikeAbsoluteSourcePath(nextDirectory);
+                          setSourceDirectory(nextDirectory);
+                          setSourcePathMode(absolute ? "absolute" : "workspace-relative");
+                          setSourceIsInsideWorkspace(!absolute);
+                          setSourceWarning(absolute ? "This absolute source path may break for other users. Prefer a directory inside the configured workspace when possible." : "");
+                          setSourceDetection(null);
+                        }}
+                        placeholder="src/components/example-component or Source/ExampleRuntime"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={browseSourceDirectory}
+                        disabled={detectingSource}
+                        className="shrink-0"
+                      >
+                        <FolderOpen className="h-4 w-4" />
+                        Browse
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={detectSourceDirectory}
+                        disabled={detectingSource || !sourceDirectory.trim()}
+                        className="shrink-0"
+                      >
+                        <Search className="h-4 w-4" />
+                        {detectingSource ? "Detecting..." : "Detect"}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Select or enter the directory owned by this component. Paths inside the configured workspace
+                      are stored as workspace-relative; paths outside the workspace are allowed but not portable.
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-sm text-muted-foreground">Source type</span>
+                    <Select
+                      className="w-full"
+                      value={sourceType}
+                      onChange={(event) => setSourceType(event.target.value)}
+                    >
+                      {componentSourceTypeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </Select>
+                    {sourceDetection && sourceDetection.suggestedType !== sourceType && (
+                      <p className="text-xs text-muted-foreground">
+                        Auto-detected as {sourceTypeLabel(sourceDetection.suggestedType)}.
+                      </p>
                     )}
                   </div>
-                  {(((sourceDetection.detectedMarkers?.length ?? 0) > 0) || sourceDetection.detectedFrameworks.length > 0 || sourceDetection.detectedLanguages.length > 0) && (
-                    <div className="mb-2 flex flex-wrap gap-2">
-                      {(sourceDetection.detectedMarkers ?? []).map((marker) => (
-                        <Badge key={`marker-${marker}`} variant="outline">
-                          {marker}
-                        </Badge>
-                      ))}
-                      {sourceDetection.detectedFrameworks.map((framework) => (
-                        <Badge key={`framework-${framework}`} variant="secondary">
-                          {framework}
-                        </Badge>
-                      ))}
-                      {sourceDetection.detectedLanguages.map((language) => (
-                        <Badge key={`language-${language}`} variant="outline">
-                          {language}
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                  {sourceDetection.reasons.length > 0 && (
-                    <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
-                      {sourceDetection.reasons.map((reason) => (
-                        <li key={reason}>{reason}</li>
-                      ))}
-                    </ul>
-                  )}
                 </div>
-              )}
-            </CardContent>
-          </Card>
+                {sourceDirectory.trim() && (
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <Badge variant={sourceIsInsideWorkspace ? "secondary" : "outline"}>
+                      {sourcePathModeLabel(sourcePathMode)}
+                    </Badge>
+                    <Badge variant={sourceIsInsideWorkspace ? "secondary" : "outline"}>
+                      {sourceIsInsideWorkspace ? "Inside workspace" : "Outside workspace"}
+                    </Badge>
+                    {sourcePathMode === "absolute" && (
+                      <Badge variant="outline">Not portable</Badge>
+                    )}
+                  </div>
+                )}
+                {sourceWarning && (
+                  <Alert>
+                    <ShieldAlert className="h-4 w-4" />
+                    <AlertTitle>Source path warning</AlertTitle>
+                    <AlertDescription>{sourceWarning}</AlertDescription>
+                  </Alert>
+                )}
+                {sourceDetection && (
+                  <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <span className="font-medium">Detected source</span>
+                      <Badge variant="secondary">{sourceTypeLabel(sourceDetection.suggestedType)}</Badge>
+                      <Badge variant="outline">{sourceDetection.confidence} confidence</Badge>
+                      {sourceDetection.packageManager && (
+                        <Badge variant="outline">{sourceDetection.packageManager}</Badge>
+                      )}
+                    </div>
+                    {(((sourceDetection.detectedMarkers?.length ?? 0) > 0) || sourceDetection.detectedFrameworks.length > 0 || sourceDetection.detectedLanguages.length > 0) && (
+                      <div className="mb-2 flex flex-wrap gap-2">
+                        {(sourceDetection.detectedMarkers ?? []).map((marker) => (
+                          <Badge key={`marker-${marker}`} variant="outline">
+                            {marker}
+                          </Badge>
+                        ))}
+                        {sourceDetection.detectedFrameworks.map((framework) => (
+                          <Badge key={`framework-${framework}`} variant="secondary">
+                            {framework}
+                          </Badge>
+                        ))}
+                        {sourceDetection.detectedLanguages.map((language) => (
+                          <Badge key={`language-${language}`} variant="outline">
+                            {language}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    {sourceDetection.reasons.length > 0 && (
+                      <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+                        {sourceDetection.reasons.map((reason) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
         </div>
       )}
       <div className="flex shrink-0 gap-1.5 overflow-x-auto border-b bg-muted/30 px-6 py-2">
@@ -1380,7 +1421,7 @@ export function Components({
       )}
       <main className="min-h-0 flex-1 overflow-auto p-6">
         <div className="flex h-full min-h-0 min-w-0 flex-col gap-4">
-          <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <Card className="flex h-4/5 min-h-[26rem] shrink-0 flex-col overflow-hidden">
             <CardHeader className="shrink-0">
               <div>
                 <CardTitle>{activeSection?.title}</CardTitle>
@@ -1390,7 +1431,7 @@ export function Components({
             <CardContent className="min-h-0 flex-1 overflow-hidden p-4">
               <MarkdownEditor
                 editorKey={`component-${editingSlug}-${activeSection?.fileName ?? "section"}`}
-                className="h-full"
+                className="h-full min-h-[22rem]"
                 value={activeSection?.body || ""}
                 initialValue={activeSection?.body || ""}
                 onChange={updateActiveSectionBody}
