@@ -679,6 +679,168 @@ interface ComponentReviewPackageImportResult {
   reviewMarkdown?: string;
 }
 
+type ComponentTechnicalReviewType = 'code' | 'security' | 'architecture' | 'tests' | 'performance' | 'accessibility' | 'dependencies';
+type ComponentTechnicalReviewSourceScope = 'component-source' | 'changed-files' | 'full-source';
+type ComponentTechnicalChangeStatus = 'draft' | 'proposed' | 'needs-review' | 'approved' | 'rejected' | 'superseded' | 'packaged' | 'delivered';
+type ComponentTechnicalChangeSource = 'manual' | 'technical-review';
+type ComponentTechnicalChangeRisk = 'low' | 'medium' | 'high' | 'unknown';
+
+interface ComponentTechnicalReviewPackageInput {
+  projectPath: string;
+  slug: string;
+  reviewTypes?: ComponentTechnicalReviewType[];
+  sourceScope?: ComponentTechnicalReviewSourceScope;
+}
+
+interface ComponentTechnicalReviewPackageResult {
+  filePath: string;
+  fileName: string;
+  componentSlug: string;
+  componentTitle: string;
+  componentFileCount: number;
+  sourceRootCount: number;
+  sourceFileCount: number;
+  entryCount: number;
+  warnings: string[];
+}
+
+interface ImportComponentTechnicalReviewPackageInput {
+  projectPath: string;
+  slug: string;
+  zipPath: string;
+}
+
+interface CreateComponentTechnicalChangeInput {
+  projectPath: string;
+  slug: string;
+  title?: string;
+  status?: ComponentTechnicalChangeStatus;
+  risk?: ComponentTechnicalChangeRisk;
+}
+
+interface UpdateComponentTechnicalChangeStatusInput {
+  projectPath: string;
+  slug: string;
+  id: string;
+  status: ComponentTechnicalChangeStatus;
+}
+
+interface ComponentTechnicalChangeSection {
+  key: string;
+  fileName: string;
+  title: string;
+  body: string;
+  editable: boolean;
+}
+
+interface ReadComponentTechnicalChangeInput {
+  projectPath: string;
+  slug: string;
+  id: string;
+}
+
+interface SaveComponentTechnicalChangeInput {
+  projectPath: string;
+  slug: string;
+  id: string;
+  title?: string;
+  status?: ComponentTechnicalChangeStatus;
+  risk?: ComponentTechnicalChangeRisk;
+  sections?: ComponentTechnicalChangeSection[];
+}
+
+interface ComponentTechnicalChangeDetail extends ComponentTechnicalChangeRecord {
+  sections: ComponentTechnicalChangeSection[];
+}
+
+interface ComponentTechnicalChangeReviewPackageInput {
+  projectPath: string;
+  slug: string;
+  id: string;
+}
+
+interface ComponentTechnicalChangeReviewPackageResult {
+  filePath: string;
+  fileName: string;
+  componentSlug: string;
+  technicalChangeId: string;
+  sectionFileCount: number;
+  patchCount: number;
+  sourceRootCount: number;
+  sourceFileCount: number;
+  entryCount: number;
+  warnings: string[];
+}
+
+interface ImportComponentTechnicalChangeReviewPackageInput {
+  projectPath: string;
+  slug: string;
+  id: string;
+  zipPath: string;
+}
+
+interface ComponentTechnicalChangeReviewPackageImportResult {
+  accepted: boolean;
+  zipPath: string;
+  componentSlug: string;
+  technicalChangeId: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  patchCount: number;
+}
+
+interface ComponentTechnicalReviewChangeSummary {
+  id: string;
+  overviewPath?: string;
+  status: string;
+  patches: string[];
+}
+
+interface ComponentTechnicalReviewRecord {
+  type: 'component-technical-review-import';
+  schemaVersion: 1;
+  componentSlug: string;
+  importedAt: string;
+  status: string;
+  reviewDirectory: string;
+  summaryPath?: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  findingCount: number;
+  changeCount: number;
+  patchCount: number;
+  changes: ComponentTechnicalReviewChangeSummary[];
+}
+
+interface ComponentTechnicalReviewImportResult {
+  accepted: boolean;
+  zipPath: string;
+  componentSlug: string;
+  reviewDirectory: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  findingCount: number;
+  changeCount: number;
+  patchCount: number;
+  technicalChangeCount: number;
+}
+
+interface ComponentTechnicalChangeRecord {
+  id: string;
+  title: string;
+  componentSlug: string;
+  status: ComponentTechnicalChangeStatus;
+  source: ComponentTechnicalChangeSource;
+  createdAt: string;
+  updatedAt: string;
+  risk: ComponentTechnicalChangeRisk;
+  patchCount: number;
+  linkedFindings: string[];
+  linkedReviewPath: string | null;
+  deliveryPackageIds: string[];
+  relativePath: string;
+}
+
 interface CapabilityReviewPackageResult {
   filePath: string;
   fileName: string;
@@ -821,12 +983,28 @@ interface CreateDeliveryPackageFromCapabilityInput {
   capabilitySlug: string;
 }
 
+interface CreateDeliveryPackageFromTechnicalChangeInput {
+  projectPath: string;
+  componentSlug: string;
+  technicalChangeId: string;
+}
+
+type DeliveryPackageType = 'capability' | 'technical';
+
 interface DeliveryPackageSummary {
   id: string;
   title: string;
+  packageType?: DeliveryPackageType;
   status: string;
   sourceCapability?: string;
+  sourceTechnicalChange?: {
+    componentSlug: string;
+    technicalChangeId: string;
+    title: string;
+  };
   components: string[];
+  technicalChanges?: DeliveryPackageTechnicalChangeSummary[];
+  excludedTechnicalChanges?: DeliveryPackageTechnicalChangeSummary[];
   createdAt?: string;
   packaged: boolean;
   phaseCount: number;
@@ -909,6 +1087,16 @@ interface DeliveryPackagePhaseDetail {
   status: string;
   fileName: string;
   body: string;
+}
+
+interface DeliveryPackageTechnicalChangeSummary {
+  id: string;
+  title: string;
+  componentSlug: string;
+  status: string;
+  risk: string;
+  patchCount: number;
+  relativePath?: string;
 }
 
 interface DeliveryPackageFileDetail {
@@ -6023,6 +6211,714 @@ async function readComponentCapabilities(root: string, slug: string) {
   return caps.filter((capability: any) => capability.components.includes(slug)).map((capability: any) => String(capability.slug || capability.id)).filter(Boolean);
 }
 
+async function readComponentTechnicalReviews(projectPath: string, slug: string): Promise<ComponentTechnicalReviewRecord[]> {
+  const reviewsRoot = path.join(projectPath, 'components', slugify(slug), 'technical-reviews');
+  if (!(await exists(reviewsRoot))) return [];
+
+  const records: ComponentTechnicalReviewRecord[] = [];
+  for (const entry of await fsp.readdir(reviewsRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const recordPath = path.join(reviewsRoot, entry.name, 'technical-review.json');
+    if (!(await exists(recordPath))) continue;
+    try {
+      const record = await readJson<ComponentTechnicalReviewRecord>(recordPath);
+      if (record?.type !== 'component-technical-review-import') continue;
+      records.push({
+        ...record,
+        reviewDirectory: record.reviewDirectory || normaliseRelativePath(path.relative(projectPath, path.dirname(recordPath))),
+        importedFiles: Array.isArray(record.importedFiles) ? record.importedFiles.map(String) : [],
+        skippedFiles: Array.isArray(record.skippedFiles) ? record.skippedFiles.map(String) : [],
+        changes: Array.isArray(record.changes)
+          ? record.changes.map((change: any) => ({
+              id: String(change.id || ''),
+              overviewPath: change.overviewPath ? String(change.overviewPath) : undefined,
+              status: String(change.status || 'proposed'),
+              patches: Array.isArray(change.patches) ? change.patches.map(String) : []
+            })).filter((change) => change.id)
+          : []
+      });
+    } catch {
+      // Ignore malformed review records; the imported artefacts remain on disk for manual inspection.
+    }
+  }
+
+  return records.sort((a, b) => String(b.importedAt || '').localeCompare(String(a.importedAt || '')));
+}
+
+const COMPONENT_TECHNICAL_CHANGE_STATUSES = new Set<ComponentTechnicalChangeStatus>([
+  'draft',
+  'proposed',
+  'needs-review',
+  'approved',
+  'rejected',
+  'superseded',
+  'packaged',
+  'delivered'
+]);
+
+const COMPONENT_TECHNICAL_CHANGE_RISKS = new Set<ComponentTechnicalChangeRisk>(['low', 'medium', 'high', 'unknown']);
+
+const COMPONENT_TECHNICAL_CHANGE_SECTIONS: Array<Omit<ComponentTechnicalChangeSection, 'body'>> = [
+  { key: 'overview', fileName: 'overview.md', title: 'Overview', editable: true },
+  { key: 'affected-files', fileName: 'affected-files.md', title: 'Affected files', editable: true },
+  { key: 'rationale', fileName: 'rationale.md', title: 'Rationale', editable: true },
+  { key: 'verification', fileName: 'verification.md', title: 'Verification', editable: true },
+  { key: 'review', fileName: 'review.md', title: 'Review', editable: true },
+  { key: 'patch', fileName: 'patches/proposed.patch', title: 'Patch', editable: true },
+  { key: 'patch-notes', fileName: 'patches/notes.md', title: 'Patch notes', editable: true }
+];
+
+const COMPONENT_TECHNICAL_CHANGE_SECTION_BY_FILE = new Map(
+  COMPONENT_TECHNICAL_CHANGE_SECTIONS.map((section) => [normaliseRelativePath(section.fileName).toLowerCase(), section])
+);
+
+function normaliseComponentTechnicalChangeStatus(value: unknown, fallback: ComponentTechnicalChangeStatus = 'draft'): ComponentTechnicalChangeStatus {
+  const status = String(value || '').trim().toLowerCase() as ComponentTechnicalChangeStatus;
+  return COMPONENT_TECHNICAL_CHANGE_STATUSES.has(status) ? status : fallback;
+}
+
+function normaliseComponentTechnicalChangeRisk(value: unknown): ComponentTechnicalChangeRisk {
+  const risk = String(value || '').trim().toLowerCase() as ComponentTechnicalChangeRisk;
+  return COMPONENT_TECHNICAL_CHANGE_RISKS.has(risk) ? risk : 'unknown';
+}
+
+function componentTechnicalChangesRoot(projectPath: string, slug: string) {
+  return path.join(projectPath, 'components', slugify(slug), 'technical-changes');
+}
+
+function titleFromTechnicalChangeId(id: string) {
+  return String(id || 'Technical change')
+    .replace(/^TC-\d{1,5}-?/i, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .trim() || String(id || 'Technical change');
+}
+
+function titleFromMarkdownHeading(raw: string, fallback: string) {
+  const heading = raw.match(/^\s*#\s+(.+?)\s*$/m)?.[1]?.trim();
+  return heading || fallback;
+}
+
+function patchFileNameLooksSupported(fileName: string) {
+  return ['.patch', '.diff'].includes(path.extname(fileName).toLowerCase());
+}
+
+function isSafeComponentTechnicalChangePatchFileName(fileName: string) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(fileName)) return false;
+  return fileName.toLowerCase() === 'notes.md' || patchFileNameLooksSupported(fileName);
+}
+
+function resolveTechnicalChangePath(changeDir: string, relativePath: string) {
+  const normalised = normaliseRelativePath(relativePath).replace(/^\/+/, '');
+  const target = path.resolve(changeDir, normalised);
+  if (!isSameOrInsideDiskPath(target, changeDir)) throw new Error(`Unsafe technical change path: ${relativePath}`);
+  return target;
+}
+
+async function countTechnicalChangePatches(changeDir: string) {
+  const patchesDir = path.join(changeDir, 'patches');
+  if (!(await exists(patchesDir))) return 0;
+  const entries = await fsp.readdir(patchesDir, { withFileTypes: true });
+  return entries.filter((entry) => entry.isFile() && patchFileNameLooksSupported(entry.name)).length;
+}
+
+function normaliseTechnicalChangeRecord(input: any, projectPath: string, componentSlug: string, changeDir: string): ComponentTechnicalChangeRecord {
+  const id = String(input?.id || path.basename(changeDir));
+  return {
+    id,
+    title: String(input?.title || titleFromTechnicalChangeId(id)),
+    componentSlug: String(input?.componentSlug || componentSlug),
+    status: normaliseComponentTechnicalChangeStatus(input?.status, 'draft'),
+    source: input?.source === 'technical-review' ? 'technical-review' : 'manual',
+    createdAt: String(input?.createdAt || input?.updatedAt || ''),
+    updatedAt: String(input?.updatedAt || input?.createdAt || ''),
+    risk: normaliseComponentTechnicalChangeRisk(input?.risk),
+    patchCount: Number.isFinite(Number(input?.patchCount)) ? Number(input.patchCount) : 0,
+    linkedFindings: Array.isArray(input?.linkedFindings) ? input.linkedFindings.map(String).filter(Boolean) : [],
+    linkedReviewPath: input?.linkedReviewPath ? String(input.linkedReviewPath) : null,
+    deliveryPackageIds: Array.isArray(input?.deliveryPackageIds) ? input.deliveryPackageIds.map(String).filter(Boolean) : [],
+    relativePath: normaliseRelativePath(input?.relativePath || path.relative(projectPath, changeDir))
+  };
+}
+
+async function readComponentTechnicalChanges(projectPath: string, slug: string): Promise<ComponentTechnicalChangeRecord[]> {
+  const componentSlug = slugify(slug);
+  const root = componentTechnicalChangesRoot(projectPath, componentSlug);
+  if (!(await exists(root))) return [];
+
+  const records: ComponentTechnicalChangeRecord[] = [];
+  for (const entry of await fsp.readdir(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const changeDir = path.join(root, entry.name);
+    const metadataPath = path.join(changeDir, 'technical-change.json');
+    if (!(await exists(metadataPath))) continue;
+    try {
+      const raw = await readJson<any>(metadataPath);
+      const record = normaliseTechnicalChangeRecord(raw, projectPath, componentSlug, changeDir);
+      const patchCount = await countTechnicalChangePatches(changeDir);
+      records.push({
+        ...record,
+        patchCount,
+        relativePath: normaliseRelativePath(path.relative(projectPath, changeDir))
+      });
+    } catch {
+      // Ignore malformed technical-change records; the Markdown files remain inspectable on disk.
+    }
+  }
+
+  return records.sort((a, b) => {
+    const statusRank = (status: string) => status === 'needs-review' ? 0 : status === 'draft' ? 1 : status === 'approved' ? 2 : 3;
+    const byStatus = statusRank(a.status) - statusRank(b.status);
+    if (byStatus !== 0) return byStatus;
+    return a.id.localeCompare(b.id, undefined, { numeric: true });
+  });
+}
+
+function technicalChangeMetadata(record: ComponentTechnicalChangeRecord) {
+  return {
+    id: record.id,
+    title: record.title,
+    componentSlug: record.componentSlug,
+    status: record.status,
+    source: record.source,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    risk: record.risk,
+    patchCount: record.patchCount,
+    linkedFindings: record.linkedFindings,
+    linkedReviewPath: record.linkedReviewPath,
+    deliveryPackageIds: record.deliveryPackageIds
+  };
+}
+
+async function writeTechnicalChangeMetadata(changeDir: string, record: ComponentTechnicalChangeRecord) {
+  await writeJson(path.join(changeDir, 'technical-change.json'), technicalChangeMetadata(record));
+}
+
+async function uniqueTechnicalChangeId(root: string, preferredId: string) {
+  const base = preferredId || 'TC-001-technical-change';
+  let candidate = base;
+  let suffix = 2;
+  while (await exists(path.join(root, candidate))) {
+    candidate = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+async function nextManualTechnicalChangeId(projectPath: string, componentSlug: string, title: string) {
+  const root = componentTechnicalChangesRoot(projectPath, componentSlug);
+  let nextNumber = 1;
+  if (await exists(root)) {
+    for (const entry of await fsp.readdir(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const match = entry.name.match(/^TC-(\d{1,5})-/i);
+      if (match) nextNumber = Math.max(nextNumber, Number(match[1]) + 1);
+    }
+  }
+  const name = slugify(title || 'technical-change') || 'technical-change';
+  return uniqueTechnicalChangeId(root, `TC-${String(nextNumber).padStart(3, '0')}-${name}`);
+}
+
+function technicalChangeMarkdownTemplates(title: string) {
+  return {
+    'overview.md': [
+      `# ${title}`,
+      '',
+      '## Proposed Change',
+      '',
+      'TODO: Describe the technical change.',
+      '',
+      '## Linked Findings',
+      '',
+      '- None',
+      ''
+    ].join('\n'),
+    'affected-files.md': [
+      '# Affected Files',
+      '',
+      '- TODO: List source files, project files, tests, or documentation affected by this change.',
+      ''
+    ].join('\n'),
+    'rationale.md': [
+      '# Rationale',
+      '',
+      'TODO: Explain why this change should be made, including tradeoffs and risk.',
+      ''
+    ].join('\n'),
+    'verification.md': [
+      '# Verification',
+      '',
+      'TODO: Define the checks, tests, or manual verification required before delivery.',
+      ''
+    ].join('\n'),
+    'review.md': [
+      '# Review',
+      '',
+      '## Decision',
+      '',
+      'TODO: Capture approval notes, rejection reasons, or revision requests.',
+      ''
+    ].join('\n'),
+    'patches/proposed.patch': [
+      '# Add a unified diff here when this technical change has a concrete patch.',
+      ''
+    ].join('\n')
+  };
+}
+
+async function ensureTechnicalChangeMarkdownFiles(changeDir: string, title: string) {
+  const templates = technicalChangeMarkdownTemplates(title);
+  for (const [fileName, body] of Object.entries(templates)) {
+    const filePath = resolveTechnicalChangePath(changeDir, fileName);
+    if (!(await exists(filePath))) {
+      await fsp.mkdir(path.dirname(filePath), { recursive: true });
+      await fsp.writeFile(filePath, body, 'utf8');
+    }
+  }
+  await fsp.mkdir(path.join(changeDir, 'patches'), { recursive: true });
+  const notesPath = path.join(changeDir, 'patches', 'notes.md');
+  if (!(await exists(notesPath))) {
+    await fsp.writeFile(notesPath, '# Patch Notes\n\n- None\n', 'utf8');
+  }
+}
+
+async function createComponentTechnicalChange(input: CreateComponentTechnicalChangeInput): Promise<ComponentTechnicalChangeRecord> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.slug) throw new Error('Component slug is required.');
+  const component = await readComponent({ projectPath: input.projectPath, slug: input.slug });
+  const title = String(input.title || '').trim() || 'New technical change';
+  const root = componentTechnicalChangesRoot(input.projectPath, component.slug);
+  await fsp.mkdir(root, { recursive: true });
+  const id = await nextManualTechnicalChangeId(input.projectPath, component.slug, title);
+  const changeDir = path.join(root, id);
+  const now = new Date().toISOString();
+  await fsp.mkdir(changeDir, { recursive: true });
+  await ensureTechnicalChangeMarkdownFiles(changeDir, title);
+
+  const record: ComponentTechnicalChangeRecord = {
+    id,
+    title,
+    componentSlug: component.slug,
+    status: normaliseComponentTechnicalChangeStatus(input.status, 'draft'),
+    source: 'manual',
+    createdAt: now,
+    updatedAt: now,
+    risk: normaliseComponentTechnicalChangeRisk(input.risk || 'unknown'),
+    patchCount: await countTechnicalChangePatches(changeDir),
+    linkedFindings: [],
+    linkedReviewPath: null,
+    deliveryPackageIds: [],
+    relativePath: normaliseRelativePath(path.relative(input.projectPath, changeDir))
+  };
+  await writeTechnicalChangeMetadata(changeDir, record);
+  return record;
+}
+
+async function updateComponentTechnicalChangeStatus(input: UpdateComponentTechnicalChangeStatusInput): Promise<ComponentTechnicalChangeRecord[]> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.slug) throw new Error('Component slug is required.');
+  if (!input.id) throw new Error('Technical change id is required.');
+  const componentSlug = slugify(input.slug);
+  const status = normaliseComponentTechnicalChangeStatus(input.status, 'draft');
+  const changeDir = path.join(componentTechnicalChangesRoot(input.projectPath, componentSlug), input.id);
+  const metadataPath = path.join(changeDir, 'technical-change.json');
+  if (!(await exists(metadataPath))) throw new Error(`Technical change not found: ${input.id}`);
+  const raw = await readJson<any>(metadataPath);
+  const current = normaliseTechnicalChangeRecord(raw, input.projectPath, componentSlug, changeDir);
+  await writeTechnicalChangeMetadata(changeDir, {
+    ...current,
+    status,
+    patchCount: await countTechnicalChangePatches(changeDir),
+    updatedAt: new Date().toISOString()
+  });
+  return readComponentTechnicalChanges(input.projectPath, componentSlug);
+}
+
+async function findComponentTechnicalChangeTarget(projectPath: string, slug: string, id: string) {
+  const componentSlug = slugify(slug);
+  const cleanId = String(id || '').trim();
+  if (!cleanId) throw new Error('Technical change id is required.');
+  const changeDir = path.join(componentTechnicalChangesRoot(projectPath, componentSlug), cleanId);
+  const metadataPath = path.join(changeDir, 'technical-change.json');
+  if (!(await exists(metadataPath))) throw new Error(`Technical change not found: ${cleanId}`);
+  const raw = await readJson<any>(metadataPath);
+  const record = normaliseTechnicalChangeRecord(raw, projectPath, componentSlug, changeDir);
+  return { componentSlug, changeDir, metadataPath, record };
+}
+
+async function readComponentTechnicalChange(input: ReadComponentTechnicalChangeInput): Promise<ComponentTechnicalChangeDetail> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.slug) throw new Error('Component slug is required.');
+  if (!input.id) throw new Error('Technical change id is required.');
+  const target = await findComponentTechnicalChangeTarget(input.projectPath, input.slug, input.id);
+  await ensureTechnicalChangeMarkdownFiles(target.changeDir, target.record.title);
+  const patchCount = await countTechnicalChangePatches(target.changeDir);
+  const record = {
+    ...target.record,
+    patchCount,
+    relativePath: normaliseRelativePath(path.relative(input.projectPath, target.changeDir))
+  };
+  const sections: ComponentTechnicalChangeSection[] = [];
+
+  for (const section of COMPONENT_TECHNICAL_CHANGE_SECTIONS) {
+    const filePath = resolveTechnicalChangePath(target.changeDir, section.fileName);
+    const body = await exists(filePath) ? await fsp.readFile(filePath, 'utf8') : '';
+    sections.push({ ...section, body });
+  }
+
+  return {
+    ...record,
+    sections
+  };
+}
+
+async function saveComponentTechnicalChange(input: SaveComponentTechnicalChangeInput): Promise<ComponentTechnicalChangeDetail> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.slug) throw new Error('Component slug is required.');
+  if (!input.id) throw new Error('Technical change id is required.');
+  const target = await findComponentTechnicalChangeTarget(input.projectPath, input.slug, input.id);
+  const now = new Date().toISOString();
+
+  if (Array.isArray(input.sections)) {
+    for (const section of input.sections) {
+      const fileName = normaliseRelativePath(section.fileName || '').toLowerCase();
+      if (!COMPONENT_TECHNICAL_CHANGE_SECTION_BY_FILE.has(fileName)) continue;
+      const filePath = resolveTechnicalChangePath(target.changeDir, fileName);
+      await fsp.mkdir(path.dirname(filePath), { recursive: true });
+      await fsp.writeFile(filePath, section.body || '', 'utf8');
+    }
+  }
+
+  const updated: ComponentTechnicalChangeRecord = {
+    ...target.record,
+    title: String(input.title || target.record.title || target.record.id).trim() || target.record.id,
+    status: input.status ? normaliseComponentTechnicalChangeStatus(input.status, target.record.status) : target.record.status,
+    risk: input.risk ? normaliseComponentTechnicalChangeRisk(input.risk) : target.record.risk,
+    patchCount: await countTechnicalChangePatches(target.changeDir),
+    updatedAt: now
+  };
+  await writeTechnicalChangeMetadata(target.changeDir, updated);
+  return readComponentTechnicalChange({ projectPath: input.projectPath, slug: target.componentSlug, id: updated.id });
+}
+
+async function readLinkedFindingsForImportedTechnicalChange(changeDir: string) {
+  const linkedPath = path.join(changeDir, 'linked-findings.json');
+  if (!(await exists(linkedPath))) return [] as string[];
+  try {
+    const raw = await readJson<any>(linkedPath);
+    const findings = Array.isArray(raw?.findings) ? raw.findings : Array.isArray(raw) ? raw : [];
+    return findings.map(String).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function createTechnicalChangeFromImportedReview(input: {
+  projectPath: string;
+  componentSlug: string;
+  reviewRelativeDirectory: string;
+  reviewDirectory: string;
+  changeId: string;
+  importedAt: string;
+}): Promise<ComponentTechnicalChangeRecord | null> {
+  const sourceDir = path.join(input.reviewDirectory, 'changes', input.changeId);
+  if (!(await exists(sourceDir))) return null;
+
+  const targetRoot = componentTechnicalChangesRoot(input.projectPath, input.componentSlug);
+  await fsp.mkdir(targetRoot, { recursive: true });
+  const preferredId = isSafeComponentTechnicalReviewSegment(input.changeId) ? input.changeId : slugify(input.changeId);
+  const id = await uniqueTechnicalChangeId(targetRoot, preferredId || `TC-${input.importedAt.replace(/\D/g, '').slice(0, 12)}-technical-change`);
+  const targetDir = path.join(targetRoot, id);
+  await fsp.mkdir(targetDir, { recursive: true });
+
+  for (const fileName of ['overview.md', 'affected-files.md', 'rationale.md', 'verification.md']) {
+    const sourcePath = path.join(sourceDir, fileName);
+    if (await exists(sourcePath)) await fsp.copyFile(sourcePath, path.join(targetDir, fileName));
+  }
+  const sourcePatchesDir = path.join(sourceDir, 'patches');
+  if (await exists(sourcePatchesDir)) await copyDir(sourcePatchesDir, path.join(targetDir, 'patches'));
+
+  const overviewPath = path.join(targetDir, 'overview.md');
+  const overviewRaw = await exists(overviewPath) ? await fsp.readFile(overviewPath, 'utf8') : '';
+  const title = titleFromMarkdownHeading(overviewRaw, titleFromTechnicalChangeId(id));
+  await ensureTechnicalChangeMarkdownFiles(targetDir, title);
+
+  const record: ComponentTechnicalChangeRecord = {
+    id,
+    title,
+    componentSlug: input.componentSlug,
+    status: 'needs-review',
+    source: 'technical-review',
+    createdAt: input.importedAt,
+    updatedAt: input.importedAt,
+    risk: 'unknown',
+    patchCount: await countTechnicalChangePatches(targetDir),
+    linkedFindings: await readLinkedFindingsForImportedTechnicalChange(sourceDir),
+    linkedReviewPath: input.reviewRelativeDirectory,
+    deliveryPackageIds: [],
+    relativePath: normaliseRelativePath(path.relative(input.projectPath, targetDir))
+  };
+  await writeTechnicalChangeMetadata(targetDir, record);
+  return record;
+}
+
+function buildTechnicalChangeReviewReadme(input: {
+  projectName: string;
+  component: Awaited<ReturnType<typeof readComponent>>;
+  change: ComponentTechnicalChangeDetail;
+  sourceRootCount: number;
+  sourceFileCount: number;
+  warnings: string[];
+}) {
+  const lines = [
+    '# AIDD Technical Change Review',
+    '',
+    'This zip was generated by AIDD for review of one managed technical change.',
+    '',
+    '## Scope',
+    '',
+    `Project: ${input.projectName}`,
+    `Component: ${input.component.title} (\`${input.component.slug}\`)`,
+    `Technical change: ${input.change.title} (\`${input.change.id}\`)`,
+    `Status: \`${input.change.status}\``,
+    '',
+    '## Bundle layout',
+    '',
+    '- `instructions/review.md` - review task and constraints',
+    '- `instructions/return-format.md` - required return zip shape',
+    '- `context/component.md` - generated component documentation snapshot',
+    '- `technical-change/` - editable technical change proposal files',
+    '- `src/` - read-only source-code snapshot',
+    '',
+    '## Return package rule',
+    '',
+    'Return a zip containing only `technical-change/` files and optional `REVIEW.md`.',
+    'Do not include edited source files.',
+    '',
+    '## Package summary',
+    '',
+    `- Source roots: ${input.sourceRootCount}`,
+    `- Source files: ${input.sourceFileCount}`,
+    `- Patch files: ${input.change.patchCount}`,
+    ''
+  ];
+
+  if (input.warnings.length) {
+    lines.push('## Warnings', '', ...input.warnings.map((warning) => `- ${warning}`), '');
+  }
+
+  return `${lines.join('\n').trim()}\n`;
+}
+
+function buildTechnicalChangeReviewInstructions(change: ComponentTechnicalChangeDetail) {
+  return [
+    '# Technical Change Review Instructions',
+    '',
+    `Review technical change: ${change.title} (\`${change.id}\`)`,
+    '',
+    '## Goals',
+    '',
+    '- Check whether the proposed change is clear, bounded, and safe to approve.',
+    '- Improve the change description, affected files, rationale, verification, and review notes where useful.',
+    '- Provide or refine patch files only under `technical-change/patches/`.',
+    '- Keep source files read-only. Do not return edited source files.',
+    '',
+    '## Decision guidance',
+    '',
+    '- Use `technical-change/review.md` for approval notes, rejection reasons, or requested revisions.',
+    '- If the change is unsafe or incomplete, explain the concern rather than forcing a patch.',
+    ''
+  ].join('\n');
+}
+
+function buildTechnicalChangeReviewReturnFormat(change: ComponentTechnicalChangeDetail) {
+  return [
+    '# Return Format',
+    '',
+    'Returned zips may contain these files only:',
+    '',
+    '```text',
+    'REVIEW.md',
+    'technical-change/overview.md',
+    'technical-change/affected-files.md',
+    'technical-change/rationale.md',
+    'technical-change/verification.md',
+    'technical-change/review.md',
+    'technical-change/patches/proposed.patch',
+    'technical-change/patches/<name>.patch',
+    'technical-change/patches/<name>.diff',
+    'technical-change/patches/notes.md',
+    '```',
+    '',
+    `Technical change id: ${change.id}`,
+    ''
+  ].join('\n');
+}
+
+async function createComponentTechnicalChangeReviewPackage(input: ComponentTechnicalChangeReviewPackageInput): Promise<ComponentTechnicalChangeReviewPackageResult> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.slug) throw new Error('Component slug is required.');
+  if (!input.id) throw new Error('Technical change id is required.');
+  const root = path.resolve(input.projectPath);
+  const component = await readComponent({ projectPath: root, slug: input.slug });
+  const change = await readComponentTechnicalChange({ projectPath: root, slug: component.slug, id: input.id });
+  const projectName = await readProjectName(root);
+  const createdAt = new Date().toISOString();
+  const stamp = createdAt.replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const fileName = `${slugify(projectName)}-${component.slug}-${slugify(change.id)}-technical-change-review-${stamp}.zip`;
+  const outputDir = path.join(app.getPath('userData'), 'review-bundles', slugify(projectName), 'components', component.slug, 'technical-changes');
+  const filePath = path.join(outputDir, fileName);
+  const warnings: string[] = [];
+  const source = await collectDeliveryReviewSourceEntries(root, [component]);
+  warnings.push(...source.warnings);
+
+  const entries: ZipEntryInput[] = [
+    { name: 'README.md', data: Buffer.from(buildTechnicalChangeReviewReadme({
+      projectName,
+      component,
+      change,
+      sourceRootCount: source.roots.length,
+      sourceFileCount: source.includedFiles.length,
+      warnings
+    }), 'utf8') },
+    { name: 'instructions/review.md', data: Buffer.from(buildTechnicalChangeReviewInstructions(change), 'utf8') },
+    { name: 'instructions/return-format.md', data: Buffer.from(buildTechnicalChangeReviewReturnFormat(change), 'utf8') },
+    { name: 'context/component.md', data: Buffer.from(buildComponentTechnicalReviewComponentMarkdown({ projectName, component }), 'utf8') },
+    { name: 'technical-change/technical-change.json', data: Buffer.from(`${JSON.stringify(technicalChangeMetadata(change), null, 2)}\n`, 'utf8') },
+    ...change.sections.map((section) => ({
+      name: `technical-change/${normaliseRelativePath(section.fileName)}`,
+      data: Buffer.from(section.body || '', 'utf8')
+    })),
+    ...source.entries
+  ];
+
+  const manifest = {
+    bundleType: 'component-technical-change-review',
+    schemaVersion: 1,
+    projectName,
+    createdAt,
+    generatedBy: 'AIDD',
+    componentSlug: component.slug,
+    componentTitle: component.title,
+    technicalChange: technicalChangeMetadata(change),
+    sourceSnapshot: {
+      directory: 'src',
+      sourceRootCount: source.roots.length,
+      sourceFileCount: source.includedFiles.length
+    },
+    warnings,
+    returnInstructions: {
+      returnedZipShouldContainOnly: ['REVIEW.md', 'technical-change/'],
+      sourceCodeIsContextOnly: true,
+      doNotReturnEditedSourceFiles: true
+    }
+  };
+  entries.push({ name: 'MANIFEST.json', data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8') });
+
+  const uniqueEntries = new Map<string, ZipEntryInput>();
+  for (const entry of entries) {
+    const name = safeZipEntryName(entry.name);
+    if (!uniqueEntries.has(name)) uniqueEntries.set(name, { ...entry, name });
+  }
+
+  await writeZipFile(filePath, Array.from(uniqueEntries.values()));
+  return {
+    filePath,
+    fileName,
+    componentSlug: component.slug,
+    technicalChangeId: change.id,
+    sectionFileCount: change.sections.length,
+    patchCount: change.patchCount,
+    sourceRootCount: source.roots.length,
+    sourceFileCount: source.includedFiles.length,
+    entryCount: uniqueEntries.size,
+    warnings
+  };
+}
+
+function componentTechnicalChangeReviewReturnPath(entryName: string, changeId: string) {
+  const normalised = safeZipReadEntryName(entryName);
+  if (!normalised) return null;
+  let clean = normalised.replace(/^component-technical-change-review-return\//, '');
+  if (clean.startsWith('technical-change/')) clean = clean.slice('technical-change/'.length);
+  const changePrefix = `changes/${changeId}/`;
+  if (clean.startsWith(changePrefix)) clean = clean.slice(changePrefix.length);
+  clean = clean.replace(/^\/+/, '').replace(/\/+$/, '');
+  if (!clean || clean.split('/').some((part) => !part || part === '.' || part === '..')) return null;
+  if (clean.toLowerCase() === 'review.md') return 'review.md';
+  if (clean.toLowerCase() === 'review.md' || clean.toLowerCase() === 'summary.md') return null;
+  return clean;
+}
+
+function isSafeTechnicalChangeReviewReturnPath(relativePath: string) {
+  const lower = normaliseRelativePath(relativePath).toLowerCase();
+  if (COMPONENT_TECHNICAL_CHANGE_SECTION_BY_FILE.has(lower)) return true;
+  const parts = lower.split('/');
+  if (parts.length === 2 && parts[0] === 'patches') {
+    return isSafeComponentTechnicalChangePatchFileName(parts[1]);
+  }
+  return false;
+}
+
+async function importComponentTechnicalChangeReviewPackage(input: ImportComponentTechnicalChangeReviewPackageInput): Promise<ComponentTechnicalChangeReviewPackageImportResult> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.slug) throw new Error('Component slug is required.');
+  if (!input.id) throw new Error('Technical change id is required.');
+  if (!input.zipPath) throw new Error('Technical change review response zip path is required.');
+  const root = path.resolve(input.projectPath);
+  const zipPath = path.resolve(input.zipPath);
+  if (!(await exists(zipPath))) throw new Error(`Technical change review response zip does not exist: ${input.zipPath}`);
+  if (path.extname(zipPath).toLowerCase() !== '.zip') throw new Error('Technical change review response must be a .zip file.');
+
+  const target = await findComponentTechnicalChangeTarget(root, input.slug, input.id);
+  const entries = await readZipFile(zipPath);
+  const importedFiles: string[] = [];
+  const skippedFiles: string[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of entries) {
+    if (entry.directory) continue;
+    let relativePath = componentTechnicalChangeReviewReturnPath(entry.name, target.record.id);
+    if (!relativePath && normaliseRelativePath(entry.name).toLowerCase() === 'review.md') relativePath = 'review.md';
+    if (!relativePath || !isSafeTechnicalChangeReviewReturnPath(relativePath)) {
+      skippedFiles.push(normaliseRelativePath(entry.name));
+      continue;
+    }
+    if (seen.has(relativePath)) {
+      skippedFiles.push(`${relativePath} was skipped because it appeared more than once.`);
+      continue;
+    }
+    const filePath = resolveTechnicalChangePath(target.changeDir, relativePath);
+    await fsp.mkdir(path.dirname(filePath), { recursive: true });
+    await fsp.writeFile(filePath, entry.data);
+    importedFiles.push(relativePath);
+    seen.add(relativePath);
+  }
+
+  if (!importedFiles.length) {
+    throw new Error('Technical change review response did not contain importable files. Expected technical-change/overview.md, technical-change/review.md, or technical-change/patches/ files.');
+  }
+
+  const patchCount = await countTechnicalChangePatches(target.changeDir);
+  await writeTechnicalChangeMetadata(target.changeDir, {
+    ...target.record,
+    patchCount,
+    status: target.record.status === 'draft' ? 'needs-review' : target.record.status,
+    updatedAt: new Date().toISOString()
+  });
+
+  return {
+    accepted: true,
+    zipPath,
+    componentSlug: target.componentSlug,
+    technicalChangeId: target.record.id,
+    importedFiles: importedFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    skippedFiles: skippedFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    patchCount
+  };
+}
+
 async function createComponent(root: string, title: string, description?: string, status: string = 'draft', sourceProjects: string[] = [], sourceInput?: Partial<ComponentSourceConfig>, sectionsInput?: ComponentSectionInput[]) {
   const slug = slugify(title);
   const dir = path.join(root, 'components', slug);
@@ -6183,6 +7079,8 @@ async function readComponent(input: ReadComponentInput) {
     capabilities,
     sections,
     contract,
+    technicalReviews: await readComponentTechnicalReviews(input.projectPath, slug),
+    technicalChanges: await readComponentTechnicalChanges(input.projectPath, slug),
     description: sections.find((section) => section.key === 'purpose')?.body || parsedIndex.content.replace(/^\s*\n/, ''),
     filePath: markdownPath
   };
@@ -7508,7 +8406,8 @@ async function collectComponentReviewEntries(projectPath: string, componentSlug?
 
     const existingMarkdown = (await collectMarkdownFiles(componentDir)).filter((relativeFile) => {
       const base = path.basename(relativeFile).toLowerCase();
-      return base !== 'index.md' && base !== 'component.md';
+      const normalised = normaliseRelativePath(relativeFile).toLowerCase();
+      return base !== 'index.md' && base !== 'component.md' && !normalised.startsWith('technical-reviews/');
     });
 
     const candidateFiles = Array.from(new Set([...sectionFiles, ...existingMarkdown])).filter((fileName) => {
@@ -7738,6 +8637,601 @@ async function createComponentReviewBundle(projectPath: string, componentSlug?: 
     componentFileCount: components.includedFiles.length,
     foundationFileCount: foundation.includedFiles.length,
     entryCount: zipEntries.length
+  };
+}
+
+const DEFAULT_COMPONENT_TECHNICAL_REVIEW_TYPES: ComponentTechnicalReviewType[] = ['code', 'security', 'architecture', 'tests'];
+const COMPONENT_TECHNICAL_REVIEW_TYPES = new Set<ComponentTechnicalReviewType>([
+  'code',
+  'security',
+  'architecture',
+  'tests',
+  'performance',
+  'accessibility',
+  'dependencies'
+]);
+
+function normaliseComponentTechnicalReviewTypes(input?: ComponentTechnicalReviewType[]) {
+  const selected = Array.isArray(input)
+    ? input.filter((item): item is ComponentTechnicalReviewType => COMPONENT_TECHNICAL_REVIEW_TYPES.has(item))
+    : [];
+  return selected.length ? Array.from(new Set(selected)) : DEFAULT_COMPONENT_TECHNICAL_REVIEW_TYPES;
+}
+
+function normaliseComponentTechnicalReviewSourceScope(input?: ComponentTechnicalReviewSourceScope) {
+  return input === 'changed-files' || input === 'full-source' ? input : 'component-source';
+}
+
+function buildComponentTechnicalReviewComponentMarkdown(input: {
+  projectName: string;
+  component: Awaited<ReturnType<typeof readComponent>>;
+}) {
+  const { component } = input;
+  const lines = [
+    generatedDocHeader(`AIDD component ${component.slug}`),
+    `# AIDD Component: ${component.title}`,
+    '',
+    `Project: ${input.projectName}`,
+    `Slug: \`${component.slug}\``,
+    `Status: \`${setupStatusLabel(component.status)}\``,
+    component.capabilities.length ? `Capabilities: ${component.capabilities.map((item) => `\`${item}\``).join(', ')}` : 'Capabilities: _none linked_',
+    '',
+    'This file is generated by AIDD as read-only context for a component technical review.',
+    '',
+    '## Source mapping',
+    '',
+    ...componentSourceReferenceLines({
+      ...component,
+      supportsCapabilities: component.capabilities,
+      capabilitiesSupported: component.capabilities
+    }),
+    ''
+  ];
+
+  for (const section of component.sections || []) {
+    lines.push(
+      '---',
+      '',
+      `## ${section.title}`,
+      '',
+      `Source: \`components/${component.slug}/${section.fileName}\``,
+      `Status: \`${setupStatusLabel(section.status)}\``,
+      '',
+      section.status === 'skipped'
+        ? `_This section was skipped in AIDD.${section.skipReason ? ` Reason: ${section.skipReason}` : ''}_`
+        : section.body.trim() || '_No content captured._',
+      ''
+    );
+  }
+
+  return `${lines.join('\n').trim()}\n`;
+}
+
+async function readComponentContractMarkdownForReview(projectPath: string, component: Awaited<ReturnType<typeof readComponent>>) {
+  const contractPath = path.join(projectPath, 'components', component.slug, 'component.md');
+  if (await exists(contractPath)) return fsp.readFile(contractPath, 'utf8');
+  return [
+    `# Component Contract: ${component.title}`,
+    '',
+    `Component: \`${component.slug}\``,
+    '',
+    'AIDD did not have a generated component contract file when this technical review package was created.',
+    'Use `context/component.md` and the source snapshot as review context.',
+    ''
+  ].join('\n');
+}
+
+function buildComponentTechnicalReviewReadme(input: {
+  projectName: string;
+  component: Awaited<ReturnType<typeof readComponent>>;
+  reviewTypes: ComponentTechnicalReviewType[];
+  sourceRootCount: number;
+  sourceFileCount: number;
+  warnings: string[];
+}) {
+  const lines = [
+    '# AIDD Component Technical Review',
+    '',
+    'This zip was generated by AIDD for a component technical review.',
+    '',
+    '## Review scope',
+    '',
+    `Project: ${input.projectName}`,
+    `Component: ${input.component.title} (\`${input.component.slug}\`)`,
+    `Review types: ${input.reviewTypes.map((item) => `\`${item}\``).join(', ')}`,
+    '',
+    'Use the component context, contract, foundation, standards, and source snapshot to identify technical findings and proposed changes.',
+    '',
+    '## Bundle layout',
+    '',
+    '- `instructions/technical-review.md` - review task and constraints',
+    '- `instructions/return-format.md` - required return zip shape',
+    '- `context/foundation.md` - project foundation context',
+    '- `context/standards.md` - project standards context',
+    '- `context/component.md` - generated component documentation snapshot',
+    '- `context/component-contract.md` - generated component contract when available',
+    '- `src/` - read-only source-code snapshot',
+    '- `_return-template/` - example returned artefacts',
+    '',
+    '## Source-code snapshot rules',
+    '',
+    'Source code is included for review context only. Do not return edited source files.',
+    'All proposed implementation changes must be represented as patches under `changes/<change-id>/patches/` in the returned zip.',
+    '',
+    '## Return package rule',
+    '',
+    'Return a zip containing only `SUMMARY.md`, optional `REVIEW.md`, optional `MANIFEST.json`, `findings/`, `changes/`, and `patches/index.md`.',
+    'Do not include `src/`, `context/`, `instructions/`, component folders, capabilities, delivery packages, executables, environment files, or private keys.',
+    '',
+    '## Package summary',
+    '',
+    `- Source roots: ${input.sourceRootCount}`,
+    `- Source files: ${input.sourceFileCount}`,
+    ''
+  ];
+
+  if (input.warnings.length) {
+    lines.push('## Warnings', '', ...input.warnings.map((warning) => `- ${warning}`), '');
+  }
+
+  return `${lines.join('\n').trim()}\n`;
+}
+
+function buildComponentTechnicalReviewInstructions(input: {
+  component: Awaited<ReturnType<typeof readComponent>>;
+  reviewTypes: ComponentTechnicalReviewType[];
+}) {
+  return [
+    '# Technical Review Instructions',
+    '',
+    `Review component: ${input.component.title} (\`${input.component.slug}\`)`,
+    '',
+    '## Goals',
+    '',
+    '- Identify concrete technical findings in the component source and AIDD context.',
+    '- Propose focused technical changes that can be reviewed by a human before application.',
+    '- Provide patches only as proposed artefacts; do not return edited source files.',
+    '- Link each proposed change to findings where possible.',
+    '',
+    '## Review types',
+    '',
+    ...input.reviewTypes.map((item) => `- ${item}`),
+    '',
+    '## Constraints',
+    '',
+    '- Treat all files under `src/` as read-only source context.',
+    '- Treat all files under `context/` as read-only AIDD context.',
+    '- Do not invent source paths outside the bundled source snapshot unless the finding explicitly explains why.',
+    '- Keep patch files reviewable and narrowly scoped.',
+    '- If a patch is unsafe or speculative, put the reasoning in `changes/<change-id>/rationale.md` instead of forcing a diff.',
+    ''
+  ].join('\n');
+}
+
+function buildComponentTechnicalReviewReturnFormat() {
+  return [
+    '# Return Format',
+    '',
+    'Returned zips must not contain edited source files.',
+    'All source-code changes must be proposed as patches inside `changes/<change-id>/patches/`.',
+    '',
+    '## Accepted files',
+    '',
+    '```text',
+    'SUMMARY.md',
+    'REVIEW.md',
+    'MANIFEST.json',
+    'findings/<finding-id>.md',
+    'findings/<finding-id>.json',
+    'changes/<change-id>/overview.md',
+    'changes/<change-id>/affected-files.md',
+    'changes/<change-id>/rationale.md',
+    'changes/<change-id>/verification.md',
+    'changes/<change-id>/linked-findings.json',
+    'changes/<change-id>/patches/<patch-name>.patch',
+    'changes/<change-id>/patches/<patch-name>.diff',
+    'changes/<change-id>/patches/notes.md',
+    'patches/index.md',
+    '```',
+    '',
+    '## Rejected content',
+    '',
+    '- `src/**`',
+    '- `source/**`',
+    '- `components/**`',
+    '- `capabilities/**`',
+    '- `delivery/**`',
+    '- `foundation/**`',
+    '- source files such as `.ts`, `.tsx`, `.js`, `.cs`, `.py` outside patch artefacts',
+    '- executables, libraries, environment files, private keys, or paths containing `../`',
+    ''
+  ].join('\n');
+}
+
+function buildComponentTechnicalReviewSummaryTemplate(input: Awaited<ReturnType<typeof readComponent>>) {
+  return [
+    '# Component Technical Review Summary',
+    '',
+    `Component: ${input.title} (${input.slug})`,
+    '',
+    '## Executive summary',
+    '',
+    '- TODO',
+    '',
+    '## Findings',
+    '',
+    '- TODO',
+    '',
+    '## Proposed changes',
+    '',
+    '- TODO',
+    '',
+    '## Verification',
+    '',
+    '- TODO',
+    '',
+    '## Residual risk',
+    '',
+    '- TODO',
+    ''
+  ].join('\n');
+}
+
+function componentTechnicalReviewReturnPath(relativePath: string) {
+  const normalised = safeZipReadEntryName(relativePath);
+  if (!normalised) return null;
+  const stripped = normalised.startsWith('component-technical-review-return/')
+    ? normalised.slice('component-technical-review-return/'.length)
+    : normalised;
+  const clean = stripped.replace(/^\/+/, '').replace(/\/+$/, '');
+  if (!clean || clean.split('/').some((part) => !part || part === '.' || part === '..')) return null;
+  return clean;
+}
+
+function isSafeComponentTechnicalReviewSegment(value: string) {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/.test(value);
+}
+
+function isSafeComponentTechnicalReviewFileName(fileName: string, allowedExtensions: string[]) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(fileName)) return false;
+  if (fileName === '.' || fileName === '..') return false;
+  return allowedExtensions.includes(path.extname(fileName).toLowerCase());
+}
+
+function isSafeComponentTechnicalReviewReturnPath(relativePath: string) {
+  const normalised = componentTechnicalReviewReturnPath(relativePath);
+  if (!normalised) return false;
+  const lower = normalised.toLowerCase();
+  if (lower === 'summary.md' || lower === 'review.md' || lower === 'manifest.json') return true;
+
+  const parts = normalised.split('/');
+  if (parts[0] === 'findings' && parts.length === 2) {
+    return isSafeComponentTechnicalReviewFileName(parts[1], ['.md', '.json']);
+  }
+
+  if (parts[0] === 'patches' && parts.length === 2) {
+    return parts[1].toLowerCase() === 'index.md';
+  }
+
+  if (parts[0] !== 'changes' || parts.length < 3) return false;
+  const changeId = parts[1];
+  if (!isSafeComponentTechnicalReviewSegment(changeId)) return false;
+  const fileName = parts[2].toLowerCase();
+
+  if (parts.length === 3) {
+    return [
+      'overview.md',
+      'affected-files.md',
+      'rationale.md',
+      'verification.md',
+      'linked-findings.json'
+    ].includes(fileName);
+  }
+
+  if (parts.length === 4 && parts[2] === 'patches') {
+    if (parts[3].toLowerCase() === 'notes.md') return true;
+    return isSafeComponentTechnicalReviewFileName(parts[3], ['.patch', '.diff']);
+  }
+
+  return false;
+}
+
+function summarizeComponentTechnicalReviewImport(input: {
+  componentSlug: string;
+  importedAt: string;
+  reviewDirectory: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+}) {
+  const findingFiles = input.importedFiles.filter((file) => file.startsWith('findings/') && (file.endsWith('.md') || file.endsWith('.json')));
+  const changes = new Map<string, ComponentTechnicalReviewChangeSummary & { patchSet: Set<string> }>();
+
+  for (const file of input.importedFiles) {
+    const parts = file.split('/');
+    if (parts[0] !== 'changes' || parts.length < 3) continue;
+    const changeId = parts[1];
+    const current = changes.get(changeId) || { id: changeId, status: 'proposed', patches: [], patchSet: new Set<string>() };
+    if (parts.length === 3 && parts[2] === 'overview.md') current.overviewPath = file;
+    if (parts.length === 4 && parts[2] === 'patches' && (file.endsWith('.patch') || file.endsWith('.diff'))) {
+      current.patchSet.add(file);
+    }
+    changes.set(changeId, current);
+  }
+
+  const changeSummaries = Array.from(changes.values())
+    .map((change) => ({
+      id: change.id,
+      ...(change.overviewPath ? { overviewPath: change.overviewPath } : {}),
+      status: change.status,
+      patches: Array.from(change.patchSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+  const patchCount = changeSummaries.reduce((sum, change) => sum + change.patches.length, 0);
+
+  return {
+    type: 'component-technical-review-import' as const,
+    schemaVersion: 1 as const,
+    componentSlug: input.componentSlug,
+    importedAt: input.importedAt,
+    status: 'pending-review',
+    reviewDirectory: input.reviewDirectory,
+    ...(input.importedFiles.includes('SUMMARY.md') ? { summaryPath: 'SUMMARY.md' } : {}),
+    importedFiles: input.importedFiles,
+    skippedFiles: input.skippedFiles,
+    findingCount: findingFiles.length,
+    changeCount: changeSummaries.length,
+    patchCount,
+    changes: changeSummaries
+  };
+}
+
+async function importComponentTechnicalReviewPackage(input: ImportComponentTechnicalReviewPackageInput): Promise<ComponentTechnicalReviewImportResult> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.slug) throw new Error('Component slug is required.');
+  if (!input.zipPath) throw new Error('Technical review response zip path is required.');
+
+  const root = path.resolve(input.projectPath);
+  const zipPath = path.resolve(input.zipPath);
+  if (!(await exists(root))) throw new Error(`Project path does not exist: ${input.projectPath}`);
+  if (!(await exists(zipPath))) throw new Error(`Technical review response zip does not exist: ${input.zipPath}`);
+  if (path.extname(zipPath).toLowerCase() !== '.zip') throw new Error('Technical review response must be a .zip file.');
+
+  const component = await readComponent({ projectPath: root, slug: input.slug });
+  const entries = await readZipFile(zipPath);
+  const importedFiles: string[] = [];
+  const skippedFiles: string[] = [];
+  const importedFileSet = new Set<string>();
+  const importedAt = new Date().toISOString();
+  const stamp = importedAt.replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const reviewRelativeDirectory = `components/${component.slug}/technical-reviews/${stamp}`;
+  const reviewDirectory = path.join(root, 'components', component.slug, 'technical-reviews', stamp);
+
+  for (const entry of entries) {
+    if (entry.directory) continue;
+    const relativePath = componentTechnicalReviewReturnPath(entry.name);
+    if (!relativePath) {
+      skippedFiles.push(normaliseRelativePath(entry.name));
+      continue;
+    }
+    if (!isSafeComponentTechnicalReviewReturnPath(relativePath)) {
+      skippedFiles.push(relativePath);
+      continue;
+    }
+    if (importedFileSet.has(relativePath)) {
+      skippedFiles.push(`${relativePath} was skipped because it appeared more than once.`);
+      continue;
+    }
+
+    const target = path.resolve(reviewDirectory, relativePath);
+    if (!isSameOrInsideDiskPath(target, reviewDirectory)) {
+      skippedFiles.push(relativePath);
+      continue;
+    }
+
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.writeFile(target, entry.data);
+    importedFiles.push(relativePath);
+    importedFileSet.add(relativePath);
+  }
+
+  if (!importedFiles.length) {
+    throw new Error('Technical review response did not contain any importable review artefacts. Expected SUMMARY.md, findings/, changes/, or patches/index.md. Source files were not imported.');
+  }
+
+  const sortedImportedFiles = importedFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const sortedSkippedFiles = skippedFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const record = summarizeComponentTechnicalReviewImport({
+    componentSlug: component.slug,
+    importedAt,
+    reviewDirectory: reviewRelativeDirectory,
+    importedFiles: sortedImportedFiles,
+    skippedFiles: sortedSkippedFiles
+  });
+
+  await writeJson(path.join(reviewDirectory, 'technical-review.json'), {
+    ...record,
+    sourceZipPath: zipPath
+  });
+
+  const technicalChanges: ComponentTechnicalChangeRecord[] = [];
+  for (const change of record.changes) {
+    const technicalChange = await createTechnicalChangeFromImportedReview({
+      projectPath: root,
+      componentSlug: component.slug,
+      reviewRelativeDirectory,
+      reviewDirectory,
+      changeId: change.id,
+      importedAt
+    });
+    if (technicalChange) technicalChanges.push(technicalChange);
+  }
+
+  return {
+    accepted: true,
+    zipPath,
+    componentSlug: component.slug,
+    reviewDirectory,
+    importedFiles: sortedImportedFiles,
+    skippedFiles: sortedSkippedFiles,
+    findingCount: record.findingCount,
+    changeCount: record.changeCount,
+    patchCount: record.patchCount,
+    technicalChangeCount: technicalChanges.length
+  };
+}
+
+async function createComponentTechnicalReviewBundle(input: ComponentTechnicalReviewPackageInput): Promise<ComponentTechnicalReviewPackageResult> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.slug) throw new Error('Component slug is required.');
+  const root = path.resolve(input.projectPath);
+  if (!(await exists(root))) throw new Error(`Project path does not exist: ${input.projectPath}`);
+
+  const projectName = await readProjectName(root);
+  const component = await readComponent({ projectPath: root, slug: input.slug });
+  const createdAt = new Date().toISOString();
+  const stamp = createdAt.replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const fileName = `${slugify(projectName)}-${component.slug}-component-technical-review-${stamp}.zip`;
+  const outputDir = path.join(app.getPath('userData'), 'review-bundles', slugify(projectName), 'components', component.slug, 'technical');
+  const filePath = path.join(outputDir, fileName);
+  const reviewTypes = normaliseComponentTechnicalReviewTypes(input.reviewTypes);
+  const sourceScope = normaliseComponentTechnicalReviewSourceScope(input.sourceScope);
+  const warnings: string[] = [];
+
+  if (sourceScope !== 'component-source') {
+    warnings.push(`Source scope "${sourceScope}" is not implemented yet; packaged the configured component source directory instead.`);
+  }
+
+  const source = await collectDeliveryReviewSourceEntries(root, [component]);
+  warnings.push(...source.warnings);
+  if (!source.includedFiles.length) {
+    warnings.push('No source files were included. Configure the component source directory before requesting a technical source review.');
+  }
+
+  const foundation = await readFoundationDocuments(root);
+  const standards = await readStandardSections(root);
+  const componentContextMarkdown = buildComponentTechnicalReviewComponentMarkdown({ projectName, component });
+  const componentContractMarkdown = await readComponentContractMarkdownForReview(root, component);
+  const contextEntries: ZipEntryInput[] = [
+    { name: 'context/foundation.md', data: Buffer.from(buildPublishedFoundationMarkdown(projectName, foundation), 'utf8') },
+    { name: 'context/standards.md', data: Buffer.from(buildPublishedStandardsMarkdown(projectName, standards), 'utf8') },
+    { name: 'context/component.md', data: Buffer.from(componentContextMarkdown, 'utf8') },
+    { name: 'context/component-contract.md', data: Buffer.from(componentContractMarkdown, 'utf8') }
+  ];
+  const templateEntries: ZipEntryInput[] = [
+    { name: '_return-template/SUMMARY.md', data: Buffer.from(buildComponentTechnicalReviewSummaryTemplate(component), 'utf8') },
+    { name: '_return-template/findings/FINDING-001.md', data: Buffer.from('# FINDING-001\n\n## Summary\n\nTODO\n\n## Evidence\n\nTODO\n\n## Impact\n\nTODO\n', 'utf8') },
+    { name: '_return-template/changes/TC-001-short-name/overview.md', data: Buffer.from('# TC-001 Short Name\n\n## Proposed change\n\nTODO\n\n## Linked findings\n\n- FINDING-001\n', 'utf8') },
+    { name: '_return-template/changes/TC-001-short-name/affected-files.md', data: Buffer.from('# Affected Files\n\n- `src/...`\n', 'utf8') },
+    { name: '_return-template/changes/TC-001-short-name/rationale.md', data: Buffer.from('# Rationale\n\nTODO\n', 'utf8') },
+    { name: '_return-template/changes/TC-001-short-name/verification.md', data: Buffer.from('# Verification\n\nTODO\n', 'utf8') },
+    { name: '_return-template/changes/TC-001-short-name/linked-findings.json', data: Buffer.from('{\n  "findings": ["FINDING-001"]\n}\n', 'utf8') },
+    { name: '_return-template/changes/TC-001-short-name/patches/proposed.patch', data: Buffer.from('# Add a unified diff here.\n', 'utf8') },
+    { name: '_return-template/changes/TC-001-short-name/patches/notes.md', data: Buffer.from('# Patch Notes\n\nTODO\n', 'utf8') },
+    { name: '_return-template/patches/index.md', data: Buffer.from('# Patch Index\n\n- TC-001-short-name: `changes/TC-001-short-name/patches/proposed.patch`\n', 'utf8') }
+  ];
+  const contextFiles = contextEntries.map((entry) => entry.name).sort((a, b) => a.localeCompare(b));
+  const templateFiles = templateEntries.map((entry) => entry.name).sort((a, b) => a.localeCompare(b));
+  const instructionEntries: ZipEntryInput[] = [
+    { name: 'instructions/technical-review.md', data: Buffer.from(buildComponentTechnicalReviewInstructions({ component, reviewTypes }), 'utf8') },
+    { name: 'instructions/return-format.md', data: Buffer.from(buildComponentTechnicalReviewReturnFormat(), 'utf8') }
+  ];
+
+  const allEntries: ZipEntryInput[] = [
+    { name: 'README.md', data: Buffer.from(buildComponentTechnicalReviewReadme({
+      projectName,
+      component,
+      reviewTypes,
+      sourceRootCount: source.roots.length,
+      sourceFileCount: source.includedFiles.length,
+      warnings
+    }), 'utf8') },
+    ...instructionEntries,
+    ...contextEntries,
+    ...source.entries,
+    ...templateEntries
+  ];
+
+  const manifest = {
+    bundleType: 'component-technical-review',
+    schemaVersion: 1,
+    projectName,
+    createdAt,
+    generatedBy: 'AIDD',
+    outputIsOutsideProject: true,
+    snapshotIsSelfContained: true,
+    componentSlug: component.slug,
+    componentTitle: component.title,
+    reviewTypes,
+    sourceScope: 'component-source',
+    sourceCodeIsContextOnly: true,
+    patchesMustBeProposedOnly: true,
+    returnShape: {
+      required: [
+        'SUMMARY.md',
+        'changes/<change-id>/overview.md'
+      ],
+      allowed: [
+        'findings/**/*.md',
+        'findings/**/*.json',
+        'changes/**/overview.md',
+        'changes/**/affected-files.md',
+        'changes/**/rationale.md',
+        'changes/**/verification.md',
+        'changes/**/linked-findings.json',
+        'changes/**/patches/*.patch',
+        'changes/**/patches/*.diff',
+        'changes/**/patches/notes.md',
+        'patches/index.md'
+      ]
+    },
+    includedFiles: {
+      instructions: instructionEntries.map((entry) => entry.name).sort((a, b) => a.localeCompare(b)),
+      context: contextFiles,
+      source: source.includedFiles,
+      templates: templateFiles
+    },
+    sourceSnapshot: {
+      directory: 'src',
+      allowedExtensions: Array.from(DELIVERY_REVIEW_SOURCE_EXTENSIONS).sort((a, b) => a.localeCompare(b)),
+      excludedDirectories: Array.from(DELIVERY_REVIEW_EXCLUDED_SOURCE_DIRECTORIES).sort((a, b) => a.localeCompare(b)),
+      roots: source.roots.map((sourceRoot) => ({
+        configuredDirectory: sourceRoot.configuredDirectory,
+        absolutePath: sourceRoot.absolutePath,
+        packagePrefix: sourceRoot.packagePrefix ? `src/${sourceRoot.packagePrefix}` : 'src',
+        isInsideWorkspace: sourceRoot.isInsideWorkspace,
+        componentSlugs: sourceRoot.componentSlugs,
+        componentTitles: sourceRoot.componentTitles
+      })),
+      skippedNestedRoots: source.skippedNestedRoots
+    },
+    warnings,
+    returnInstructions: {
+      returnedZipShouldContainOnly: ['SUMMARY.md', 'REVIEW.md', 'MANIFEST.json', 'findings/', 'changes/', 'patches/index.md'],
+      doNotReturnSourceFiles: true,
+      patchesAreProposalsOnly: true,
+      importedReviewsAreStoredUnder: `components/${component.slug}/technical-reviews/<timestamp>/`
+    }
+  };
+
+  allEntries.push({ name: 'MANIFEST.json', data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8') });
+
+  const uniqueEntries = new Map<string, ZipEntryInput>();
+  for (const entry of allEntries) {
+    const name = safeZipEntryName(entry.name);
+    if (!uniqueEntries.has(name)) uniqueEntries.set(name, { ...entry, name });
+  }
+
+  await writeZipFile(filePath, Array.from(uniqueEntries.values()));
+  return {
+    filePath,
+    fileName,
+    componentSlug: component.slug,
+    componentTitle: component.title,
+    componentFileCount: contextEntries.length,
+    sourceRootCount: source.roots.length,
+    sourceFileCount: source.includedFiles.length,
+    entryCount: uniqueEntries.size,
+    warnings
   };
 }
 
@@ -8392,6 +9886,90 @@ function buildProjectFoundationSnapshot(foundation: FoundationDocument[], standa
   ].join('\n');
 }
 
+async function assertProjectTechnicalStandardsReady(projectPath: string) {
+  const standardSections = await readStandardSections(projectPath);
+  const incompleteStandards = standardSections.filter((section) => !standardSectionDone(section));
+  if (incompleteStandards.length) {
+    throw new Error(`Project Standards must be complete before creating a technical delivery package. Missing: ${incompleteStandards.map((section) => `${section.title} is ${section.status.replace(/-/g, ' ')}`).join('; ')}`);
+  }
+  return { standardSections };
+}
+
+function buildProjectTechnicalStandardsSnapshot(standardSections: StandardSection[]) {
+  const standardsSections = standardSections.map((section) => [
+    `## ${section.title}`,
+    '',
+    `- Status: ${section.status}`,
+    `- Source: foundation/standards/${section.fileName}`,
+    '',
+    section.body.trim() || '_No content captured._'
+  ].join('\n'));
+
+  return [
+    '## Technical Standards Snapshot',
+    '',
+    'This technical delivery package includes project standards and component constraints only. Product foundation narrative is intentionally omitted.',
+    '',
+    ...standardsSections
+  ].join('\n');
+}
+
+function buildComponentTechnicalConstraintsSnapshot(component: Awaited<ReturnType<typeof readComponent>>, componentContract: string) {
+  const lines = [
+    `## Component Technical Constraints: ${component.title}`,
+    '',
+    `- Component: \`${component.slug}\``,
+    `- Status: \`${setupStatusLabel(component.status)}\``,
+    component.source?.directory ? `- Source: \`${component.source.directory}\`` : '- Source: _not configured_',
+    component.capabilities.length ? `- Linked capabilities: ${component.capabilities.map((item) => `\`${item}\``).join(', ')}` : '- Linked capabilities: _none_',
+    '',
+    '### Component Contract',
+    '',
+    componentContract.trim() || '_No component contract has been generated._',
+    '',
+    '### Component Sections',
+    ''
+  ];
+
+  for (const section of component.sections || []) {
+    lines.push(
+      `#### ${section.title}`,
+      '',
+      `- Source: components/${component.slug}/${section.fileName}`,
+      `- Status: \`${setupStatusLabel(section.status)}\``,
+      '',
+      section.body.trim() || '_No content captured._',
+      ''
+    );
+  }
+
+  return `${lines.join('\n').trim()}\n`;
+}
+
+function buildTechnicalChangeSnapshot(change: ComponentTechnicalChangeDetail) {
+  const lines = [
+    `## Technical Change: ${change.title}`,
+    '',
+    `- Id: \`${change.id}\``,
+    `- Component: \`${change.componentSlug}\``,
+    `- Status: \`${change.status}\``,
+    `- Risk: \`${change.risk}\``,
+    `- Patch files: \`${change.patchCount}\``,
+    '',
+  ];
+
+  for (const section of change.sections.filter((item) => !item.fileName.startsWith('patches/'))) {
+    lines.push(
+      `### ${section.title}`,
+      '',
+      section.body.trim() || '_No content captured._',
+      ''
+    );
+  }
+
+  return `${lines.join('\n').trim()}\n`;
+}
+
 
 async function requireDeliveryWorkspace(projectPath: string) {
   const trackedProject = await readTrackedProjectByPath(projectPath);
@@ -8409,9 +9987,12 @@ function deliveryPackageSourceHash(detail: DeliveryPackageDetail) {
     templateVersion: WORKSPACE_PUBLISH_TEMPLATE_VERSION,
     id: detail.id,
     title: detail.title,
+    packageType: detail.packageType || 'capability',
     status: detail.status,
     sourceCapability: detail.sourceCapability,
+    sourceTechnicalChange: detail.sourceTechnicalChange || null,
     components: detail.components,
+    technicalChanges: detail.technicalChanges || [],
     strategyBody: detail.strategyBody,
     snapshotBody: detail.snapshotBody,
     phases: detail.phases.map((phase) => ({ id: phase.id, title: phase.title, status: phase.status, fileName: phase.fileName, body: phase.body }))
@@ -8432,8 +10013,10 @@ function buildPublishedDeliveryStrategyFileMarkdown(detail: DeliveryPackageDetai
     aidd: { type: 'workspace-delivery-strategy', templateVersion: TEMPLATE_VERSION },
     deliveryPackage: detail.id,
     title: detail.title,
+    packageType: detail.packageType || 'capability',
     status: detail.status,
     sourceCapability: detail.sourceCapability || '',
+    sourceTechnicalChange: detail.sourceTechnicalChange || null,
     components: detail.components || [],
     publishedBy: 'AIDD'
   });
@@ -8583,6 +10166,32 @@ async function writeDeliveryGeneratedFile(targetPath: string, content: string, w
   writtenFiles.push(relativePath);
 }
 
+async function writeDeliveryGeneratedTree(sourceRoot: string, targetRoot: string, relativeRoot: string, writtenFiles: string[], skippedFiles: string[]) {
+  const generatedFiles: string[] = [];
+  if (!(await exists(sourceRoot))) return generatedFiles;
+
+  async function walk(currentDir: string) {
+    const entries = await fsp.readdir(currentDir, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+    for (const entry of entries) {
+      const sourcePath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(sourcePath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const relativePath = normaliseRelativePath(path.join(relativeRoot, path.relative(sourceRoot, sourcePath)));
+      const content = await fsp.readFile(sourcePath, 'utf8');
+      await writeDeliveryGeneratedFile(path.join(targetRoot, relativePath), content, writtenFiles, skippedFiles, relativePath);
+      generatedFiles.push(relativePath);
+    }
+  }
+
+  await walk(sourceRoot);
+  return generatedFiles;
+}
+
 async function readDeliveryWorkspacePublicationState(projectPath: string, packageId: string, manifest?: any): Promise<Partial<DeliveryPackageSummary>> {
   const workspacePath = await readWorkspacePathForProject(projectPath);
   if (!workspacePath) return { workspacePublishStatus: 'not-configured', workspacePublished: false };
@@ -8653,6 +10262,14 @@ async function createDeliveryPackageFromCapability(input: CreateDeliveryPackageF
       ].join('\n'));
     }
   }
+  const technicalChangeCandidates = await collectComponentTechnicalChangesForDelivery(input.projectPath, capability.components || []);
+  const technicalChangeDelivery = await copyApprovedTechnicalChangesIntoDeliveryPackage({
+    projectPath: input.projectPath,
+    packageDir: dir,
+    packageId: id,
+    approved: technicalChangeCandidates.approved,
+    excluded: technicalChangeCandidates.excluded
+  });
 
   const snapshot = matter.stringify([
     `# Delivery Package Snapshot: ${capability.title}`,
@@ -8677,11 +10294,14 @@ async function createDeliveryPackageFromCapability(input: CreateDeliveryPackageF
     '## Component Snapshots',
     '',
     componentSnapshots.length ? componentSnapshots.join('\n\n---\n\n') : 'No components were linked when this delivery package was created.',
+    '',
+    buildDeliveryTechnicalChangesIndexMarkdown(technicalChangeDelivery.included, technicalChangeDelivery.excluded).trim(),
     ''
   ].join('\n'), {
     aidd: { type: 'delivery-package-snapshot', templateVersion: TEMPLATE_VERSION },
     id,
     title: capability.title,
+    packageType: 'capability',
     sourceCapability: capability.slug,
     components: capability.components || [],
     status: 'draft',
@@ -8724,9 +10344,121 @@ async function createDeliveryPackageFromCapability(input: CreateDeliveryPackageF
   await writeJson(path.join(dir, 'package.json'), {
     id,
     title: capability.title,
+    packageType: 'capability',
     status: 'draft',
     sourceCapability: capability.slug,
     components: capability.components || [],
+    technicalChanges: technicalChangeDelivery.included,
+    excludedTechnicalChanges: technicalChangeDelivery.excluded,
+    createdAt: new Date().toISOString()
+  });
+  await fsp.writeFile(path.join(dir, 'snapshot.md'), snapshot, 'utf8');
+  await fsp.writeFile(path.join(dir, 'implementation-strategy.md'), strategy, 'utf8');
+  return { id, path: dir };
+}
+
+async function createDeliveryPackageFromTechnicalChange(input: CreateDeliveryPackageFromTechnicalChangeInput) {
+  const { standardSections } = await assertProjectTechnicalStandardsReady(input.projectPath);
+  const component = await readComponent({ projectPath: input.projectPath, slug: input.componentSlug });
+  const change = await readComponentTechnicalChange({
+    projectPath: input.projectPath,
+    slug: component.slug,
+    id: input.technicalChangeId
+  });
+
+  if (change.status !== 'approved') {
+    throw new Error(`Only approved technical changes can be packaged for delivery. ${change.id} is ${change.status.replace(/-/g, ' ')}.`);
+  }
+
+  const existing = await readEntities(input.projectPath, 'delivery/packages', 'package.json');
+  const nextNumber = existing.length + 1;
+  const id = `DP-${String(nextNumber).padStart(3, '0')}-${slugify(change.title)}`;
+  const dir = path.join(input.projectPath, 'delivery', 'packages', id);
+  if (await exists(dir)) throw new Error(`Delivery package already exists: ${id}`);
+  await fsp.mkdir(dir, { recursive: true });
+
+  const technicalChangeDelivery = await copyApprovedTechnicalChangesIntoDeliveryPackage({
+    projectPath: input.projectPath,
+    packageDir: dir,
+    packageId: id,
+    approved: [change],
+    excluded: []
+  });
+  const includedChange = technicalChangeDelivery.included[0] || deliveryTechnicalChangeSummary(change);
+  const componentContract = await readComponentContractMarkdownForReview(input.projectPath, component);
+
+  const snapshot = matter.stringify([
+    `# Technical Delivery Snapshot: ${change.title}`,
+    '',
+    'This snapshot contains technical delivery context only. Product foundation and capability narrative are intentionally omitted so implementation stays focused on technical constraints.',
+    '',
+    buildProjectTechnicalStandardsSnapshot(standardSections),
+    '',
+    buildComponentTechnicalConstraintsSnapshot(component, componentContract).trim(),
+    '',
+    buildTechnicalChangeSnapshot(change).trim(),
+    ''
+  ].join('\n'), {
+    aidd: { type: 'technical-delivery-package-snapshot', templateVersion: TEMPLATE_VERSION },
+    id,
+    title: change.title,
+    packageType: 'technical',
+    sourceTechnicalChange: {
+      componentSlug: component.slug,
+      technicalChangeId: change.id,
+      title: change.title
+    },
+    components: [component.slug],
+    status: 'draft',
+    createdAt: new Date().toISOString()
+  });
+
+  const strategy = matter.stringify([
+    '# Implementation Strategy',
+    '',
+    'This package implements an approved technical change. Keep implementation inside the technical change scope and component constraints.',
+    '',
+    '## Objective',
+    '',
+    `Implement technical change ${change.id}: ${change.title}.`,
+    '',
+    '## Technical Constraints',
+    '',
+    '- Follow the included project standards.',
+    '- Stay inside the component source area unless the technical change explicitly requires otherwise.',
+    '- Treat the approved technical change files as the source of delivery intent.',
+    '- Do not expand the work into unrelated product or capability changes.',
+    '',
+    '## Proposed Approach',
+    '',
+    'TODO: Describe the implementation approach after reviewing the technical change, component contract, and source code.',
+    '',
+    '## Verification Strategy',
+    '',
+    'TODO: Define tests, commands, manual checks, and evidence required for this technical change.',
+    ''
+  ].join('\n'), {
+    aidd: { type: 'implementation-strategy', templateVersion: TEMPLATE_VERSION },
+    id: `${id}-strategy`,
+    deliveryPackage: id,
+    packageType: 'technical',
+    status: 'draft',
+    createdAt: new Date().toISOString()
+  });
+
+  await writeJson(path.join(dir, 'package.json'), {
+    id,
+    title: change.title,
+    packageType: 'technical',
+    status: 'draft',
+    sourceTechnicalChange: {
+      componentSlug: component.slug,
+      technicalChangeId: change.id,
+      title: change.title
+    },
+    components: [component.slug],
+    technicalChanges: [{ ...includedChange, status: 'approved' }],
+    excludedTechnicalChanges: [],
     createdAt: new Date().toISOString()
   });
   await fsp.writeFile(path.join(dir, 'snapshot.md'), snapshot, 'utf8');
@@ -8753,6 +10485,157 @@ function normaliseStatusForDelivery(status?: string) {
   if (value === 'review' || value === 'in-review' || value === 'needs-review' || value === 'needs-verification') return 'packaging';
   if (value === 'approved' || value === 'in-progress' || value === 'done') return value;
   return 'packaging';
+}
+
+function deliveryTechnicalChangeSummary(change: ComponentTechnicalChangeRecord, relativePath?: string): DeliveryPackageTechnicalChangeSummary {
+  return {
+    id: change.id,
+    title: change.title,
+    componentSlug: change.componentSlug,
+    status: change.status,
+    risk: change.risk,
+    patchCount: change.patchCount,
+    ...(relativePath ? { relativePath } : change.relativePath ? { relativePath: change.relativePath } : {})
+  };
+}
+
+function normaliseDeliveryPackageTechnicalChanges(input: any): DeliveryPackageTechnicalChangeSummary[] {
+  if (!Array.isArray(input)) return [];
+  return input.map((item: any) => ({
+    id: String(item?.id || ''),
+    title: String(item?.title || item?.id || 'Technical change'),
+    componentSlug: String(item?.componentSlug || ''),
+    status: String(item?.status || ''),
+    risk: String(item?.risk || 'unknown'),
+    patchCount: Number.isFinite(Number(item?.patchCount)) ? Number(item.patchCount) : 0,
+    ...(item?.relativePath ? { relativePath: normaliseRelativePath(String(item.relativePath)) } : {})
+  })).filter((item) => item.id);
+}
+
+async function collectComponentTechnicalChangesForDelivery(projectPath: string, componentSlugs: string[]) {
+  const approved: ComponentTechnicalChangeRecord[] = [];
+  const excluded: ComponentTechnicalChangeRecord[] = [];
+  const seen = new Set<string>();
+
+  for (const componentSlug of componentSlugs.map((item) => slugify(item)).filter(Boolean)) {
+    if (seen.has(componentSlug)) continue;
+    seen.add(componentSlug);
+    const changes = await readComponentTechnicalChanges(projectPath, componentSlug);
+    for (const change of changes) {
+      if (change.status === 'approved') approved.push(change);
+      else excluded.push(change);
+    }
+  }
+
+  return { approved, excluded };
+}
+
+async function markTechnicalChangePackaged(projectPath: string, change: ComponentTechnicalChangeRecord, packageId: string) {
+  const changeDir = path.join(projectPath, change.relativePath);
+  const metadataPath = path.join(changeDir, 'technical-change.json');
+  if (!(await exists(metadataPath))) return;
+  const raw = await readJson<any>(metadataPath);
+  const current = normaliseTechnicalChangeRecord(raw, projectPath, change.componentSlug, changeDir);
+  const deliveryPackageIds = Array.from(new Set([...(current.deliveryPackageIds || []), packageId]));
+  await writeTechnicalChangeMetadata(changeDir, {
+    ...current,
+    status: 'packaged',
+    patchCount: await countTechnicalChangePatches(changeDir),
+    deliveryPackageIds,
+    updatedAt: new Date().toISOString()
+  });
+}
+
+async function copyApprovedTechnicalChangesIntoDeliveryPackage(input: {
+  projectPath: string;
+  packageDir: string;
+  packageId: string;
+  approved: ComponentTechnicalChangeRecord[];
+  excluded: ComponentTechnicalChangeRecord[];
+}) {
+  const targetRoot = path.join(input.packageDir, 'technical-changes');
+  const usedFolders = new Set<string>();
+  const included: DeliveryPackageTechnicalChangeSummary[] = [];
+
+  for (const change of input.approved) {
+    const sourceDir = path.join(input.projectPath, change.relativePath);
+    if (!(await exists(sourceDir))) continue;
+    let folderName = isSafeComponentTechnicalReviewSegment(change.id) ? change.id : slugify(change.id) || 'technical-change';
+    if (usedFolders.has(folderName.toLowerCase()) || (await exists(path.join(targetRoot, folderName)))) {
+      folderName = slugify(`${change.componentSlug}-${change.id}`) || folderName;
+    }
+    usedFolders.add(folderName.toLowerCase());
+    const targetDir = path.join(targetRoot, folderName);
+    await copyDir(sourceDir, targetDir);
+    const relativePath = normaliseRelativePath(path.relative(input.packageDir, targetDir));
+    included.push({
+      ...deliveryTechnicalChangeSummary(change, relativePath),
+      status: 'approved'
+    });
+    await markTechnicalChangePackaged(input.projectPath, change, input.packageId);
+  }
+
+  const excluded = input.excluded.map((change) => deliveryTechnicalChangeSummary(change));
+  if (included.length) {
+    await fsp.mkdir(targetRoot, { recursive: true });
+    await fsp.writeFile(path.join(targetRoot, 'index.md'), buildDeliveryTechnicalChangesIndexMarkdown(included, []), 'utf8');
+  }
+
+  return { included, excluded };
+}
+
+function buildDeliveryTechnicalChangesIndexMarkdown(included: DeliveryPackageTechnicalChangeSummary[], excluded: DeliveryPackageTechnicalChangeSummary[]) {
+  const lines = [
+    '# Technical Changes',
+    '',
+    'This delivery package includes approved technical changes only.',
+    '',
+    '## Included',
+    '',
+    included.length
+      ? included.map((change) => `- ${change.id} ${change.title} (${change.componentSlug}, ${change.risk} risk, ${change.patchCount} patch${change.patchCount === 1 ? '' : 'es'})`).join('\n')
+      : '- None',
+    '',
+    '## Excluded',
+    '',
+    excluded.length
+      ? excluded.map((change) => `- ${change.id} ${change.title} (${change.componentSlug}) - ${change.status}`).join('\n')
+      : '- None',
+    ''
+  ];
+  return `${lines.join('\n').trim()}\n`;
+}
+
+async function buildDeliveryPackageTechnicalChangeSection(packageDir: string, changes: DeliveryPackageTechnicalChangeSummary[]) {
+  if (!changes.length) return '';
+  const lines = ['## Approved Technical Changes', ''];
+  for (const change of changes) {
+    lines.push(`### ${change.id} ${change.title}`, '');
+    lines.push(`- Component: \`${change.componentSlug}\``);
+    lines.push(`- Risk: \`${change.risk}\``);
+    lines.push(`- Patches: \`${change.patchCount}\``);
+    if (change.relativePath) lines.push(`- Source: \`${change.relativePath}\``);
+    const overviewPath = change.relativePath ? path.join(packageDir, change.relativePath, 'overview.md') : '';
+    if (overviewPath && await exists(overviewPath)) {
+      const overview = matter(await fsp.readFile(overviewPath, 'utf8')).content.trim();
+      if (overview) lines.push('', overview);
+    }
+    lines.push('');
+  }
+  return `${lines.join('\n').trim()}\n`;
+}
+
+async function buildDeliveryTechnicalChangesContextMarkdown(packageDir: string, changes: DeliveryPackageTechnicalChangeSummary[]) {
+  const body = await buildDeliveryPackageTechnicalChangeSection(packageDir, changes);
+  return [
+    generatedDocHeader('AIDD technical changes'),
+    '# AIDD Technical Changes',
+    '',
+    'This file contains approved technical-change context for this delivery package. Treat it as delivery intent, not broad product context.',
+    '',
+    body || '_No approved technical changes were included._',
+    ''
+  ].join('\n');
 }
 
 async function countPackagePhases(dir: string) {
@@ -8784,9 +10667,19 @@ async function readDeliveryPackageSummariesFrom(root: string, relativeDir: strin
     items.push({
       id,
       title: String(manifest.title || manifest.name || entry.name),
+      packageType: manifest.packageType === 'technical' ? 'technical' : 'capability',
       status: deliveryStatusFromManifest(manifest, packaged, phaseCount),
       sourceCapability: manifest.sourceCapability || manifest.capability || manifest.capabilitySlug,
+      sourceTechnicalChange: manifest.sourceTechnicalChange && typeof manifest.sourceTechnicalChange === 'object'
+        ? {
+            componentSlug: String(manifest.sourceTechnicalChange.componentSlug || ''),
+            technicalChangeId: String(manifest.sourceTechnicalChange.technicalChangeId || ''),
+            title: String(manifest.sourceTechnicalChange.title || '')
+          }
+        : undefined,
       components: Array.isArray(manifest.components) ? manifest.components.map(String) : [],
+      technicalChanges: normaliseDeliveryPackageTechnicalChanges(manifest.technicalChanges),
+      excludedTechnicalChanges: normaliseDeliveryPackageTechnicalChanges(manifest.excludedTechnicalChanges),
       createdAt: manifest.createdAt || manifest.updatedAt,
       packaged,
       phaseCount,
@@ -8904,9 +10797,19 @@ async function readDeliveryPackage(input: { projectPath: string; id: string }): 
   const summary = (await readDeliveryPackages(input.projectPath)).find((item) => item.id === fallbackId) || {
     id: fallbackId,
     title: String(manifest.title || manifest.name || input.id),
+    packageType: manifest.packageType === 'technical' ? 'technical' : 'capability',
     status: String(manifest.status || 'draft'),
     sourceCapability: manifest.sourceCapability || manifest.capability || manifest.capabilitySlug,
+    sourceTechnicalChange: manifest.sourceTechnicalChange && typeof manifest.sourceTechnicalChange === 'object'
+      ? {
+          componentSlug: String(manifest.sourceTechnicalChange.componentSlug || ''),
+          technicalChangeId: String(manifest.sourceTechnicalChange.technicalChangeId || ''),
+          title: String(manifest.sourceTechnicalChange.title || '')
+        }
+      : undefined,
     components: Array.isArray(manifest.components) ? manifest.components.map(String) : [],
+    technicalChanges: normaliseDeliveryPackageTechnicalChanges(manifest.technicalChanges),
+    excludedTechnicalChanges: normaliseDeliveryPackageTechnicalChanges(manifest.excludedTechnicalChanges),
     createdAt: manifest.createdAt || manifest.updatedAt,
     packaged: false,
     phaseCount: 0,
@@ -9034,6 +10937,8 @@ async function createDeliveryPackagePhase(input: CreateDeliveryPackagePhaseInput
 
 async function assembleDeliveryPackage(input: { projectPath: string; packageId: string }): Promise<DeliveryPackageDetail> {
   const detail = await readDeliveryPackage({ projectPath: input.projectPath, id: input.packageId });
+  const target = await findDeliveryPackageTarget(input.projectPath, input.packageId);
+  const technicalChangesBody = await buildDeliveryPackageTechnicalChangeSection(target.dir, detail.technicalChanges || []);
   const body = [
     `# ${detail.id} ${detail.title}`,
     '',
@@ -9050,16 +10955,17 @@ async function assembleDeliveryPackage(input: { projectPath: string; packageId: 
     detail.phases.length
       ? detail.phases.map((phase, index) => [`### Phase ${index + 1}: ${phase.title}`, '', phase.body || '_No phase content._'].join('\n')).join('\n\n')
       : '_No implementation phases have been created._',
+    '',
+    technicalChangesBody || '## Approved Technical Changes\n\n_No approved technical changes were included._',
     ''
   ].join('\n');
 
-  const target = await findDeliveryPackageTarget(input.projectPath, input.packageId);
   await writeMarkdownBody(path.join(target.dir, 'delivery-package.md'), body, {
     aidd: { type: 'assembled-delivery-package', templateVersion: TEMPLATE_VERSION },
     id: `${input.packageId}-assembled`,
     deliveryPackage: input.packageId,
     status: detail.status,
-    includes: ['implementation-strategy', 'implementation-phases'],
+    includes: ['implementation-strategy', 'implementation-phases', 'approved-technical-changes'],
     excludes: ['project-snapshot'],
     updatedAt: new Date().toISOString()
   });
@@ -9443,6 +11349,25 @@ async function collectDeliveryPackageEntries(projectPath: string, detail: Delive
     return addBuffer(relativePath, raw);
   }
 
+  async function addTechnicalChangeTree(relativeRoot: string, absoluteRoot: string) {
+    if (!(await exists(absoluteRoot))) return;
+    const entries = await fsp.readdir(absoluteRoot, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+    for (const entry of entries) {
+      const relativePath = normaliseRelativePath(path.join(relativeRoot, entry.name));
+      const absolutePath = path.join(absoluteRoot, entry.name);
+      if (entry.isDirectory()) {
+        await addTechnicalChangeTree(relativePath, absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const extension = path.extname(entry.name).toLowerCase();
+      if (!['.md', '.json', '.patch', '.diff'].includes(extension)) continue;
+      await addFile(relativePath, absolutePath);
+    }
+  }
+
   await addFile(target.manifestName, path.join(target.dir, target.manifestName));
 
   const strategyPath = path.join(target.dir, 'implementation-strategy.md');
@@ -9484,11 +11409,14 @@ async function collectDeliveryPackageEntries(projectPath: string, detail: Delive
   for (const relativeFile of markdownFiles) {
     if (relativeFile === 'implementation-strategy.md') continue;
     if (isDeliveryPhaseOrStageMarkdownFile(relativeFile)) continue;
+    if (normaliseRelativePath(relativeFile).startsWith('technical-changes/')) continue;
     const absolutePath = path.join(target.dir, relativeFile);
     const raw = await fsp.readFile(absolutePath, 'utf8');
     if (!shouldIncludeInReviewBundle(raw)) continue;
     await addBuffer(relativeFile, raw);
   }
+
+  await addTechnicalChangeTree('technical-changes', path.join(target.dir, 'technical-changes'));
 
   return {
     entries,
@@ -9515,7 +11443,7 @@ async function collectDeliveryReviewComponents(projectPath: string, detail: Deli
       warnings.push(`The source capability could not be included: ${capabilitySlug} (${error instanceof Error ? error.message : String(error)})`);
       capability = null;
     }
-  } else {
+  } else if (detail.packageType !== 'technical') {
     warnings.push('This delivery package does not reference a source capability.');
   }
 
@@ -9667,18 +11595,22 @@ function buildDeliveryReviewPackageReadme(input: {
   projectName: string;
   packageId: string;
   title: string;
+  packageType?: DeliveryPackageType;
   strategyFileCount: number;
   phaseFileCount: number;
   sourceRootCount: number;
   sourceFileCount: number;
   warnings: string[];
 }) {
+  const isTechnical = input.packageType === 'technical';
   const lines = [
     '# AIDD Delivery Package Review',
     '',
     'This zip was generated by AIDD for delivery package review.',
     '',
-    'The bundle is a self-contained snapshot. Review it and create an implementation plan for the delivery capability against the included source code. Use the Foundation and Standards snapshots to steer the implementation plan, and use the Components snapshot to understand where the relevant source code lives.',
+    isTechnical
+      ? 'The bundle is a self-contained technical snapshot. Review it and create an implementation plan for the approved technical change against the included source code. Use the Standards, Components, and Technical Changes snapshots to steer the implementation plan.'
+      : 'The bundle is a self-contained snapshot. Review it and create an implementation plan for the delivery capability against the included source code. Use the Foundation and Standards snapshots to steer the implementation plan, and use the Components snapshot to understand where the relevant source code lives.',
     '',
     '## Bundle layout',
     '',
@@ -9689,15 +11621,27 @@ function buildDeliveryReviewPackageReadme(input: {
     '',
     'Package context snapshots:',
     '',
-    '- `package/foundation.md`',
-    '- `package/standards.md`',
-    '- `package/components.md`',
+    ...(isTechnical
+      ? [
+          '- `package/standards.md`',
+          '- `package/components.md`',
+          '- `package/technical-changes.md`'
+        ]
+      : [
+          '- `package/foundation.md`',
+          '- `package/standards.md`',
+          '- `package/components.md`'
+        ]),
     '',
     'Editable delivery package files:',
     '',
     '- `delivery/implementation-strategy.md`',
     '- `delivery/phase-*.md`',
     '- `delivery/stage-*.md` when existing stages are present',
+    '',
+    'Approved technical changes, when present:',
+    '',
+    '- `delivery/technical-changes/`',
     '',
     'The phase template is included at:',
     '',
@@ -9709,15 +11653,26 @@ function buildDeliveryReviewPackageReadme(input: {
     '',
     '## Your task',
     '',
-    'Review the delivery package and create a practical implementation plan for the capability using the included source code.',
+    isTechnical
+      ? 'Review the delivery package and create a practical implementation plan for the approved technical change using the included source code.'
+      : 'Review the delivery package and create a practical implementation plan for the capability using the included source code.',
     '',
     'Use:',
     '',
-    '- `package/foundation.md` to understand product intent and project context',
-    '- `package/standards.md` to steer implementation, testing, security, and delivery expectations',
-    '- `package/components.md` to understand the component map and source-code locations',
+    ...(isTechnical
+      ? [
+          '- `package/standards.md` to steer implementation, testing, security, and delivery expectations',
+          '- `package/components.md` to understand the component constraints and source-code locations',
+          '- `package/technical-changes.md` to understand the approved technical change being delivered'
+        ]
+      : [
+          '- `package/foundation.md` to understand product intent and project context',
+          '- `package/standards.md` to steer implementation, testing, security, and delivery expectations',
+          '- `package/components.md` to understand the component map and source-code locations'
+        ]),
     '- `delivery/implementation-strategy.md` as the main plan',
     '- `delivery/phase-*.md` or `delivery/stage-*.md` as the implementation phases',
+    '- `delivery/technical-changes/` as approved change context',
     '- `src/` as read-only source-code context',
     '',
     'Do not modify the source-code snapshot in this review bundle. Use it to make the implementation plan specific and grounded.',
@@ -9956,19 +11911,35 @@ async function createDeliveryPackageReviewBundle(input: DeliveryReviewPackageInp
   const warnings: string[] = [];
 
   const delivery = await collectDeliveryPackageEntries(root, detail, warnings);
+  if (detail.excludedTechnicalChanges?.length) {
+    warnings.push(`${detail.excludedTechnicalChanges.length} technical change(s) are not approved and were excluded from delivery packaging.`);
+  }
   const related = await collectDeliveryReviewComponents(root, detail, warnings);
   const source = await collectDeliveryReviewSourceEntries(root, related.components);
   warnings.push(...source.warnings);
 
-  const foundation = await readFoundationDocuments(root);
   const standards = await readStandardSections(root);
-  const components = (await readEntities(root, 'components', 'component.json')).concat(await readEntities(root, 'modules', 'module.json'));
   const sourceProjects = await readSourceProjects(root);
-  const contextEntries: ZipEntryInput[] = [
-    { name: 'package/foundation.md', data: Buffer.from(buildPublishedFoundationMarkdown(projectName, foundation), 'utf8') },
+  const packageType = detail.packageType === 'technical' ? 'technical' : 'capability';
+  const componentContext = related.components.length
+    ? related.components
+    : (await readEntities(root, 'components', 'component.json')).concat(await readEntities(root, 'modules', 'module.json'));
+  const contextEntries: ZipEntryInput[] = [];
+  if (packageType === 'capability') {
+    const foundation = await readFoundationDocuments(root);
+    contextEntries.push({ name: 'package/foundation.md', data: Buffer.from(buildPublishedFoundationMarkdown(projectName, foundation), 'utf8') });
+  }
+  contextEntries.push(
     { name: 'package/standards.md', data: Buffer.from(buildPublishedStandardsMarkdown(projectName, standards), 'utf8') },
-    { name: 'package/components.md', data: Buffer.from(buildPublishedComponentsMarkdown(projectName, components, sourceProjects), 'utf8') }
-  ];
+    { name: 'package/components.md', data: Buffer.from(buildPublishedComponentsMarkdown(projectName, componentContext, sourceProjects), 'utf8') }
+  );
+  if (packageType === 'technical') {
+    const target = await findDeliveryPackageTarget(root, detail.id);
+    contextEntries.push({
+      name: 'package/technical-changes.md',
+      data: Buffer.from(await buildDeliveryTechnicalChangesContextMarkdown(target.dir, detail.technicalChanges || []), 'utf8')
+    });
+  }
 
   const templateEntries: ZipEntryInput[] = [
     {
@@ -9989,6 +11960,7 @@ async function createDeliveryPackageReviewBundle(input: DeliveryReviewPackageInp
       phaseFileCount: delivery.phaseFileCount,
       sourceRootCount: source.roots.length,
       sourceFileCount: source.includedFiles.length,
+      packageType,
       warnings
     }), 'utf8') },
     ...contextEntries,
@@ -10007,7 +11979,9 @@ async function createDeliveryPackageReviewBundle(input: DeliveryReviewPackageInp
     snapshotIsSelfContained: true,
     packageId: detail.id,
     packageTitle: detail.title,
+    packageType,
     sourceCapability: related.capabilitySlug,
+    sourceTechnicalChange: detail.sourceTechnicalChange || null,
     components: related.components.map((component) => ({
       slug: component.slug,
       title: component.title,
@@ -10019,6 +11993,8 @@ async function createDeliveryPackageReviewBundle(input: DeliveryReviewPackageInp
       phaseFileCount: delivery.phaseFileCount,
       strategyPath: 'delivery/implementation-strategy.md',
       phasePatterns: ['delivery/phase-##-short-kebab-name.md'],
+      technicalChanges: detail.technicalChanges || [],
+      excludedTechnicalChanges: detail.excludedTechnicalChanges || [],
       acceptedReturnPaths: ['delivery/implementation-strategy.md', 'delivery/phase-*.md', 'delivery/stage-*.md']
     },
     includedFiles: {
@@ -10051,7 +12027,7 @@ async function createDeliveryPackageReviewBundle(input: DeliveryReviewPackageInp
       sourceCodeIsIncludedForReview: true,
       sourceCodeIsContextOnly: true,
       doNotReturnBundledSourceCodeAsEditedFiles: true,
-      doNotReturnSnapshotContext: ['package/foundation.md', 'package/standards.md', 'package/components.md']
+      doNotReturnSnapshotContext: contextFiles
     }
   };
 
@@ -10098,6 +12074,7 @@ async function publishDeliveryPackageToWorkspace(input: DeliveryWorkspacePublish
   const skippedFiles: string[] = [];
   const createdWritableFiles: string[] = [];
   const removedFiles: string[] = [];
+  const sourceTarget = await findDeliveryPackageTarget(input.projectPath, detail.id);
 
   const deliveryFiles = [
     { relativePath: 'implementation-strategy.md', content: buildPublishedDeliveryStrategyFileMarkdown(detail) },
@@ -10110,6 +12087,13 @@ async function publishDeliveryPackageToWorkspace(input: DeliveryWorkspacePublish
   for (const file of deliveryFiles) {
     await writeDeliveryGeneratedFile(path.join(targetPath, file.relativePath), file.content, writtenFiles, skippedFiles, file.relativePath);
   }
+  const technicalChangeFiles = await writeDeliveryGeneratedTree(
+    path.join(sourceTarget.dir, 'technical-changes'),
+    targetPath,
+    'technical-changes',
+    writtenFiles,
+    skippedFiles
+  );
 
   // Older AIDD builds wrote brief/context/progress-style files into workspace delivery packages.
   // Do not remove agent-authored notes, but remove generated read-only files that no longer form part of the package contract.
@@ -10126,15 +12110,18 @@ async function publishDeliveryPackageToWorkspace(input: DeliveryWorkspacePublish
     type: 'aidd-workspace-delivery-package',
     packageId: detail.id,
     title: detail.title,
+    packageType: detail.packageType || 'capability',
     status: 'approved',
     sourceCapability: detail.sourceCapability || '',
+    sourceTechnicalChange: detail.sourceTechnicalChange || null,
     components: detail.components,
+    technicalChanges: detail.technicalChanges || [],
     aiddProjectPath: input.projectPath,
     workspacePath,
     publishedAt,
     sourceHash,
     deliveryDirectory: 'delivery',
-    generatedFiles: deliveryFiles.map((file) => file.relativePath).concat(['manifest.json']),
+    generatedFiles: deliveryFiles.map((file) => file.relativePath).concat(technicalChangeFiles, ['manifest.json']),
     editableFiles: deliveryFiles.map((file) => file.relativePath),
     strategyPath: 'implementation-strategy.md',
     phasePatterns: ['phase-*.md', 'stage-*.md'],
@@ -10144,7 +12131,6 @@ async function publishDeliveryPackageToWorkspace(input: DeliveryWorkspacePublish
   const manifestContent = JSON.stringify(workspaceManifest, null, 2) + '\n';
   await writeDeliveryGeneratedFile(path.join(targetPath, 'manifest.json'), manifestContent, writtenFiles, skippedFiles, 'manifest.json');
 
-  const sourceTarget = await findDeliveryPackageTarget(input.projectPath, detail.id);
   const sourceManifestPath = path.join(sourceTarget.dir, sourceTarget.manifestName);
   const sourceManifest = await readJson<any>(sourceManifestPath);
   await writeJson(sourceManifestPath, {
@@ -10896,6 +12882,46 @@ ipcMain.handle('project:importComponentReviewPackage', async (_event, input: Imp
   return withProjectSaveSync(input.projectPath, () => importComponentReviewPackage(input));
 });
 
+ipcMain.handle('project:packageComponentTechnicalReview', async (_event, input: ComponentTechnicalReviewPackageInput) => {
+  if (!input?.projectPath || !input?.slug) throw new Error('Project path and component slug are required.');
+  return createComponentTechnicalReviewBundle(input);
+});
+
+ipcMain.handle('project:importComponentTechnicalReviewPackage', async (_event, input: ImportComponentTechnicalReviewPackageInput) => {
+  if (!input?.projectPath || !input?.slug || !input?.zipPath) throw new Error('Project path, component slug and technical review response zip path are required.');
+  return withProjectSaveSync(input.projectPath, () => importComponentTechnicalReviewPackage(input));
+});
+
+ipcMain.handle('project:createComponentTechnicalChange', async (_event, input: CreateComponentTechnicalChangeInput) => {
+  if (!input?.projectPath || !input?.slug) throw new Error('Project path and component slug are required.');
+  return withProjectSaveSync(input.projectPath, () => createComponentTechnicalChange(input));
+});
+
+ipcMain.handle('project:readComponentTechnicalChange', async (_event, input: ReadComponentTechnicalChangeInput) => {
+  if (!input?.projectPath || !input?.slug || !input?.id) throw new Error('Project path, component slug and technical change id are required.');
+  return readComponentTechnicalChange(input);
+});
+
+ipcMain.handle('project:saveComponentTechnicalChange', async (_event, input: SaveComponentTechnicalChangeInput) => {
+  if (!input?.projectPath || !input?.slug || !input?.id) throw new Error('Project path, component slug and technical change id are required.');
+  return withProjectSaveSync(input.projectPath, () => saveComponentTechnicalChange(input));
+});
+
+ipcMain.handle('project:updateComponentTechnicalChangeStatus', async (_event, input: UpdateComponentTechnicalChangeStatusInput) => {
+  if (!input?.projectPath || !input?.slug || !input?.id || !input?.status) throw new Error('Project path, component slug, technical change id and status are required.');
+  return withProjectSaveSync(input.projectPath, () => updateComponentTechnicalChangeStatus(input));
+});
+
+ipcMain.handle('project:packageComponentTechnicalChangeReview', async (_event, input: ComponentTechnicalChangeReviewPackageInput) => {
+  if (!input?.projectPath || !input?.slug || !input?.id) throw new Error('Project path, component slug and technical change id are required.');
+  return createComponentTechnicalChangeReviewPackage(input);
+});
+
+ipcMain.handle('project:importComponentTechnicalChangeReviewPackage', async (_event, input: ImportComponentTechnicalChangeReviewPackageInput) => {
+  if (!input?.projectPath || !input?.slug || !input?.id || !input?.zipPath) throw new Error('Project path, component slug, technical change id and review response zip path are required.');
+  return withProjectSaveSync(input.projectPath, () => importComponentTechnicalChangeReviewPackage(input));
+});
+
 ipcMain.handle('project:updateComponent', async (_event, input: UpdateComponentInput) => {
   if (!input.projectPath || !input.slug || !input.title?.trim()) throw new Error('Project path, component slug, and title are required.');
   return withProjectSaveSync(input.projectPath, () => updateComponent(input));
@@ -10952,6 +12978,11 @@ ipcMain.handle('project:updateCapability', async (_event, input: UpdateCapabilit
 ipcMain.handle('project:createDeliveryPackageFromCapability', async (_event, input: CreateDeliveryPackageFromCapabilityInput) => {
   if (!input.projectPath || !input.capabilitySlug) throw new Error('Project path and capability slug are required.');
   return withProjectSaveSync(input.projectPath, () => createDeliveryPackageFromCapability(input));
+});
+
+ipcMain.handle('project:createDeliveryPackageFromTechnicalChange', async (_event, input: CreateDeliveryPackageFromTechnicalChangeInput) => {
+  if (!input.projectPath || !input.componentSlug || !input.technicalChangeId) throw new Error('Project path, component slug and technical change id are required.');
+  return withProjectSaveSync(input.projectPath, () => createDeliveryPackageFromTechnicalChange(input));
 });
 
 ipcMain.handle('project:readDeliveryPackages', async (_event, projectPath: string) => readDeliveryPackages(projectPath));

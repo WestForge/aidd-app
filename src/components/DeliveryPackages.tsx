@@ -28,9 +28,17 @@ type DeliveryColumnId = 'packaging' | 'approved' | 'in-progress' | 'done';
 type DeliveryWorkItem = {
   id: string;
   title: string;
+  packageType?: 'capability' | 'technical';
   status: string;
   sourceCapability?: string;
+  sourceTechnicalChange?: {
+    componentSlug: string;
+    technicalChangeId: string;
+    title: string;
+  };
   components: string[];
+  technicalChanges?: AiddDeliveryPackageTechnicalChange[];
+  excludedTechnicalChanges?: AiddDeliveryPackageTechnicalChange[];
   createdAt?: string;
   packaged?: boolean;
   phaseCount?: number;
@@ -106,6 +114,7 @@ function fromBundle(bundle: DeliveryBundle): DeliveryWorkItem {
   return {
     id: bundle.id,
     title: bundle.title,
+    packageType: 'capability',
     status: bundle.status,
     sourceCapability: bundle.capability,
     components: [],
@@ -283,13 +292,26 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, onCrea
                               <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{item.id}</div>
                               <h3 className="mt-1 line-clamp-2 text-sm font-semibold leading-5">{item.title}</h3>
                             </div>
-                            <Badge variant="secondary" className="shrink-0 text-[10px]">
-                              {statusLabels[item.status] ?? item.status.replace(/-/g, ' ')}
-                            </Badge>
+                            <div className="flex shrink-0 flex-col items-end gap-1">
+                              <Badge variant={item.packageType === 'technical' ? 'outline' : 'secondary'} className="text-[10px]">
+                                {item.packageType === 'technical' ? 'Technical' : 'Capability'}
+                              </Badge>
+                              <Badge variant="secondary" className="text-[10px]">
+                                {statusLabels[item.status] ?? item.status.replace(/-/g, ' ')}
+                              </Badge>
+                            </div>
                           </div>
 
                           <div className="mt-3 space-y-2 text-xs text-muted-foreground">
                             {item.sourceCapability && <div>Capability: {item.sourceCapability}</div>}
+                            {item.sourceTechnicalChange && (
+                              <div>
+                                Technical change: {item.sourceTechnicalChange.technicalChangeId} ({item.sourceTechnicalChange.componentSlug})
+                              </div>
+                            )}
+                            {(item.technicalChanges?.length || 0) > 0 && (
+                              <div>{item.technicalChanges?.length} approved technical change{item.technicalChanges?.length === 1 ? '' : 's'}</div>
+                            )}
                             <div className="flex flex-wrap gap-1">
                               {(item.components || []).slice(0, 3).map((component) => <Badge key={component} variant="outline" className="text-[10px]">{component}</Badge>)}
                               {(item.components || []).length > 3 && <Badge variant="outline" className="text-[10px]">+{item.components.length - 3}</Badge>}

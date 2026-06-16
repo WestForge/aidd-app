@@ -314,7 +314,7 @@ function App() {
           />
         )}
         {screen === 'capabilities' && <Capabilities activeProject={activeProject} onDeliveryPackageCreated={openCreatedDeliveryPackage} initialCapabilitySlug={capabilityToOpen} onInitialCapabilityOpened={() => setCapabilityToOpen(null)} />}
-        {screen === 'components' && <Components activeProject={activeProject} onOpenCapability={(slug) => { setCapabilityToOpen(slug); setScreen('capabilities'); }} />}
+        {screen === 'components' && <Components activeProject={activeProject} onOpenCapability={(slug) => { setCapabilityToOpen(slug); setScreen('capabilities'); }} onDeliveryPackageCreated={openCreatedDeliveryPackage} />}
         {screen === 'delivery-packages' && <DeliveryPackages packages={packages} selectedId={selectedId} onSelectPackage={selectPackage} onCreatePackage={createPackage} activeProject={activeProject} />}
         {screen === 'bundle-editor' && <BundleEditor bundle={selectedPackage} onChange={updatePackage} onSubmitForReview={submitSelectedForReview} activeProject={activeProject} onBack={() => setScreen('delivery-packages')} />}
         {screen === 'reviews' && <Reviews bundles={packages} selectedId={selectedId} onSelectBundle={(id) => selectPackage(id, 'reviews')} bundle={selectedPackage} onChange={updatePackage} />}

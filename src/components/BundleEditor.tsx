@@ -107,12 +107,29 @@ function buildAgenticAiStartPrompt(detail: AiddDeliveryPackageDetail, activeProj
   const workspacePath = activeProject.workspacePath?.trim() || "<source workspace>";
   const packageRelativePath = `delivery/${detail.id}`;
   const packagePath = detail.workspacePackagePath || joinDisplayPath(workspacePath, packageRelativePath);
+  const isTechnical = detail.packageType === "technical";
   const phaseFiles = detail.phases.length
     ? detail.phases.map((phase) => `- ${packageRelativePath}/${phase.fileName}`).join("\n")
     : `- ${packageRelativePath}/phase-*.md`;
+  const technicalChangeFiles = detail.technicalChanges?.length
+    ? detail.technicalChanges
+        .map((change) => `- ${packageRelativePath}/${change.relativePath || `technical-changes/${change.id}`}`)
+        .join("\n")
+    : `- ${packageRelativePath}/technical-changes/`;
+  const firstRead = [
+    "- AGENTS.md",
+    ...(isTechnical ? [] : ["- docs/foundation.md"]),
+    "- docs/standards.md",
+    "- docs/components.md",
+    ...(isTechnical ? [technicalChangeFiles] : []),
+    `- ${packageRelativePath}/implementation-strategy.md`,
+    phaseFiles,
+  ].join("\n");
 
   return [
-    "Start implementing this approved AIDD delivery package.",
+    isTechnical
+      ? "Start implementing this approved AIDD technical delivery package."
+      : "Start implementing this approved AIDD delivery package.",
     "",
     `Workspace: ${workspacePath}`,
     `Delivery package: ${packagePath}`,
@@ -120,19 +137,18 @@ function buildAgenticAiStartPrompt(detail: AiddDeliveryPackageDetail, activeProj
     `Package title: ${detail.title}`,
     "",
     "Read these first:",
-    "- AGENTS.md",
-    "- docs/foundation.md",
-    "- docs/standards.md",
-    "- docs/components.md",
-    `- ${packageRelativePath}/implementation-strategy.md`,
-    phaseFiles,
+    firstRead,
     "",
-    "Use the Foundation and Standards to steer the implementation. Use the component source map to find the relevant source code. Implement against the source workspace code, not the AIDD authoring project.",
+    isTechnical
+      ? "Use the Standards, component source map, and approved technical-change files to steer the implementation. Do not expand the work into unrelated product or capability changes. Implement against the source workspace code, not the AIDD authoring project."
+      : "Use the Foundation and Standards to steer the implementation. Use the component source map to find the relevant source code. Implement against the source workspace code, not the AIDD authoring project.",
     "",
     "As you work:",
     `- Update the task checkboxes and progress notes in ${packageRelativePath}/phase-*.md or ${packageRelativePath}/stage-*.md.`,
     `- Record changed files, verification evidence, blockers, and proposed AIDD updates in ${packageRelativePath}.`,
-    "- Do not edit docs/foundation.md, docs/standards.md, or docs/components.md directly; record proposed documentation changes in the delivery package instead.",
+    isTechnical
+      ? "- Do not edit docs/standards.md, docs/components.md, or delivery technical-change files directly; record proposed documentation changes in the delivery package instead."
+      : "- Do not edit docs/foundation.md, docs/standards.md, or docs/components.md directly; record proposed documentation changes in the delivery package instead.",
     "- Do not inspect or modify the active AIDD source project unless explicitly asked.",
     "- Keep changes focused on the approved delivery package scope.",
   ].join("\n");
@@ -980,6 +996,15 @@ export function BundleEditor({
             <AlertTitle>Delivery package approved and locked</AlertTitle>
             <AlertDescription>
               The approved delivery files are read-only in AIDD. Use Republish workspace to refresh <code>workspace/delivery/{detail.id}</code>, then use Start agentic AI to copy the development prompt.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {detail && (detail.excludedTechnicalChanges?.length || 0) > 0 && (
+          <Alert className="mb-4">
+            <AlertTitle>Unapproved technical changes excluded</AlertTitle>
+            <AlertDescription>
+              This package has {detail.excludedTechnicalChanges?.length} technical change{detail.excludedTechnicalChanges?.length === 1 ? "" : "s"} that are not approved and will not be included.
             </AlertDescription>
           </Alert>
         )}

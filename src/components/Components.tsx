@@ -11,6 +11,7 @@ import {
   FolderOpen,
   GitBranch,
   Layers,
+  PackageOpen,
   Pencil,
   PlayCircle,
   Plug,
@@ -66,7 +67,7 @@ const componentSourceTypeOptions = [
   { value: "other", label: "Other" },
 ];
 
-type ComponentView = "list" | "new" | "edit";
+type ComponentView = "list" | "new" | "edit" | "technical-change";
 type ComponentSection = {
   key: string;
   fileName: string;
@@ -77,6 +78,8 @@ type ComponentSection = {
   prompt?: string;
 };
 
+type TechnicalChangeSection = AiddComponentTechnicalChangeSection;
+
 const icons = [
   Sparkles,
   Layers,
@@ -86,6 +89,32 @@ const icons = [
   Workflow,
   Zap,
   ShieldAlert,
+];
+
+const technicalChangeStatusOptions: AiddComponentTechnicalChangeStatus[] = [
+  "draft",
+  "needs-review",
+  "approved",
+  "rejected",
+  "packaged",
+  "delivered",
+];
+
+const technicalChangeRiskOptions: AiddComponentTechnicalChangeRisk[] = [
+  "unknown",
+  "low",
+  "medium",
+  "high",
+];
+
+const technicalChangeSectionIcons = [
+  FileText,
+  GitBranch,
+  ShieldAlert,
+  CheckCircle2,
+  Eye,
+  Zap,
+  Pencil,
 ];
 
 const componentTemplateSections: ComponentSection[] = [
@@ -467,12 +496,36 @@ function sourcePathModeLabel(pathMode?: string) {
   return pathMode === "absolute" ? "Absolute path" : "Workspace-relative";
 }
 
+function technicalReviewDateLabel(value?: string) {
+  if (!value) return "Unknown date";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function technicalChangeStatusLabel(status?: string) {
+  return (status || "draft").replace(/-/g, " ");
+}
+
+function joinDiskPath(base: string, relativePath: string) {
+  const separator = base.includes("\\") ? "\\" : "/";
+  return `${base.replace(/[\\/]+$/, "")}${separator}${relativePath.replace(/[\\/]+/g, separator).replace(/^[\\/]+/, "")}`;
+}
+
 export function Components({
   activeProject,
   onOpenCapability,
+  onDeliveryPackageCreated,
 }: {
   activeProject?: AiddTrackedProject | null;
   onOpenCapability?: (slug: string) => void;
+  onDeliveryPackageCreated?: (id: string) => void;
 }) {
   const [setup, setSetup] = useState<AiddProjectSetupState | null>(null);
   const [view, setView] = useState<ComponentView>("list");
@@ -498,6 +551,15 @@ export function Components({
   const [contractDragFilePath, setContractDragFilePath] = useState<string | null>(null);
   const [reviewPackage, setReviewPackage] = useState<AiddComponentReviewPackageResult | null>(null);
   const [reviewPackageDragFilePath, setReviewPackageDragFilePath] = useState<string | null>(null);
+  const [technicalReviewPackage, setTechnicalReviewPackage] = useState<AiddComponentTechnicalReviewPackageResult | null>(null);
+  const [technicalReviewPackageDragFilePath, setTechnicalReviewPackageDragFilePath] = useState<string | null>(null);
+  const [technicalReviews, setTechnicalReviews] = useState<AiddComponentTechnicalReviewRecord[]>([]);
+  const [technicalChanges, setTechnicalChanges] = useState<AiddComponentTechnicalChangeRecord[]>([]);
+  const [editingTechnicalChange, setEditingTechnicalChange] = useState<AiddComponentTechnicalChangeDetail | null>(null);
+  const [technicalChangeSections, setTechnicalChangeSections] = useState<TechnicalChangeSection[]>([]);
+  const [activeTechnicalChangeSectionKey, setActiveTechnicalChangeSectionKey] = useState("overview");
+  const [technicalChangeReviewPackage, setTechnicalChangeReviewPackage] = useState<AiddComponentTechnicalChangeReviewPackageResult | null>(null);
+  const [technicalChangeReviewPackageDragFilePath, setTechnicalChangeReviewPackageDragFilePath] = useState<string | null>(null);
   const [dragError, setDragError] = useState<string | null>(null);
 
   const load = async () => {
@@ -534,6 +596,8 @@ export function Components({
 
   const activeSection =
     sections.find((section) => section.key === activeSectionKey) ?? sections[0];
+  const activeTechnicalChangeSection =
+    technicalChangeSections.find((section) => section.key === activeTechnicalChangeSectionKey) ?? technicalChangeSections[0];
   const canGenerateContract = view === "edit" && Boolean(editingSlug);
   const contractReady = view === "edit" && contract?.status === "current";
   const sourceConfig: AiddComponentSourceConfig = {
@@ -567,6 +631,15 @@ export function Components({
     setContract(null);
     setReviewPackage(null);
     setReviewPackageDragFilePath(null);
+    setTechnicalReviewPackage(null);
+    setTechnicalReviewPackageDragFilePath(null);
+    setTechnicalReviews([]);
+    setTechnicalChanges([]);
+    setEditingTechnicalChange(null);
+    setTechnicalChangeSections([]);
+    setActiveTechnicalChangeSectionKey("overview");
+    setTechnicalChangeReviewPackage(null);
+    setTechnicalChangeReviewPackageDragFilePath(null);
     setDragError(null);
     setSectionDragFiles({});
     setContractDragFilePath(null);
@@ -604,6 +677,15 @@ export function Components({
       setContractDragFilePath(null);
       setReviewPackage(null);
       setReviewPackageDragFilePath(null);
+      setTechnicalReviewPackage(null);
+      setTechnicalReviewPackageDragFilePath(null);
+      setTechnicalReviews(component.technicalReviews || []);
+      setTechnicalChanges(component.technicalChanges || []);
+      setEditingTechnicalChange(null);
+      setTechnicalChangeSections([]);
+      setActiveTechnicalChangeSectionKey("overview");
+      setTechnicalChangeReviewPackage(null);
+      setTechnicalChangeReviewPackageDragFilePath(null);
       setSections(component.sections?.length ? component.sections : newSections());
       setActiveSectionKey(component.sections?.[0]?.key || "purpose");
       setView("edit");
@@ -883,6 +965,359 @@ export function Components({
     }
   };
 
+  const createComponentTechnicalReviewPackage = async () => {
+    if (!activeProject?.path || !editingSlug) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await window.aidd.updateComponent({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+        title,
+        status,
+        sourceProjects: selectedSourceProjects,
+        source: sourceConfig,
+        sections,
+      });
+      const bundle = await window.aidd.packageComponentTechnicalReview({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+        sourceScope: "component-source",
+      });
+      setTechnicalReviewPackage(bundle);
+      setTechnicalReviewPackageDragFilePath(bundle.filePath);
+      void window.aidd.notify({
+        title: "Technical review package ready",
+        body: `${bundle.sourceFileCount} source file(s) packaged as read-only context. Drag the technical review zip tile out when ready.`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startComponentTechnicalReviewPackageDrag = (event: DragEvent<HTMLButtonElement>) => {
+    if (!technicalReviewPackageDragFilePath) {
+      event.preventDefault();
+      setDragError("Click the technical review tile before dragging it.");
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("text/plain", technicalReviewPackageDragFilePath);
+    event.preventDefault();
+    window.aidd.startNativeFileDrag(technicalReviewPackageDragFilePath);
+  };
+
+  const importComponentTechnicalReviewPackage = async (event: DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!activeProject?.path || !editingSlug) return;
+
+    const zipPath = droppedZipPathFromEvent(event);
+    if (!zipPath) {
+      setDragError("Drop a returned component technical review .zip onto this tile.");
+      return;
+    }
+    if (!zipPath.toLowerCase().endsWith(".zip")) {
+      setDragError("Technical review response rejected: drop a .zip file.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setDragError(null);
+    try {
+      const result = await window.aidd.importComponentTechnicalReviewPackage({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+        zipPath,
+      });
+      setTechnicalReviewPackage(null);
+      setTechnicalReviewPackageDragFilePath(null);
+      await load();
+      await openEdit(result.componentSlug || editingSlug);
+      void window.aidd.notify({
+        title: "Technical review imported",
+        body: `${result.findingCount} finding(s), ${result.technicalChangeCount} managed technical change(s), ${result.patchCount} patch artefact(s).`,
+      });
+    } catch (err) {
+      setDragError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const createTechnicalChange = async () => {
+    if (!activeProject?.path || !editingSlug) return;
+
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await window.aidd.createComponentTechnicalChange({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+        title: "New technical change",
+        status: "draft",
+      });
+      setTechnicalChanges((current) => [...current, created].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })));
+      await openTechnicalChangeEditor(created.id);
+      void window.aidd.notify({
+        title: "Technical change created",
+        body: created.id,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openTechnicalChangeEditor = async (id: string) => {
+    if (!activeProject?.path || !editingSlug) return;
+    setSaving(true);
+    setError(null);
+    setDragError(null);
+    try {
+      const detail = await window.aidd.readComponentTechnicalChange({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+        id,
+      });
+      setEditingTechnicalChange(detail);
+      setTechnicalChangeSections(detail.sections || []);
+      setActiveTechnicalChangeSectionKey(detail.sections?.[0]?.key || "overview");
+      setTechnicalChangeReviewPackage(null);
+      setTechnicalChangeReviewPackageDragFilePath(null);
+      setView("technical-change");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const backToComponentEditor = async () => {
+    const slug = editingSlug;
+    setEditingTechnicalChange(null);
+    setTechnicalChangeSections([]);
+    setActiveTechnicalChangeSectionKey("overview");
+    setTechnicalChangeReviewPackage(null);
+    setTechnicalChangeReviewPackageDragFilePath(null);
+    if (slug) await openEdit(slug);
+    else setView("edit");
+  };
+
+  const updateActiveTechnicalChangeSectionBody = (body: string) => {
+    setTechnicalChangeSections((current) =>
+      current.map((section) =>
+        section.key === activeTechnicalChangeSectionKey ? { ...section, body } : section,
+      ),
+    );
+  };
+
+  const updateEditingTechnicalChange = (patch: Partial<AiddComponentTechnicalChangeDetail>) => {
+    setEditingTechnicalChange((current) => current ? { ...current, ...patch } : current);
+  };
+
+  const persistTechnicalChange = async () => {
+    if (!activeProject?.path || !editingSlug || !editingTechnicalChange) return null;
+    const next = await window.aidd.saveComponentTechnicalChange({
+      projectPath: activeProject.path,
+      slug: editingSlug,
+      id: editingTechnicalChange.id,
+      title: editingTechnicalChange.title,
+      status: editingTechnicalChange.status,
+      risk: editingTechnicalChange.risk,
+      sections: technicalChangeSections,
+    });
+    setEditingTechnicalChange(next);
+    setTechnicalChangeSections(next.sections || []);
+    const component = await window.aidd.readComponent({
+      projectPath: activeProject.path,
+      slug: editingSlug,
+    });
+    setTechnicalChanges(component.technicalChanges || []);
+    return next;
+  };
+
+  const saveTechnicalChange = async () => {
+    if (!activeProject?.path || !editingSlug || !editingTechnicalChange) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await persistTechnicalChange();
+      void window.aidd.notify({
+        title: "Technical change saved",
+        body: next?.id || editingTechnicalChange.id,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateTechnicalChangeStatus = async (change: AiddComponentTechnicalChangeRecord, nextStatus: AiddComponentTechnicalChangeStatus) => {
+    if (!activeProject?.path || !editingSlug) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await window.aidd.updateComponentTechnicalChangeStatus({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+        id: change.id,
+        status: nextStatus,
+      });
+      setTechnicalChanges(next);
+      void window.aidd.notify({
+        title: "Technical change updated",
+        body: `${change.id} is now ${technicalChangeStatusLabel(nextStatus)}.`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openTechnicalChange = async (change: AiddComponentTechnicalChangeRecord) => {
+    await openTechnicalChangeEditor(change.id);
+  };
+
+  const revealTechnicalChange = async (change: AiddComponentTechnicalChangeRecord) => {
+    if (!activeProject?.path) return;
+    await window.aidd.showItemInFolder(joinDiskPath(activeProject.path, change.relativePath));
+  };
+
+  const createTechnicalChangeReviewPackage = async () => {
+    if (!activeProject?.path || !editingSlug || !editingTechnicalChange) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await persistTechnicalChange();
+      const bundle = await window.aidd.packageComponentTechnicalChangeReview({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+        id: editingTechnicalChange.id,
+      });
+      setTechnicalChangeReviewPackage(bundle);
+      setTechnicalChangeReviewPackageDragFilePath(bundle.filePath);
+      void window.aidd.notify({
+        title: "Technical change review package ready",
+        body: `${bundle.sectionFileCount} section file(s), ${bundle.sourceFileCount} source file(s). Drag the review zip tile out when ready.`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const createDeliveryPackageFromTechnicalChange = async (
+    changeOverride?: AiddComponentTechnicalChangeRecord | AiddComponentTechnicalChangeDetail,
+  ) => {
+    if (!activeProject?.path || !editingSlug) return;
+    const targetChange = changeOverride ?? editingTechnicalChange;
+    if (!targetChange) return;
+    setSaving(true);
+    setError(null);
+    try {
+      let changeId = targetChange.id;
+      if (editingTechnicalChange && targetChange.id === editingTechnicalChange.id) {
+        const saved = await persistTechnicalChange();
+        changeId = saved?.id || targetChange.id;
+      }
+      const result = await window.aidd.createDeliveryPackageFromTechnicalChange({
+        projectPath: activeProject.path,
+        componentSlug: editingSlug,
+        technicalChangeId: changeId,
+      });
+      const component = await window.aidd.readComponent({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+      });
+      setTechnicalChanges(component.technicalChanges || []);
+      if (editingTechnicalChange && targetChange.id === editingTechnicalChange.id) {
+        const refreshed = await window.aidd.readComponentTechnicalChange({
+          projectPath: activeProject.path,
+          slug: editingSlug,
+          id: changeId,
+        });
+        setEditingTechnicalChange(refreshed);
+        setTechnicalChangeSections(refreshed.sections || []);
+      }
+      void window.aidd.notify({
+        title: "Technical delivery package created",
+        body: result.id,
+      });
+      onDeliveryPackageCreated?.(result.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startTechnicalChangeReviewPackageDrag = (event: DragEvent<HTMLButtonElement>) => {
+    if (!technicalChangeReviewPackageDragFilePath) {
+      event.preventDefault();
+      setDragError("Click the technical change review tile before dragging it.");
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("text/plain", technicalChangeReviewPackageDragFilePath);
+    event.preventDefault();
+    window.aidd.startNativeFileDrag(technicalChangeReviewPackageDragFilePath);
+  };
+
+  const openLatestTechnicalChangeDeliveryPackage = (change: AiddComponentTechnicalChangeRecord | AiddComponentTechnicalChangeDetail) => {
+    const latestPackageId = change.deliveryPackageIds[change.deliveryPackageIds.length - 1];
+    if (!latestPackageId) return;
+    onDeliveryPackageCreated?.(latestPackageId);
+  };
+
+  const importTechnicalChangeReviewPackage = async (event: DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!activeProject?.path || !editingSlug || !editingTechnicalChange) return;
+
+    const zipPath = droppedZipPathFromEvent(event);
+    if (!zipPath) {
+      setDragError("Drop a returned technical change review .zip onto this tile.");
+      return;
+    }
+    if (!zipPath.toLowerCase().endsWith(".zip")) {
+      setDragError("Technical change review response rejected: drop a .zip file.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setDragError(null);
+    try {
+      const result = await window.aidd.importComponentTechnicalChangeReviewPackage({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+        id: editingTechnicalChange.id,
+        zipPath,
+      });
+      setTechnicalChangeReviewPackage(null);
+      setTechnicalChangeReviewPackageDragFilePath(null);
+      await openTechnicalChangeEditor(result.technicalChangeId);
+      void window.aidd.notify({
+        title: "Technical change review imported",
+        body: `${result.importedFiles.length} file(s) imported. ${result.patchCount} patch file(s) now attached.`,
+      });
+    } catch (err) {
+      setDragError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const prepareComponentContractDragFile = async () => {
     if (!activeProject?.path || !editingSlug || contract?.status !== "current") {
       setContractDragFilePath(null);
@@ -1130,6 +1565,225 @@ export function Components({
                 </CardContent>
               </Card>
             )}
+          </div>
+        </main>
+      </div>
+    );
+
+  if (view === "technical-change" && editingTechnicalChange)
+    return (
+      <div className="flex h-full flex-col overflow-hidden">
+        <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b px-6">
+          <div className="flex min-w-0 items-center gap-2">
+            <Button variant="ghost" size="icon" onClick={() => void backToComponentEditor()} title="Back to component">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <Badge variant="outline">{editingTechnicalChange.id}</Badge>
+                <Badge variant={editingTechnicalChange.status === "approved" ? "secondary" : "outline"} className="capitalize">
+                  {technicalChangeStatusLabel(editingTechnicalChange.status)}
+                </Badge>
+              </div>
+              <Input
+                className="mt-1 max-w-xl text-base font-semibold"
+                value={editingTechnicalChange.title}
+                onChange={(event) => updateEditingTechnicalChange({ title: event.target.value })}
+                placeholder="Technical change title"
+              />
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Select
+              className="w-36"
+              value={editingTechnicalChange.risk}
+              onChange={(event) => updateEditingTechnicalChange({ risk: event.target.value as AiddComponentTechnicalChangeRisk })}
+            >
+              {technicalChangeRiskOptions.map((risk) => (
+                <option key={risk} value={risk}>
+                  {risk === "unknown" ? "Unknown risk" : `${risk.charAt(0).toUpperCase()}${risk.slice(1)} risk`}
+                </option>
+              ))}
+            </Select>
+            <Select
+              className="w-40"
+              value={editingTechnicalChange.status}
+              onChange={(event) => updateEditingTechnicalChange({ status: event.target.value as AiddComponentTechnicalChangeStatus })}
+            >
+              {technicalChangeStatusOptions.map((item) => (
+                <option key={item} value={item}>
+                  {technicalChangeStatusLabel(item)}
+                </option>
+              ))}
+            </Select>
+            <Button
+              variant="outline"
+              onClick={() => void revealTechnicalChange(editingTechnicalChange)}
+              title="Open the technical change folder"
+            >
+              <FolderOpen className="h-4 w-4" />
+              Folder
+            </Button>
+            {editingTechnicalChange.deliveryPackageIds.length > 0 && onDeliveryPackageCreated && (
+              <Button
+                variant="outline"
+                onClick={() => openLatestTechnicalChangeDeliveryPackage(editingTechnicalChange)}
+                title="Open the latest delivery package created from this technical change."
+              >
+                <PackageOpen className="h-4 w-4" />
+                Open package
+              </Button>
+            )}
+            <Button
+              variant={editingTechnicalChange.status === "approved" ? "default" : "outline"}
+              onClick={() => void createDeliveryPackageFromTechnicalChange(editingTechnicalChange)}
+              disabled={saving || editingTechnicalChange.status !== "approved"}
+              title={editingTechnicalChange.status === "approved" ? "Create a delivery package from this approved technical change." : "Approve this technical change before creating a delivery package."}
+            >
+              <PackageOpen className="h-4 w-4" />
+              Create delivery package
+            </Button>
+            <Button onClick={() => void saveTechnicalChange()} disabled={saving || !editingTechnicalChange.title.trim()}>
+              <Save className="h-4 w-4" />
+              {saving ? "Saving..." : "Save"}
+            </Button>
+          </div>
+        </header>
+
+        {error && (
+          <div className="shrink-0 px-6 pt-4">
+            <Alert variant="destructive">
+              <AlertTitle>Technical change problem</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          </div>
+        )}
+
+        <div className="flex shrink-0 gap-1.5 overflow-x-auto border-b bg-muted/30 px-6 py-2">
+          {technicalChangeSections.map((section, index) => {
+            const Icon = technicalChangeSectionIcons[index] ?? FileText;
+            const filePath = activeProject?.path
+              ? joinDiskPath(activeProject.path, `${editingTechnicalChange.relativePath}/${section.fileName}`)
+              : "";
+            return (
+              <button
+                key={section.key}
+                draggable={Boolean(filePath)}
+                className={cn(
+                  "relative flex h-16 w-36 shrink-0 cursor-grab flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent active:cursor-grabbing",
+                  activeTechnicalChangeSectionKey === section.key && "border-ring bg-accent ring-1 ring-ring",
+                )}
+                onClick={() => setActiveTechnicalChangeSectionKey(section.key)}
+                onDragStart={(event) => {
+                  if (!filePath) {
+                    event.preventDefault();
+                    return;
+                  }
+                  event.dataTransfer.effectAllowed = "copy";
+                  event.dataTransfer.setData("text/plain", filePath);
+                  event.preventDefault();
+                  window.aidd.startNativeFileDrag(filePath);
+                }}
+                title={`${section.title}: ${section.fileName}`}
+              >
+                <FileText className="absolute right-1.5 top-1.5 h-3.5 w-3.5 text-muted-foreground" />
+                <Icon className="h-4 w-4 text-muted-foreground" />
+                <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
+                  {section.title}
+                </span>
+                <span className="line-clamp-1 text-[10px] text-muted-foreground">
+                  {section.fileName}
+                </span>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            draggable={Boolean(technicalChangeReviewPackageDragFilePath)}
+            className={cn(
+              "relative flex h-16 w-40 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent",
+              technicalChangeReviewPackageDragFilePath && "cursor-grab active:cursor-grabbing",
+              !technicalChangeReviewPackageDragFilePath && "cursor-pointer",
+            )}
+            onClick={() => void createTechnicalChangeReviewPackage()}
+            onDragStart={startTechnicalChangeReviewPackageDrag}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+            }}
+            onDrop={importTechnicalChangeReviewPackage}
+            title={technicalChangeReviewPackageDragFilePath ? "Review package is ready. Drag this zip out, or drop a returned technical change review zip here." : "Create a technical change review package zip, or drop a returned review zip here."}
+          >
+            <StatusIcon
+              status={technicalChangeReviewPackageDragFilePath ? "complete" : "not-started"}
+              className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
+            />
+            <Archive className={cn("h-4 w-4 text-muted-foreground", technicalChangeReviewPackageDragFilePath && "text-green-400")} />
+            <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
+              Review package
+            </span>
+            <span className="line-clamp-1 text-[10px] text-muted-foreground">
+              {saving ? "Working..." : technicalChangeReviewPackage ? "Ready to drag/drop" : "Create/drop zip"}
+            </span>
+          </button>
+        </div>
+
+        {dragError && (
+          <div className="shrink-0 px-6 pt-2 text-xs text-destructive">
+            {dragError}
+          </div>
+        )}
+
+        <main className="min-h-0 flex-1 overflow-auto p-6">
+          <div className="grid min-h-full gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <Card className="flex min-h-[32rem] flex-col overflow-hidden">
+              <CardHeader className="shrink-0">
+                <CardTitle>{activeTechnicalChangeSection?.title || "Technical change"}</CardTitle>
+                <CardDescription>{activeTechnicalChangeSection?.fileName}</CardDescription>
+              </CardHeader>
+              <CardContent className="min-h-0 flex-1 overflow-hidden p-4">
+                <MarkdownEditor
+                  editorKey={`technical-change-${editingTechnicalChange.id}-${activeTechnicalChangeSection?.fileName ?? "section"}`}
+                  className="h-full min-h-[28rem]"
+                  value={activeTechnicalChangeSection?.body || ""}
+                  initialValue={activeTechnicalChangeSection?.body || ""}
+                  onChange={updateActiveTechnicalChangeSectionBody}
+                />
+              </CardContent>
+            </Card>
+
+            <aside className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Review state</CardTitle>
+                  <CardDescription>{editingTechnicalChange.relativePath}</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Source</span>
+                    <Badge variant="outline" className="capitalize">
+                      {editingTechnicalChange.source.replace(/-/g, " ")}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Patches</span>
+                    <Badge variant={editingTechnicalChange.patchCount ? "secondary" : "outline"}>
+                      {editingTechnicalChange.patchCount}
+                    </Badge>
+                  </div>
+                  {editingTechnicalChange.linkedReviewPath && (
+                    <div className="break-all text-xs text-muted-foreground">
+                      Review import: {editingTechnicalChange.linkedReviewPath}
+                    </div>
+                  )}
+                  {editingTechnicalChange.deliveryPackageIds.length > 0 && (
+                    <div className="text-xs text-muted-foreground">
+                      Delivery packages: {editingTechnicalChange.deliveryPackageIds.join(", ")}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </aside>
           </div>
         </main>
       </div>
@@ -1413,6 +2067,41 @@ export function Components({
             {saving ? "Working..." : reviewPackage ? "Ready to drag/drop" : "Create/drop zip"}
           </span>
         </button>
+        <button
+          type="button"
+          draggable={Boolean(technicalReviewPackageDragFilePath)}
+          className={cn(
+            "relative flex h-16 w-36 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent",
+            technicalReviewPackageDragFilePath && "cursor-grab active:cursor-grabbing",
+            !technicalReviewPackageDragFilePath && canGenerateContract && "cursor-pointer",
+            !canGenerateContract && !technicalReviewPackageDragFilePath && "opacity-70",
+          )}
+          onClick={() => {
+            if (canGenerateContract) void createComponentTechnicalReviewPackage();
+            else setDragError("Save the component before creating a technical review package. You can still drop a returned technical review zip here.");
+          }}
+          onDragStart={startComponentTechnicalReviewPackageDrag}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+          }}
+          onDrop={importComponentTechnicalReviewPackage}
+          title={technicalReviewPackageDragFilePath ? "Technical review package is ready. Drag this zip out, or drop a returned technical review zip here." : "Create a component technical review package zip, or drop a returned technical review zip here."}
+        >
+          <StatusIcon
+            status={technicalReviewPackageDragFilePath ? "complete" : "not-started"}
+            className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
+          />
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <ShieldAlert className={cn("h-4 w-4", technicalReviewPackageDragFilePath && "text-green-400")} />
+          </div>
+          <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
+            Technical review
+          </span>
+          <span className="line-clamp-1 text-[10px] text-muted-foreground">
+            {saving ? "Working..." : technicalReviewPackage ? "Ready to drag/drop" : "Create/drop zip"}
+          </span>
+        </button>
       </div>
       {dragError && (
         <div className="shrink-0 px-6 pt-2 text-xs text-destructive">
@@ -1522,6 +2211,189 @@ export function Components({
                     {sourceDirectory.trim() ? sourceTypeLabel(sourceType) : "Not configured"}
                   </Badge>
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="shrink-0">
+            <CardHeader>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <CardTitle>Technical Reviews & Changes</CardTitle>
+                  <CardDescription>
+                    Imported technical reviews feed managed technical changes. Approve a change before turning it into a delivery package.
+                  </CardDescription>
+                </div>
+                <Button type="button" size="sm" onClick={() => void createTechnicalChange()} disabled={!editingSlug || saving}>
+                  <Plus className="h-4 w-4" />
+                  New technical change
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {technicalReviews.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium">Imported technical reviews</div>
+                      <div className="text-xs text-muted-foreground">Review imports stay attached to the component and can seed managed changes.</div>
+                    </div>
+                    <Badge variant="outline">{technicalReviews.length}</Badge>
+                  </div>
+                  {technicalReviews.slice(0, 3).map((review) => (
+                    <div
+                      key={`${review.reviewDirectory}-${review.importedAt}`}
+                      className="rounded-md border bg-muted/30 p-3 text-sm"
+                    >
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="font-medium">
+                            {technicalReviewDateLabel(review.importedAt)}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {review.reviewDirectory}
+                          </div>
+                        </div>
+                        <Badge variant="outline" className="capitalize">
+                          {review.status.replace(/-/g, " ")}
+                        </Badge>
+                      </div>
+                      <div className="grid gap-2 md:grid-cols-3">
+                        <div className="rounded-md border bg-background/60 px-3 py-2">
+                          <div className="text-lg font-semibold">{review.findingCount}</div>
+                          <div className="text-xs text-muted-foreground">Findings</div>
+                        </div>
+                        <div className="rounded-md border bg-background/60 px-3 py-2">
+                          <div className="text-lg font-semibold">{review.changeCount}</div>
+                          <div className="text-xs text-muted-foreground">Proposed changes</div>
+                        </div>
+                        <div className="rounded-md border bg-background/60 px-3 py-2">
+                          <div className="text-lg font-semibold">{review.patchCount}</div>
+                          <div className="text-xs text-muted-foreground">Patch artefacts</div>
+                        </div>
+                      </div>
+                      {review.changes.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                          {review.changes.slice(0, 4).map((change) => (
+                            <div
+                              key={change.id}
+                              className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-background/60 px-3 py-2"
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate font-medium">{change.id}</div>
+                                {change.overviewPath && (
+                                  <div className="truncate text-xs text-muted-foreground">
+                                    {change.overviewPath}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex shrink-0 flex-wrap gap-2">
+                                <Badge variant={change.patches.length ? "secondary" : "outline"}>
+                                  {change.patches.length ? "Patch supplied" : "No patch"}
+                                </Badge>
+                                <Badge variant="outline">Not applied</Badge>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className={cn("space-y-3", technicalReviews.length > 0 && "border-t pt-3")}>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">Managed technical changes</div>
+                    <div className="text-xs text-muted-foreground">Approved changes can be packaged directly into delivery.</div>
+                  </div>
+                  <Badge variant="outline">{technicalChanges.length}</Badge>
+                </div>
+                {technicalChanges.length ? (
+                  technicalChanges.map((change) => (
+                    <div
+                      key={change.id}
+                      className="rounded-md border bg-muted/25 p-3 text-sm"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium">{change.id}</span>
+                            <Badge variant={change.status === "approved" ? "secondary" : "outline"} className="capitalize">
+                              {technicalChangeStatusLabel(change.status)}
+                            </Badge>
+                            <Badge variant="outline" className="capitalize">
+                              {change.risk} risk
+                            </Badge>
+                          </div>
+                          <div className="mt-1 truncate font-medium">{change.title}</div>
+                          <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                            <span>{change.patchCount} patch{change.patchCount === 1 ? "" : "es"}</span>
+                            <span>Source: {change.source.replace(/-/g, " ")}</span>
+                            {change.linkedReviewPath && <span className="truncate">Review: {change.linkedReviewPath}</span>}
+                            {change.deliveryPackageIds.length > 0 && (
+                              <span>Packaged: {change.deliveryPackageIds.join(", ")}</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                          <Button type="button" variant="outline" size="sm" onClick={() => void openTechnicalChange(change)}>
+                            <Pencil className="h-4 w-4" />
+                            Open
+                          </Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => void revealTechnicalChange(change)}>
+                            <FolderOpen className="h-4 w-4" />
+                            Folder
+                          </Button>
+                          {change.deliveryPackageIds.length > 0 && onDeliveryPackageCreated && (
+                            <Button type="button" variant="outline" size="sm" onClick={() => openLatestTechnicalChangeDeliveryPackage(change)}>
+                              <PackageOpen className="h-4 w-4" />
+                              Open package
+                            </Button>
+                          )}
+                          {change.status === "approved" && (
+                            <Button type="button" size="sm" disabled={saving} onClick={() => void createDeliveryPackageFromTechnicalChange(change)}>
+                              <PackageOpen className="h-4 w-4" />
+                              Create delivery package
+                            </Button>
+                          )}
+                          {(change.status === "draft" || change.status === "rejected") && (
+                            <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void updateTechnicalChangeStatus(change, "needs-review")}>
+                              <Eye className="h-4 w-4" />
+                              Mark ready
+                            </Button>
+                          )}
+                          {(change.status === "needs-review" || change.status === "proposed") && (
+                            <>
+                              <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void updateTechnicalChangeStatus(change, "rejected")}>
+                                <X className="h-4 w-4" />
+                                Reject
+                              </Button>
+                              <Button type="button" size="sm" disabled={saving} onClick={() => void updateTechnicalChangeStatus(change, "approved")}>
+                                <CheckCircle2 className="h-4 w-4" />
+                                Approve
+                              </Button>
+                            </>
+                          )}
+                          {change.status === "approved" && (
+                            <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void updateTechnicalChangeStatus(change, "rejected")}>
+                              <X className="h-4 w-4" />
+                              Reject
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div
+                    className="rounded-md border border-dashed p-4 text-sm text-muted-foreground"
+                  >
+                    {technicalReviews.length
+                      ? "No managed technical changes yet."
+                      : "No technical reviews or technical changes yet."}
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

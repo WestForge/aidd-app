@@ -492,8 +492,98 @@ interface AiddComponentDetail {
   capabilities: string[];
   sections: AiddComponentSection[];
   contract: AiddComponentContractInfo;
+  technicalReviews: AiddComponentTechnicalReviewRecord[];
+  technicalChanges: AiddComponentTechnicalChangeRecord[];
   description: string;
   filePath: string;
+}
+
+type AiddComponentTechnicalReviewType = 'code' | 'security' | 'architecture' | 'tests' | 'performance' | 'accessibility' | 'dependencies';
+type AiddComponentTechnicalReviewSourceScope = 'component-source' | 'changed-files' | 'full-source';
+type AiddComponentTechnicalChangeStatus = 'draft' | 'proposed' | 'needs-review' | 'approved' | 'rejected' | 'superseded' | 'packaged' | 'delivered';
+type AiddComponentTechnicalChangeSource = 'manual' | 'technical-review';
+type AiddComponentTechnicalChangeRisk = 'low' | 'medium' | 'high' | 'unknown';
+
+interface AiddComponentTechnicalChangeRecord {
+  id: string;
+  title: string;
+  componentSlug: string;
+  status: AiddComponentTechnicalChangeStatus;
+  source: AiddComponentTechnicalChangeSource;
+  createdAt: string;
+  updatedAt: string;
+  risk: AiddComponentTechnicalChangeRisk;
+  patchCount: number;
+  linkedFindings: string[];
+  linkedReviewPath: string | null;
+  deliveryPackageIds: string[];
+  relativePath: string;
+}
+
+interface AiddComponentTechnicalChangeSection {
+  key: string;
+  fileName: string;
+  title: string;
+  body: string;
+  editable: boolean;
+}
+
+interface AiddComponentTechnicalChangeDetail extends AiddComponentTechnicalChangeRecord {
+  sections: AiddComponentTechnicalChangeSection[];
+}
+
+interface AiddCreateComponentTechnicalChangeInput {
+  projectPath: string;
+  slug: string;
+  title?: string;
+  status?: AiddComponentTechnicalChangeStatus;
+  risk?: AiddComponentTechnicalChangeRisk;
+}
+
+interface AiddUpdateComponentTechnicalChangeStatusInput {
+  projectPath: string;
+  slug: string;
+  id: string;
+  status: AiddComponentTechnicalChangeStatus;
+}
+
+interface AiddReadComponentTechnicalChangeInput {
+  projectPath: string;
+  slug: string;
+  id: string;
+}
+
+interface AiddSaveComponentTechnicalChangeInput {
+  projectPath: string;
+  slug: string;
+  id: string;
+  title?: string;
+  status?: AiddComponentTechnicalChangeStatus;
+  risk?: AiddComponentTechnicalChangeRisk;
+  sections?: AiddComponentTechnicalChangeSection[];
+}
+
+interface AiddComponentTechnicalReviewChangeSummary {
+  id: string;
+  overviewPath?: string;
+  status: string;
+  patches: string[];
+}
+
+interface AiddComponentTechnicalReviewRecord {
+  type: 'component-technical-review-import';
+  schemaVersion: number;
+  componentSlug: string;
+  importedAt: string;
+  status: string;
+  reviewDirectory: string;
+  summaryPath?: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  findingCount: number;
+  changeCount: number;
+  patchCount: number;
+  changes: AiddComponentTechnicalReviewChangeSummary[];
 }
 
 interface AiddReadComponentInput {
@@ -590,9 +680,17 @@ interface AiddCreateCapabilityInput {
 interface AiddDeliveryPackageSummary {
   id: string;
   title: string;
+  packageType?: 'capability' | 'technical';
   status: AiddSetupStatus | string;
   sourceCapability?: string;
+  sourceTechnicalChange?: {
+    componentSlug: string;
+    technicalChangeId: string;
+    title: string;
+  };
   components: string[];
+  technicalChanges?: AiddDeliveryPackageTechnicalChange[];
+  excludedTechnicalChanges?: AiddDeliveryPackageTechnicalChange[];
   createdAt?: string;
   packaged: boolean;
   phaseCount: number;
@@ -604,6 +702,16 @@ interface AiddDeliveryPackageSummary {
   workspaceStatus?: string;
   workspacePhaseCount?: number;
   workspaceDeliveryFiles?: string[];
+}
+
+interface AiddDeliveryPackageTechnicalChange {
+  id: string;
+  title: string;
+  componentSlug: string;
+  status: string;
+  risk: string;
+  patchCount: number;
+  relativePath?: string;
 }
 
 interface AiddDeliveryWorkspacePublishResult {
@@ -750,6 +858,25 @@ interface AiddComponentReviewPackageResult {
   entryCount: number;
 }
 
+interface AiddPackageComponentTechnicalReviewInput {
+  projectPath: string;
+  slug: string;
+  reviewTypes?: AiddComponentTechnicalReviewType[];
+  sourceScope?: AiddComponentTechnicalReviewSourceScope;
+}
+
+interface AiddComponentTechnicalReviewPackageResult {
+  filePath: string;
+  fileName: string;
+  componentSlug: string;
+  componentTitle: string;
+  componentFileCount: number;
+  sourceRootCount: number;
+  sourceFileCount: number;
+  entryCount: number;
+  warnings: string[];
+}
+
 interface AiddCapabilityReviewPackageResult {
   filePath: string;
   fileName: string;
@@ -834,6 +961,48 @@ interface AiddComponentReviewPackageImportResult {
   reviewMarkdown?: string;
 }
 
+interface AiddImportComponentTechnicalReviewPackageInput {
+  projectPath: string;
+  slug: string;
+  zipPath: string;
+}
+
+interface AiddComponentTechnicalReviewImportResult {
+  accepted: boolean;
+  zipPath: string;
+  componentSlug: string;
+  reviewDirectory: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  findingCount: number;
+  changeCount: number;
+  patchCount: number;
+  technicalChangeCount: number;
+}
+
+interface AiddComponentTechnicalChangeReviewPackageResult {
+  filePath: string;
+  fileName: string;
+  componentSlug: string;
+  technicalChangeId: string;
+  sectionFileCount: number;
+  patchCount: number;
+  sourceRootCount: number;
+  sourceFileCount: number;
+  entryCount: number;
+  warnings: string[];
+}
+
+interface AiddImportComponentTechnicalChangeReviewPackageResult {
+  accepted: boolean;
+  zipPath: string;
+  componentSlug: string;
+  technicalChangeId: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  patchCount: number;
+}
+
 interface AiddPackageCapabilityForReviewInput {
   projectPath: string;
   slug: string;
@@ -889,6 +1058,14 @@ interface Window {
     packageComponentsForReview: (projectPath: string) => Promise<AiddComponentReviewPackageResult>;
     packageComponentForReview: (input: AiddPackageComponentForReviewInput) => Promise<AiddComponentReviewPackageResult>;
     importComponentReviewPackage: (input: AiddImportComponentReviewPackageInput) => Promise<AiddComponentReviewPackageImportResult>;
+    packageComponentTechnicalReview: (input: AiddPackageComponentTechnicalReviewInput) => Promise<AiddComponentTechnicalReviewPackageResult>;
+    importComponentTechnicalReviewPackage: (input: AiddImportComponentTechnicalReviewPackageInput) => Promise<AiddComponentTechnicalReviewImportResult>;
+    createComponentTechnicalChange: (input: AiddCreateComponentTechnicalChangeInput) => Promise<AiddComponentTechnicalChangeRecord>;
+    readComponentTechnicalChange: (input: AiddReadComponentTechnicalChangeInput) => Promise<AiddComponentTechnicalChangeDetail>;
+    saveComponentTechnicalChange: (input: AiddSaveComponentTechnicalChangeInput) => Promise<AiddComponentTechnicalChangeDetail>;
+    updateComponentTechnicalChangeStatus: (input: AiddUpdateComponentTechnicalChangeStatusInput) => Promise<AiddComponentTechnicalChangeRecord[]>;
+    packageComponentTechnicalChangeReview: (input: AiddReadComponentTechnicalChangeInput) => Promise<AiddComponentTechnicalChangeReviewPackageResult>;
+    importComponentTechnicalChangeReviewPackage: (input: AiddReadComponentTechnicalChangeInput & { zipPath: string }) => Promise<AiddImportComponentTechnicalChangeReviewPackageResult>;
     packageCapabilitiesForReview: (projectPath: string) => Promise<AiddCapabilityReviewPackageResult>;
     packageCapabilityForReview: (input: AiddPackageCapabilityForReviewInput) => Promise<AiddCapabilityReviewPackageResult>;
     importCapabilityReviewPackage: (input: AiddImportCapabilityReviewPackageInput) => Promise<AiddCapabilityReviewPackageImportResult>;
@@ -915,6 +1092,7 @@ interface Window {
     readCapability: (input: AiddReadCapabilityInput) => Promise<AiddCapabilityDetail>;
     updateCapability: (input: AiddUpdateCapabilityInput) => Promise<AiddProjectSetupState>;
     createDeliveryPackageFromCapability: (input: { projectPath: string; capabilitySlug: string }) => Promise<{ id: string; path: string }>;
+    createDeliveryPackageFromTechnicalChange: (input: { projectPath: string; componentSlug: string; technicalChangeId: string }) => Promise<{ id: string; path: string }>;
     readDeliveryPackages: (projectPath: string) => Promise<AiddDeliveryPackageSummary[]>;
     deleteDeliveryPackage: (input: { projectPath: string; id: string }) => Promise<AiddDeliveryPackageSummary[]>;
     reorderDeliveryPackage: (input: { projectPath: string; id: string; direction: 'up' | 'down' }) => Promise<AiddDeliveryPackageSummary[]>;
