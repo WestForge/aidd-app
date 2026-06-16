@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import zlib from 'node:zlib';
 import git from 'isomorphic-git';
-import matter from 'gray-matter';
+import matter from './frontmatter';
 import { createKeytarCredentialStore } from './services/gitCredentialStore';
 import { readGitSyncSettings, saveGitSyncSettings } from './services/gitSyncSettingsStore';
 import { testGitRemoteConnection } from './services/gitRemoteTester';

@@ -1,4 +1,4 @@
-import matter from 'gray-matter';
+import matter from './frontmatter';
 import type { DeliveryBundle } from './types';
 
 function list(items: string[]) {

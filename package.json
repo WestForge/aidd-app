@@ -37,8 +37,8 @@
     "@toast-ui/editor": "^3.2.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "gray-matter": "^4.0.3",
     "isomorphic-git": "^1.27.1",
+    "js-yaml": "^4.2.0",
     "keytar": "^7.9.0",
     "lucide-react": "^0.468.0",
     "marked": "^13.0.3",
@@ -48,6 +48,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.10.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
@@ -66,6 +67,9 @@
   },
   "overrides": {
     "dompurify": "^3.4.8",
+    "@mdxeditor/editor": {
+      "js-yaml": "4.2.0"
+    },
     "shell-quote": "1.8.4"
   },
   "build": {
