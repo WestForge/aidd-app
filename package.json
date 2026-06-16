@@ -1,6 +1,6 @@
 {
   "name": "aidd-app-starter",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "private": true,
   "author": "WestForge",
   "description": "AIDD desktop app starter: project creation, workflow-first, Markdown-backed, Git-ready.",
