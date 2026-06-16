@@ -4369,6 +4369,321 @@ async function ensureComponentManifestForFolder(projectPath: string, folder: str
   return true;
 }
 
+function firstNonEmptyString(...values: unknown[]) {
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+function firstStringArray(...values: unknown[]) {
+  for (const value of values) {
+    if (!Array.isArray(value)) continue;
+    return Array.from(new Set(value.map((item) => String(item || '').trim()).filter(Boolean)));
+  }
+  return [] as string[];
+}
+
+async function readCapabilityRepairMetadata(projectPath: string, folder: string) {
+  const dir = path.join(projectPath, 'capabilities', folder);
+  const titleCandidates: string[] = [];
+  const components = new Set<string>();
+  let status: SetupStepStatus = 'draft';
+
+  async function readMarkdownMetadata(fileName: string) {
+    const filePath = path.join(dir, fileName);
+    if (!(await exists(filePath))) return;
+    const raw = await fsp.readFile(filePath, 'utf8');
+    const parsed = parseMarkdownSafe(raw);
+    const data = (parsed.ok ? (parsed.parsed.data || {}) : {}) as any;
+    const aidd = data.aidd || {};
+
+    for (const candidate of [aidd.title, data.title, firstMarkdownHeading(raw)]) {
+      const title = String(candidate || '').trim();
+      if (title) titleCandidates.push(title);
+    }
+
+    for (const component of firstStringArray(aidd.components, data.components, aidd.modules, data.modules)) {
+      components.add(component);
+    }
+
+    const candidateStatus = normalizeSetupStatus(aidd.status || data.status);
+    if (candidateStatus !== 'not-started') status = candidateStatus;
+    else if (contentLooksComplete(raw)) status = strongestStatus(status, 'complete');
+  }
+
+  await readMarkdownMetadata('index.md');
+  for (const template of CAPABILITY_TEMPLATE_SECTIONS) {
+    await readMarkdownMetadata(template.fileName);
+    for (const legacyFileName of CAPABILITY_LEGACY_SECTION_FILES[template.key] || []) {
+      await readMarkdownMetadata(legacyFileName);
+    }
+  }
+
+  const rawTitle = titleCandidates.find((candidate) => candidate.trim()) || titleFromSlug(folder);
+  const title = rawTitle
+    .replace(/\s+(Outcomes|Scope|User Journeys|Functional Requirements|Quality Requirements|UX\/UI|Risks|Validation)$/i, '')
+    .trim() || titleFromSlug(folder);
+
+  return { title, status, components: Array.from(components) };
+}
+
+async function ensureCapabilityManifestForFolder(projectPath: string, folder: string, changes: string[], logs: ProjectRepairLogEntry[]) {
+  const manifestPath = path.join(projectPath, 'capabilities', folder, 'capability.json');
+  if (await exists(manifestPath)) return false;
+
+  const metadata = await readCapabilityRepairMetadata(projectPath, folder);
+  await writeJson(manifestPath, {
+    slug: folder,
+    title: metadata.title,
+    status: metadata.status,
+    components: metadata.components,
+    createdAt: new Date().toISOString(),
+    repairedAt: new Date().toISOString(),
+    template: {
+      id: TEMPLATE_ID,
+      version: TEMPLATE_VERSION,
+      sectionFiles: CAPABILITY_TEMPLATE_SECTIONS.map((section) => section.fileName)
+    }
+  });
+  changes.push(`Rebuilt missing capability manifest for capabilities/${folder}`);
+  pushRepairLog(logs, 'success', 'entity-repair', 'Rebuilt missing capability manifest.', {
+    path: `capabilities/${folder}/capability.json`,
+    detail: `Title: ${metadata.title}; components: ${metadata.components.length ? metadata.components.join(', ') : 'none'}`
+  });
+  return true;
+}
+
+function titleFromDeliveryPackageFolder(folder: string) {
+  const withoutDeliveryPrefix = folder.replace(/^DP-\d{1,5}-/i, '').replace(/^\d{1,5}[-_]+/, '');
+  return titleFromSlug(withoutDeliveryPrefix || folder);
+}
+
+function cleanDeliveryPackageTitle(value: unknown) {
+  const title = String(value || '')
+    .trim()
+    .replace(/^Delivery Package Snapshot:\s*/i, '')
+    .replace(/^Technical Delivery Snapshot:\s*/i, '')
+    .replace(/^Delivery Package:\s*/i, '')
+    .replace(/^Package:\s*/i, '');
+
+  if (!title || /^Implementation Strategy$/i.test(title) || /^Context Snapshot$/i.test(title)) return '';
+  return title;
+}
+
+function normaliseDeliveryPackageTypeForRepair(value: unknown): DeliveryPackageType | undefined {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return undefined;
+  if (text.includes('technical')) return 'technical';
+  if (text.includes('capability') || text.includes('delivery')) return 'capability';
+  return undefined;
+}
+
+function normaliseDeliveryStatusForRepair(value: unknown) {
+  const status = String(value || '').trim().toLowerCase();
+  if (!status || status === 'draft' || status === 'not-started') return 'packaging';
+  if (status === 'approved' || status === 'approved-for-ai') return 'approved';
+  if (status === 'in-progress' || status === 'in-ai-execution' || status === 'active') return 'in-progress';
+  if (status === 'done' || status === 'complete' || status === 'accepted' || status === 'delivered') return 'done';
+  if (status === 'review' || status === 'in-review' || status === 'needs-review' || status === 'needs-verification' || status === 'changes-requested' || status === 'packaging') return 'packaging';
+  return 'packaging';
+}
+
+function deliverySourceTechnicalChangeFrom(value: any) {
+  if (!value || typeof value !== 'object') return undefined;
+  const componentSlug = firstNonEmptyString(value.componentSlug, value.component, value.componentId);
+  const technicalChangeId = firstNonEmptyString(value.technicalChangeId, value.id, value.changeId);
+  const title = firstNonEmptyString(value.title, technicalChangeId);
+  if (!componentSlug && !technicalChangeId) return undefined;
+  return { componentSlug, technicalChangeId, title };
+}
+
+async function readDeliveryPackageRepairMarkdownMetadata(filePath: string, allowHeadingTitle: boolean) {
+  const raw = await fsp.readFile(filePath, 'utf8');
+  const parsed = parseMarkdownSafe(raw);
+  const data = (parsed.ok ? (parsed.parsed.data || {}) : {}) as any;
+  const aidd = data.aidd || {};
+  const heading = allowHeadingTitle ? firstMarkdownHeading(raw) : '';
+
+  return {
+    title: cleanDeliveryPackageTitle(firstNonEmptyString(data.title, data.name, aidd.title, heading)),
+    status: firstNonEmptyString(data.status, aidd.status),
+    packageType: normaliseDeliveryPackageTypeForRepair(firstNonEmptyString(data.packageType, aidd.packageType, data.type, aidd.type)),
+    sourceCapability: firstNonEmptyString(data.sourceCapability, data.capability, data.capabilitySlug, aidd.sourceCapability, aidd.capability, aidd.capabilitySlug),
+    sourceTechnicalChange: deliverySourceTechnicalChangeFrom(data.sourceTechnicalChange || aidd.sourceTechnicalChange),
+    components: firstStringArray(data.components, data.modules, aidd.components, aidd.modules),
+    createdAt: firstNonEmptyString(data.createdAt, aidd.createdAt),
+    updatedAt: firstNonEmptyString(data.updatedAt, aidd.updatedAt),
+    parsedOk: parsed.ok,
+    parseError: parsed.ok ? '' : parsed.error
+  };
+}
+
+type DeliveryPackageRepairMarkdownMetadata = Awaited<ReturnType<typeof readDeliveryPackageRepairMarkdownMetadata>> & { fileName: string };
+
+async function readPackagedTechnicalChangeSummaries(projectPath: string, packageDir: string) {
+  const root = path.join(packageDir, 'technical-changes');
+  if (!(await exists(root))) return [] as DeliveryPackageTechnicalChangeSummary[];
+
+  const summaries: DeliveryPackageTechnicalChangeSummary[] = [];
+  for (const entry of await fsp.readdir(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const changeDir = path.join(root, entry.name);
+    const metadataPath = path.join(changeDir, 'technical-change.json');
+    if (!(await exists(metadataPath))) continue;
+    const raw = await readJsonSafe<any>(metadataPath);
+    if (!raw.ok) continue;
+    const componentSlug = firstNonEmptyString(raw.data?.componentSlug);
+    const record = normaliseTechnicalChangeRecord(raw.data, projectPath, componentSlug, changeDir);
+    summaries.push({
+      ...deliveryTechnicalChangeSummary(record, normaliseRelativePath(path.relative(packageDir, changeDir))),
+      status: record.status === 'packaged' ? 'approved' : record.status
+    });
+  }
+
+  return summaries;
+}
+
+async function ensureDeliveryPackageManifestForFolder(
+  projectPath: string,
+  folder: string,
+  changes: string[],
+  warnings: string[],
+  logs: ProjectRepairLogEntry[]
+) {
+  const packageDir = path.join(projectPath, 'delivery', 'packages', folder);
+  const manifestPath = path.join(packageDir, 'package.json');
+  if (await exists(manifestPath)) return false;
+
+  const now = new Date().toISOString();
+  const legacyManifestPath = path.join(packageDir, 'bundle.json');
+  let legacy: any = {};
+  let legacyRead = false;
+  if (await exists(legacyManifestPath)) {
+    const result = await readJsonSafe<any>(legacyManifestPath);
+    if (result.ok) {
+      legacy = result.data || {};
+      legacyRead = true;
+    } else {
+      const message = `delivery/packages/${folder}/bundle.json could not be parsed while rebuilding package.json: ${result.error}`;
+      warnings.push(message);
+      pushRepairLog(logs, 'warning', 'delivery-repair', message, { path: `delivery/packages/${folder}/bundle.json` });
+    }
+  }
+
+  const markdownMetadata: DeliveryPackageRepairMarkdownMetadata[] = [];
+  for (const fileName of ['snapshot.md', 'delivery-package.md', 'package.md', 'bundle.md', 'README.md', 'implementation-strategy.md']) {
+    const filePath = path.join(packageDir, fileName);
+    if (!(await exists(filePath))) continue;
+    const metadata = await readDeliveryPackageRepairMarkdownMetadata(filePath, fileName !== 'implementation-strategy.md');
+    markdownMetadata.push({ fileName, ...metadata });
+    if (!metadata.parsedOk) {
+      pushRepairLog(logs, 'warning', 'delivery-repair', 'Could not parse delivery package Markdown front matter while inferring manifest.', {
+        path: `delivery/packages/${folder}/${fileName}`,
+        detail: metadata.parseError
+      });
+    }
+  }
+
+  const firstMarkdown = <K extends keyof Awaited<ReturnType<typeof readDeliveryPackageRepairMarkdownMetadata>>>(key: K) => {
+    for (const metadata of markdownMetadata) {
+      const value = metadata[key];
+      if (Array.isArray(value)) {
+        if (value.length) return value;
+      } else if (value) {
+        return value;
+      }
+    }
+    return undefined;
+  };
+
+  const technicalChanges = normaliseDeliveryPackageTechnicalChanges(legacy.technicalChanges);
+  if (!technicalChanges.length) {
+    technicalChanges.push(...await readPackagedTechnicalChangeSummaries(projectPath, packageDir));
+  }
+
+  const sourceTechnicalChange = deliverySourceTechnicalChangeFrom(legacy.sourceTechnicalChange)
+    || firstMarkdown('sourceTechnicalChange')
+    || (technicalChanges.length === 1
+      ? {
+          componentSlug: technicalChanges[0].componentSlug,
+          technicalChangeId: technicalChanges[0].id,
+          title: technicalChanges[0].title
+        }
+      : undefined);
+
+  const components = Array.from(new Set([
+    ...firstStringArray(legacy.components, legacy.modules),
+    ...((firstMarkdown('components') as string[] | undefined) || []),
+    ...(sourceTechnicalChange?.componentSlug ? [sourceTechnicalChange.componentSlug] : []),
+    ...technicalChanges.map((change) => change.componentSlug).filter(Boolean)
+  ]));
+
+  const stat = await fsp.stat(packageDir);
+  const legacyId = firstNonEmptyString(legacy.id, legacy.slug);
+  const sourceCapability = firstNonEmptyString(
+    legacy.sourceCapability,
+    legacy.capability,
+    legacy.capabilitySlug,
+    firstMarkdown('sourceCapability')
+  );
+  const markdownPackageType = firstMarkdown('packageType') as DeliveryPackageType | undefined;
+  const packageType = normaliseDeliveryPackageTypeForRepair(legacy.packageType || legacy.type)
+    || markdownPackageType
+    || (sourceTechnicalChange || technicalChanges.length || await exists(path.join(packageDir, 'technical-changes')) ? 'technical' : 'capability');
+
+  const manifest: Record<string, unknown> = {
+    id: folder,
+    title: cleanDeliveryPackageTitle(firstNonEmptyString(legacy.title, legacy.name, firstMarkdown('title'))) || titleFromDeliveryPackageFolder(folder),
+    packageType,
+    status: normaliseDeliveryStatusForRepair(firstNonEmptyString(legacy.status, firstMarkdown('status'))),
+    components,
+    createdAt: firstNonEmptyString(legacy.createdAt, firstMarkdown('createdAt'), stat.birthtime?.toISOString(), now),
+    repairedAt: now
+  };
+
+  if (legacyId && legacyId !== folder) manifest.legacyId = legacyId;
+  if (sourceCapability) manifest.sourceCapability = sourceCapability;
+  if (sourceTechnicalChange) manifest.sourceTechnicalChange = sourceTechnicalChange;
+  if (technicalChanges.length) manifest.technicalChanges = technicalChanges;
+  const excludedTechnicalChanges = normaliseDeliveryPackageTechnicalChanges(legacy.excludedTechnicalChanges);
+  if (excludedTechnicalChanges.length) manifest.excludedTechnicalChanges = excludedTechnicalChanges;
+  if (Number.isFinite(Number(legacy.priority))) manifest.priority = Number(legacy.priority);
+  const updatedAt = firstNonEmptyString(legacy.updatedAt, firstMarkdown('updatedAt'));
+  if (updatedAt) manifest.updatedAt = updatedAt;
+
+  await writeJson(manifestPath, manifest);
+  changes.push(`Rebuilt missing delivery package manifest for delivery/packages/${folder}`);
+  pushRepairLog(logs, 'success', 'delivery-repair', 'Rebuilt missing delivery package manifest.', {
+    path: `delivery/packages/${folder}/package.json`,
+    detail: `Title: ${manifest.title}; type: ${packageType}; source: ${legacyRead ? 'bundle.json' : markdownMetadata.length ? markdownMetadata.map((item) => item.fileName).join(', ') : 'folder name'}`
+  });
+  return true;
+}
+
+async function repairDeliveryPackageManifests(projectPath: string, changes: string[], warnings: string[], logs: ProjectRepairLogEntry[]) {
+  pushRepairLog(logs, 'info', 'delivery-repair', 'Checking delivery package manifests.');
+  let repaired = 0;
+
+  for (const folder of await listEntityFolders(projectPath, 'delivery/packages')) {
+    try {
+      if (await ensureDeliveryPackageManifestForFolder(projectPath, folder, changes, warnings, logs)) repaired++;
+    } catch (error) {
+      const message = `Could not repair delivery package manifest for ${folder}: ${error instanceof Error ? error.message : String(error)}`;
+      warnings.push(message);
+      pushRepairLog(logs, 'error', 'delivery-repair', 'Failed to rebuild delivery package manifest.', {
+        path: `delivery/packages/${folder}/package.json`,
+        detail: message
+      });
+    }
+  }
+
+  if (repaired === 0) {
+    pushRepairLog(logs, 'info', 'delivery-repair', 'No delivery package manifests needed repair.');
+  }
+}
+
 async function archivePathForRepair(projectPath: string, stamp: string, relativePath: string) {
   return path.join(projectPath, '_archive', 'aidd-repair', stamp, relativePath);
 }
@@ -4654,6 +4969,7 @@ async function repairEntitySectionDocuments(projectPath: string, stamp: string, 
 
   for (const folder of await listEntityFolders(projectPath, 'capabilities')) {
     try {
+      await ensureCapabilityManifestForFolder(projectPath, folder, changes, logs);
       const capability = await readCapability({ projectPath, slug: folder });
       const missing = capability.sections
         .map((section: any) => section.fileName)
@@ -4936,6 +5252,7 @@ async function repairProject(projectPath: string): Promise<ProjectRepairReport> 
   await refreshProjectSummaryMetadata(projectPath, changes, logs);
 
   await repairEntitySectionDocuments(projectPath, stamp, changes, warnings, logs);
+  await repairDeliveryPackageManifests(projectPath, changes, warnings, logs);
 
   pushRepairLog(logs, 'info', 'validation', 'Running validation after safe data repair.');
   const validation = await validateProject(projectPath);

@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, FolderGit2, HeartPulse, Home, ListChecks, Pa
 import type { Screen } from '../main';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
+import { Select } from './ui/select';
 import { cn } from '../lib/utils';
 import packageJson from '../../package.json';
 
@@ -9,6 +10,8 @@ interface SidebarProps {
   active: Screen;
   onChange: (screen: Screen) => void;
   activeProject?: AiddTrackedProject | null;
+  projects?: AiddTrackedProject[];
+  onProjectChange?: (project: AiddTrackedProject) => void;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
 }
@@ -33,7 +36,22 @@ const utilityItems: SidebarItem[] = [
   { id: 'settings', label: 'Settings', icon: Settings }
 ];
 
-export function Sidebar({ active, onChange, activeProject, collapsed = false, onToggleCollapsed }: SidebarProps) {
+export function Sidebar({
+  active,
+  onChange,
+  activeProject,
+  projects = [],
+  onProjectChange,
+  collapsed = false,
+  onToggleCollapsed
+}: SidebarProps) {
+  const selectedProjectId = activeProject?.id ?? '';
+
+  const handleProjectChange = (projectId: string) => {
+    const nextProject = projects.find((project) => project.id === projectId);
+    if (nextProject) onProjectChange?.(nextProject);
+  };
+
   return (
     <aside className={cn('flex h-full shrink-0 flex-col border-r bg-card transition-all', collapsed ? 'w-16' : 'w-64')}>
       <div className="flex h-14 items-center gap-2 border-b px-3">
@@ -44,11 +62,27 @@ export function Sidebar({ active, onChange, activeProject, collapsed = false, on
         </Button>
       </div>
 
-      {!collapsed && activeProject && (
+      {!collapsed && (activeProject || projects.length > 0) && (
         <div className="border-b p-3">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Current project</div>
-          <div className="mt-1 truncate text-sm font-medium">{activeProject.name}</div>
-          <div className="mt-1 truncate text-xs text-muted-foreground">{activeProject.path}</div>
+          <label htmlFor="sidebar-project-select" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Project
+          </label>
+          <Select
+            id="sidebar-project-select"
+            className="mt-2 h-8 text-xs"
+            value={selectedProjectId}
+            disabled={!onProjectChange || projects.length === 0}
+            onChange={(event) => handleProjectChange(event.target.value)}
+            title={activeProject?.path ?? 'No project selected'}
+          >
+            {!activeProject && <option value="">No project selected</option>}
+            {projects.map((project) => (
+              <option key={project.id} value={project.id} title={project.path}>
+                {project.name}
+              </option>
+            ))}
+          </Select>
+          {activeProject && <div className="mt-2 truncate text-xs text-muted-foreground">{activeProject.path}</div>}
         </div>
       )}
 
