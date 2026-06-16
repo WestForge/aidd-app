@@ -648,6 +648,11 @@ interface AiddUpdateCapabilityInput {
   sections?: AiddCapabilitySection[];
 }
 
+interface AiddDeleteCapabilityInput {
+  projectPath: string;
+  slug: string;
+}
+
 interface AiddSourceReference {
   path: string;
   detectedType: string;
@@ -1091,6 +1096,7 @@ interface Window {
     createCapability: (input: AiddCreateCapabilityInput) => Promise<AiddProjectSetupState>;
     readCapability: (input: AiddReadCapabilityInput) => Promise<AiddCapabilityDetail>;
     updateCapability: (input: AiddUpdateCapabilityInput) => Promise<AiddProjectSetupState>;
+    deleteCapability: (input: AiddDeleteCapabilityInput) => Promise<AiddProjectSetupState>;
     createDeliveryPackageFromCapability: (input: { projectPath: string; capabilitySlug: string }) => Promise<{ id: string; path: string }>;
     createDeliveryPackageFromTechnicalChange: (input: { projectPath: string; componentSlug: string; technicalChangeId: string }) => Promise<{ id: string; path: string }>;
     readDeliveryPackages: (projectPath: string) => Promise<AiddDeliveryPackageSummary[]>;

@@ -978,6 +978,11 @@ interface UpdateCapabilityInput {
   sections?: CapabilitySectionInput[];
 }
 
+interface DeleteCapabilityInput {
+  projectPath: string;
+  slug: string;
+}
+
 interface CreateDeliveryPackageFromCapabilityInput {
   projectPath: string;
   capabilitySlug: string;
@@ -9838,6 +9843,29 @@ async function updateCapability(input: UpdateCapabilityInput) {
   return readProjectSetup(input.projectPath);
 }
 
+async function deleteCapability(input: DeleteCapabilityInput) {
+  const rawSlug = String(input.slug || '').trim();
+  if (!input.projectPath || !rawSlug) throw new Error('Project path and capability slug are required.');
+
+  const slug = slugify(rawSlug);
+  if (!slug || slug !== rawSlug) throw new Error('Capability delete rejected: invalid capability slug.');
+
+  const capabilitiesRoot = path.resolve(input.projectPath, 'capabilities');
+  const capabilityDir = path.resolve(capabilitiesRoot, slug);
+
+  if (capabilityDir === capabilitiesRoot || !capabilityDir.startsWith(`${capabilitiesRoot}${path.sep}`)) {
+    throw new Error('Capability delete rejected: unsafe capability path.');
+  }
+
+  const manifestPath = path.join(capabilityDir, 'capability.json');
+  if (!(await exists(manifestPath))) throw new Error(`Capability not found: ${slug}`);
+
+  await fsp.rm(capabilityDir, { recursive: true, force: false });
+  await refreshCapabilitiesIndex(input.projectPath);
+  await refreshComponentsIndex(input.projectPath);
+  return readProjectSetup(input.projectPath);
+}
+
 
 
 async function assertProjectFoundationReady(projectPath: string) {
@@ -11711,6 +11739,8 @@ function buildDeliveryReviewPackageReadme(input: {
     '',
     'When returning a revised package, provide a download zip that contains only the updated `delivery/` folder and its matching files.',
     '',
+    'AIDD accepts `delivery/` at the zip root, or inside one wrapping folder if the zip tool adds a parent directory.',
+    '',
     'AIDD will import returned files from:',
     '',
     '- `delivery/implementation-strategy.md`',
@@ -11735,6 +11765,22 @@ function buildDeliveryReviewPackageReadme(input: {
   }
 
   return `${lines.join('\n')}\n`;
+}
+
+function normaliseDeliveryReviewReturnEntryName(entryName: string) {
+  const normalised = safeZipReadEntryName(entryName);
+  if (!normalised) return null;
+  if (normalised === 'REVIEW.md') return normalised;
+  if (normalised.startsWith('delivery/')) return normalised;
+
+  const parts = normalised.split('/');
+  const isSingleWrapperDeliveryPath = parts.length >= 3 && Boolean(parts[0]) && parts[1] === 'delivery';
+  if (isSingleWrapperDeliveryPath) return parts.slice(1).join('/');
+
+  const isSingleWrapperReviewFile = parts.length === 2 && Boolean(parts[0]) && parts[1] === 'REVIEW.md';
+  if (isSingleWrapperReviewFile) return 'REVIEW.md';
+
+  return null;
 }
 
 function isSafeDeliveryReviewReturnPath(relativePath: string) {
@@ -11798,12 +11844,12 @@ async function importDeliveryReviewPackage(input: ImportDeliveryReviewPackageInp
 
   const target = await findDeliveryPackageTarget(root, input.packageId);
   const entries = await readZipFile(zipPath);
-  const hasDeliveryDirectory = entries.some((entry) => {
-    const name = normaliseRelativePath(entry.name).replace(/^\/+/, '');
-    return name === 'delivery/' || name.startsWith('delivery/');
-  });
+  const normalisedEntries = entries
+    .map((entry) => normaliseDeliveryReviewReturnEntryName(entry.name))
+    .filter((entryName): entryName is string => Boolean(entryName));
+  const hasDeliveryDirectory = normalisedEntries.some((name) => name === 'delivery/' || name.startsWith('delivery/'));
   if (!hasDeliveryDirectory) {
-    throw new Error('Delivery review response rejected: the zip must contain a delivery/ directory.');
+    throw new Error('Delivery review response rejected: the zip must contain delivery files at delivery/ or inside one wrapping folder, for example delivery/implementation-strategy.md or returned-package/delivery/implementation-strategy.md.');
   }
 
   const importedFiles: string[] = [];
@@ -11816,7 +11862,7 @@ async function importDeliveryReviewPackage(input: ImportDeliveryReviewPackageInp
   let phaseFileCount = 0;
 
   for (const entry of entries) {
-    const relativePath = safeZipReadEntryName(entry.name);
+    const relativePath = normaliseDeliveryReviewReturnEntryName(entry.name);
     if (!relativePath || entry.directory) continue;
     if (relativePath === 'REVIEW.md') {
       reviewMarkdown = entry.data.toString('utf8');
@@ -12973,6 +13019,11 @@ ipcMain.handle('project:readCapability', async (_event, input: ReadCapabilityInp
 ipcMain.handle('project:updateCapability', async (_event, input: UpdateCapabilityInput) => {
   if (!input.projectPath || !input.slug || !input.title?.trim()) throw new Error('Project path, capability slug, and title are required.');
   return withProjectSaveSync(input.projectPath, () => updateCapability(input));
+});
+
+ipcMain.handle('project:deleteCapability', async (_event, input: DeleteCapabilityInput) => {
+  if (!input?.projectPath || !input?.slug) throw new Error('Project path and capability slug are required.');
+  return withProjectSaveSync(input.projectPath, () => deleteCapability(input));
 });
 
 ipcMain.handle('project:createDeliveryPackageFromCapability', async (_event, input: CreateDeliveryPackageFromCapabilityInput) => {

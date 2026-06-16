@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('aidd', {
   createCapability: (input: unknown) => ipcRenderer.invoke('project:createCapability', input),
   readCapability: (input: unknown) => ipcRenderer.invoke('project:readCapability', input),
   updateCapability: (input: unknown) => ipcRenderer.invoke('project:updateCapability', input),
+  deleteCapability: (input: unknown) => ipcRenderer.invoke('project:deleteCapability', input),
   createDeliveryPackageFromCapability: (input: unknown) => ipcRenderer.invoke('project:createDeliveryPackageFromCapability', input),
   createDeliveryPackageFromTechnicalChange: (input: unknown) => ipcRenderer.invoke('project:createDeliveryPackageFromTechnicalChange', input),
   readDeliveryPackages: (projectPath: string) => ipcRenderer.invoke('project:readDeliveryPackages', projectPath),

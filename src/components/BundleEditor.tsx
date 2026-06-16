@@ -516,7 +516,7 @@ export function BundleEditor({
 
     const zipPath = droppedZipPathFromEvent(event);
     if (!zipPath) {
-      setDragError("Drop a returned delivery review .zip onto this tile.");
+      setDragError("Drop the returned delivery-only review .zip onto this tile.");
       return;
     }
     if (!zipPath.toLowerCase().endsWith(".zip")) {
@@ -933,7 +933,7 @@ export function BundleEditor({
             }}
             onDrop={packageLocked ? undefined : importDeliveryReviewPackage}
             disabled={!detail || packageLocked || saving || publishing || reviewing || importingReview}
-            title={packageLocked ? "Approved delivery packages are read-only. Use Start agentic AI." : reviewPackageDragFilePath ? "Review package is ready. Drag this zip out, or drop a returned delivery zip here." : "Create a delivery review package zip, or drop a returned delivery zip here."}
+            title={packageLocked ? "Approved delivery packages are read-only. Use Start agentic AI." : reviewPackageDragFilePath ? "Review package is ready. Drag this zip out, or drop the returned delivery-only zip here." : "Create a delivery review package zip, or drop the returned delivery-only zip here."}
           >
             <DeliveryStatusIcon
               status={reviewPackageDragFilePath ? "done" : importingReview ? "in-progress" : "packaging"}
@@ -948,7 +948,7 @@ export function BundleEditor({
               Review package
             </span>
             <span className="line-clamp-1 text-[10px] text-muted-foreground">
-              {reviewing ? "Creating..." : importingReview ? "Importing..." : reviewPackageDragFilePath ? "Drag/drop zip" : "Create/drop zip"}
+              {reviewing ? "Creating..." : importingReview ? "Importing..." : reviewPackageDragFilePath ? "Drag/drop return" : "Create/import"}
             </span>
           </button>
 

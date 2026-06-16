@@ -16,6 +16,7 @@ import {
   ShieldAlert,
   SkipForward,
   Sparkles,
+  Trash2,
   Users,
   Workflow,
   Zap,
@@ -345,6 +346,7 @@ export function Capabilities({
   const [reviewPackage, setReviewPackage] = useState<AiddCapabilityReviewPackageResult | null>(null);
   const [reviewPackageDragFilePath, setReviewPackageDragFilePath] = useState<string | null>(null);
   const [dragError, setDragError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AiddCapabilitySummary | null>(null);
   const load = async () => {
     if (!activeProject?.path) return;
     setSetup(await window.aidd.readProjectSetup(activeProject.path));
@@ -454,6 +456,7 @@ export function Capabilities({
     setDragError(null);
     setReviewPackage(null);
     setReviewPackageDragFilePath(null);
+    setDeleteTarget(null);
   };
   const openCapability = async (slug: string) => {
     if (!activeProject?.path) return;
@@ -554,6 +557,44 @@ export function Capabilities({
       setSaving(false);
     }
   };
+
+  const requestCapabilityDelete = (capability: AiddCapabilitySummary) => {
+    setError(null);
+    setMessage(null);
+    setDeleteTarget(capability);
+  };
+
+  const deleteSelectedCapability = async () => {
+    if (!activeProject?.path || !deleteTarget) return;
+
+    const target = deleteTarget;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await window.aidd.deleteCapability({
+        projectPath: activeProject.path,
+        slug: target.slug,
+      });
+      setSetup(next);
+      setDeleteTarget(null);
+
+      if (selectedSlug === target.slug) {
+        resetForm();
+        setView("list");
+      }
+
+      setMessage(`Deleted capability "${target.title}".`);
+      void window.aidd.notify({
+        title: "Capability deleted",
+        body: target.title,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const createDeliveryPackage = async () => {
     if (!activeProject?.path || !selectedSlug) return;
     setSaving(true);
@@ -673,6 +714,69 @@ export function Capabilities({
     }
   };
 
+  const deleteDialog = deleteTarget ? (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      role="presentation"
+      onClick={() => {
+        if (!saving) setDeleteTarget(null);
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-capability-title"
+        className="w-full max-w-lg rounded-lg border bg-card p-5 shadow-lg"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <div className="rounded-full border border-destructive/30 bg-destructive/10 p-2 text-destructive">
+            <ShieldAlert className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 space-y-2">
+            <h2 id="delete-capability-title" className="text-lg font-semibold">
+              Delete capability?
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              This will permanently delete the files for
+              {" "}
+              <span className="font-medium text-foreground">{deleteTarget.title}</span> only.
+              Other capabilities will not be touched.
+            </p>
+            <div className="rounded-md border bg-muted/40 p-3 text-xs">
+              <div className="font-medium text-foreground">Files to remove</div>
+              <code className="mt-1 block break-all text-muted-foreground">
+                capabilities/{deleteTarget.slug}/
+              </code>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              AIDD will refresh the capability/component indexes and create a git checkpoint commit after the delete.
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setDeleteTarget(null)}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={deleteSelectedCapability}
+            disabled={saving}
+          >
+            <Trash2 className="h-4 w-4" />
+            {saving ? "Deleting..." : "Delete capability"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   if (!activeProject)
     return (
       <div className="flex h-full items-center justify-center p-6">
@@ -687,6 +791,7 @@ export function Capabilities({
   if (view === "list")
     return (
       <div className="flex h-full flex-col overflow-hidden">
+        {deleteDialog}
         <header className="flex h-16 shrink-0 items-center justify-between border-b px-6">
           <div>
             <h1 className="text-xl font-semibold">Capabilities</h1>
@@ -710,6 +815,12 @@ export function Capabilities({
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
+          {message && (
+            <Alert className="mb-4">
+              <AlertTitle>Updated</AlertTitle>
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          )}
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {setup?.capabilities.map((capability) => (
               <Card
@@ -719,7 +830,7 @@ export function Capabilities({
               >
                 <CardHeader>
                   <div className="flex items-start justify-between gap-3">
-                    <div>
+                    <div className="min-w-0">
                       <CardTitle className="text-base">
                         {capability.title}
                       </CardTitle>
@@ -729,9 +840,26 @@ export function Capabilities({
                           : "No components linked yet"}
                       </CardDescription>
                     </div>
-                    <Badge variant="outline">
-                      <StatusPill status={capability.status} />
-                    </Badge>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Badge variant="outline">
+                        <StatusPill status={capability.status} />
+                      </Badge>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        aria-label={`Delete ${capability.title}`}
+                        disabled={saving}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          requestCapabilityDelete(capability);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -779,6 +907,7 @@ export function Capabilities({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      {deleteDialog}
       <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b px-6">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -810,6 +939,23 @@ export function Capabilities({
               disabled={saving || !canCreateDeliveryPackage}
             >
               <PackagePlus className="h-4 w-4" /> Create Delivery Package
+            </Button>
+          )}
+          {view === "edit" && selectedSlug && (
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() =>
+                requestCapabilityDelete({
+                  slug: selectedSlug,
+                  title: title.trim() || selectedSlug,
+                  status,
+                  components: selectedComponents,
+                })
+              }
+              disabled={saving}
+            >
+              <Trash2 className="h-4 w-4" /> Delete
             </Button>
           )}
           <Button
