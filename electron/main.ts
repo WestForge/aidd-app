@@ -923,6 +923,11 @@ interface ReadComponentInput {
   slug: string;
 }
 
+interface DeleteComponentInput {
+  projectPath: string;
+  slug: string;
+}
+
 interface GenerateComponentContractInput {
   projectPath: string;
   slug: string;
@@ -7173,6 +7178,77 @@ async function updateComponent(input: UpdateComponentInput) {
   return readProjectSetup(input.projectPath);
 }
 
+async function removeDeletedComponentFromCapabilities(projectPath: string, componentSlug: string) {
+  const capabilities = await readEntities(projectPath, 'capabilities', 'capability.json');
+  const updatedCapabilitySlugs: string[] = [];
+
+  for (const capability of capabilities) {
+    const capabilitySlug = String(capability.slug || capability.id || slugify(String(capability.title || ''))).trim();
+    if (!capabilitySlug) continue;
+
+    const linkedComponents: string[] = Array.isArray(capability.components)
+      ? capability.components.map(String)
+      : Array.isArray(capability.modules)
+        ? capability.modules.map(String)
+        : [];
+    if (!linkedComponents.includes(componentSlug)) continue;
+
+    const nextComponentSlugs = linkedComponents.filter((slug) => slug !== componentSlug);
+    const detail = await readCapability({ projectPath, slug: capabilitySlug });
+    await updateCapability({
+      projectPath,
+      slug: capabilitySlug,
+      title: detail.title,
+      status: detail.status as SetupStepStatus,
+      componentSlugs: nextComponentSlugs,
+      sections: detail.sections
+    });
+    updatedCapabilitySlugs.push(capabilitySlug);
+  }
+
+  return updatedCapabilitySlugs;
+}
+
+async function deleteComponent(input: DeleteComponentInput) {
+  const rawSlug = String(input.slug || '').trim();
+  if (!input.projectPath || !rawSlug) throw new Error('Project path and component slug are required.');
+
+  const slug = slugify(rawSlug);
+  if (!slug || slug !== rawSlug) throw new Error('Component delete rejected: invalid component slug.');
+
+  const candidates = [
+    {
+      root: path.resolve(input.projectPath, 'components'),
+      dir: path.resolve(input.projectPath, 'components', slug),
+      manifest: 'component.json'
+    },
+    {
+      root: path.resolve(input.projectPath, 'modules'),
+      dir: path.resolve(input.projectPath, 'modules', slug),
+      manifest: 'module.json'
+    }
+  ];
+
+  let target: typeof candidates[number] | null = null;
+  for (const candidate of candidates) {
+    if (candidate.dir === candidate.root || !candidate.dir.startsWith(`${candidate.root}${path.sep}`)) {
+      throw new Error('Component delete rejected: unsafe component path.');
+    }
+    if (await exists(path.join(candidate.dir, candidate.manifest))) {
+      target = candidate;
+      break;
+    }
+  }
+
+  if (!target) throw new Error(`Component not found: ${slug}`);
+
+  await fsp.rm(target.dir, { recursive: true, force: false });
+  await removeDeletedComponentFromCapabilities(input.projectPath, slug);
+  await refreshComponentsIndex(input.projectPath);
+  await refreshCapabilitiesIndex(input.projectPath);
+  return readProjectSetup(input.projectPath);
+}
+
 async function generateComponentContract(input: GenerateComponentContractInput) {
   const slug = slugify(input.slug);
   const dir = path.join(input.projectPath, 'components', slug);
@@ -12971,6 +13047,11 @@ ipcMain.handle('project:importComponentTechnicalChangeReviewPackage', async (_ev
 ipcMain.handle('project:updateComponent', async (_event, input: UpdateComponentInput) => {
   if (!input.projectPath || !input.slug || !input.title?.trim()) throw new Error('Project path, component slug, and title are required.');
   return withProjectSaveSync(input.projectPath, () => updateComponent(input));
+});
+
+ipcMain.handle('project:deleteComponent', async (_event, input: DeleteComponentInput) => {
+  if (!input?.projectPath || !input?.slug) throw new Error('Project path and component slug are required.');
+  return withProjectSaveSync(input.projectPath, () => deleteComponent(input));
 });
 
 ipcMain.handle('project:generateComponentContract', async (_event, input: GenerateComponentContractInput) => {

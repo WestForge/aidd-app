@@ -22,6 +22,7 @@ import {
   ShieldAlert,
   SkipForward,
   Sparkles,
+  Trash2,
   Workflow,
   Zap,
   X,
@@ -561,6 +562,8 @@ export function Components({
   const [technicalChangeReviewPackage, setTechnicalChangeReviewPackage] = useState<AiddComponentTechnicalChangeReviewPackageResult | null>(null);
   const [technicalChangeReviewPackageDragFilePath, setTechnicalChangeReviewPackageDragFilePath] = useState<string | null>(null);
   const [dragError, setDragError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AiddComponentSummary | null>(null);
 
   const load = async () => {
     if (!activeProject?.path) return;
@@ -641,6 +644,8 @@ export function Components({
     setTechnicalChangeReviewPackage(null);
     setTechnicalChangeReviewPackageDragFilePath(null);
     setDragError(null);
+    setMessage(null);
+    setDeleteTarget(null);
     setSectionDragFiles({});
     setContractDragFilePath(null);
   };
@@ -769,6 +774,45 @@ export function Components({
       });
       setSetup(next);
       void window.aidd.notify({ title: "Saved", body: "Component saved." });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const requestComponentDelete = (component: AiddComponentSummary) => {
+    setError(null);
+    setDragError(null);
+    setMessage(null);
+    setDeleteTarget(component);
+  };
+
+  const deleteSelectedComponent = async () => {
+    if (!activeProject?.path || !deleteTarget) return;
+
+    const target = deleteTarget;
+    setSaving(true);
+    setError(null);
+    setDragError(null);
+    try {
+      const next = await window.aidd.deleteComponent({
+        projectPath: activeProject.path,
+        slug: target.slug,
+      });
+      setSetup(next);
+      setDeleteTarget(null);
+
+      if (editingSlug === target.slug) {
+        resetForm();
+        setView("list");
+      }
+
+      setMessage(`Deleted component "${target.title}".`);
+      void window.aidd.notify({
+        title: "Component deleted",
+        body: target.title,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1440,6 +1484,68 @@ export function Components({
     window.aidd.startNativeFileDrag(filePath);
   };
 
+  const deleteDialog = deleteTarget ? (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      role="presentation"
+      onClick={() => {
+        if (!saving) setDeleteTarget(null);
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-component-title"
+        className="w-full max-w-lg rounded-lg border bg-card p-5 shadow-lg"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <div className="rounded-full border border-destructive/30 bg-destructive/10 p-2 text-destructive">
+            <ShieldAlert className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 space-y-2">
+            <h2 id="delete-component-title" className="text-lg font-semibold">
+              Delete component?
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              This will permanently delete the files for{" "}
+              <span className="font-medium text-foreground">{deleteTarget.title}</span> only.
+              Other components will not be touched.
+            </p>
+            <div className="rounded-md border bg-muted/40 p-3 text-xs">
+              <div className="font-medium text-foreground">Files to remove</div>
+              <code className="mt-1 block break-all text-muted-foreground">
+                components/{deleteTarget.slug}/
+              </code>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              AIDD will also remove this component from any capability links, refresh the indexes, and create a git checkpoint commit after the delete.
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setDeleteTarget(null)}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={deleteSelectedComponent}
+            disabled={saving}
+          >
+            <Trash2 className="h-4 w-4" />
+            {saving ? "Deleting..." : "Delete component"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   if (!activeProject)
     return (
       <div className="flex h-full items-center justify-center p-6">
@@ -1454,6 +1560,7 @@ export function Components({
   if (view === "list")
     return (
       <div className="flex h-full flex-col overflow-hidden">
+        {deleteDialog}
         <header className="flex h-16 shrink-0 items-center justify-between border-b px-6">
           <div>
             <h1 className="text-xl font-semibold">Components</h1>
@@ -1477,6 +1584,12 @@ export function Components({
             <Alert variant="destructive" className="mb-4">
               <AlertTitle>Error</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          {message && (
+            <Alert className="mb-4">
+              <AlertTitle>Updated</AlertTitle>
+              <AlertDescription>{message}</AlertDescription>
             </Alert>
           )}
           <div className="mb-6 grid gap-3 md:grid-cols-4">
@@ -1506,13 +1619,30 @@ export function Components({
                             : "No capabilities linked yet"}
                         </CardDescription>
                       </div>
-                      <div className="flex flex-col items-end gap-1">
-                        <Badge variant="outline">
-                          <StatusPill status={component.status} />
-                        </Badge>
-                        <Badge variant={component.contract?.status === "current" ? "secondary" : "outline"}>
-                          Contract: {contractLabel(component.contract?.status)}
-                        </Badge>
+                      <div className="flex shrink-0 items-start gap-2">
+                        <div className="flex flex-col items-end gap-1">
+                          <Badge variant="outline">
+                            <StatusPill status={component.status} />
+                          </Badge>
+                          <Badge variant={component.contract?.status === "current" ? "secondary" : "outline"}>
+                            Contract: {contractLabel(component.contract?.status)}
+                          </Badge>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-destructive hover:text-destructive"
+                          aria-label={`Delete ${component.title}`}
+                          disabled={saving}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            requestComponentDelete(component);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
                     </div>
                   </CardHeader>
@@ -1791,6 +1921,7 @@ export function Components({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      {deleteDialog}
       <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b px-6">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -1816,6 +1947,25 @@ export function Components({
             <GitBranch className="h-4 w-4" />
             Configure source
           </Button>
+          {view === "edit" && editingSlug && (
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() =>
+                requestComponentDelete({
+                  slug: editingSlug,
+                  title: title.trim() || editingSlug,
+                  status,
+                  sourceProjects: selectedSourceProjects,
+                  source: sourceConfig,
+                  contract: contract || undefined,
+                })
+              }
+              disabled={saving}
+            >
+              <Trash2 className="h-4 w-4" /> Delete
+            </Button>
+          )}
           <Button
             onClick={view === "edit" ? updateComponent : createComponent}
             disabled={saving || !title.trim()}
@@ -1830,6 +1980,14 @@ export function Components({
           <Alert variant="destructive">
             <AlertTitle>Error</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </div>
+      )}
+      {message && (
+        <div className="shrink-0 px-6 pt-4">
+          <Alert>
+            <AlertTitle>Updated</AlertTitle>
+            <AlertDescription>{message}</AlertDescription>
           </Alert>
         </div>
       )}

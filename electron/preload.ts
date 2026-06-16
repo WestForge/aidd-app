@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('aidd', {
   createComponent: (input: unknown) => ipcRenderer.invoke('project:createComponent', input),
   readComponent: (input: unknown) => ipcRenderer.invoke('project:readComponent', input),
   updateComponent: (input: unknown) => ipcRenderer.invoke('project:updateComponent', input),
+  deleteComponent: (input: unknown) => ipcRenderer.invoke('project:deleteComponent', input),
   generateComponentContract: (input: unknown) => ipcRenderer.invoke('project:generateComponentContract', input),
   selectComponentSourceDirectory: (input: unknown) => ipcRenderer.invoke('project:selectComponentSourceDirectory', input),
   detectComponentSourceDirectory: (input: unknown) => ipcRenderer.invoke('project:detectComponentSourceDirectory', input),

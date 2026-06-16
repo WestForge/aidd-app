@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:main\"",
     "dev:renderer": "vite --host 127.0.0.1",
-    "dev:main": "wait-on tcp:5173 && tsc -p tsconfig.main.json && electron .",
+    "dev:main": "wait-on tcp:5173 && npm run build:main && electron .",
     "build:main": "tsc -p tsconfig.main.json --noEmit && node scripts/build-main.mjs",
     "build": "npm run build:main && vite build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.main.json --noEmit",

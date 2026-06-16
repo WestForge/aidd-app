@@ -591,6 +591,11 @@ interface AiddReadComponentInput {
   slug: string;
 }
 
+interface AiddDeleteComponentInput {
+  projectPath: string;
+  slug: string;
+}
+
 interface AiddGenerateComponentContractInput {
   projectPath: string;
   slug: string;
@@ -1090,6 +1095,7 @@ interface Window {
     createComponent: (input: AiddCreateComponentInput) => Promise<AiddProjectSetupState>;
     readComponent: (input: AiddReadComponentInput) => Promise<AiddComponentDetail>;
     updateComponent: (input: AiddUpdateComponentInput) => Promise<AiddProjectSetupState>;
+    deleteComponent: (input: AiddDeleteComponentInput) => Promise<AiddProjectSetupState>;
     generateComponentContract: (input: AiddGenerateComponentContractInput) => Promise<AiddComponentDetail>;
     selectComponentSourceDirectory: (input: AiddComponentSourceDirectoryInput) => Promise<AiddComponentSourceDirectorySelection | null>;
     detectComponentSourceDirectory: (input: AiddComponentSourceDirectoryInput) => Promise<AiddComponentSourceDirectorySelection>;
