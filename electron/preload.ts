@@ -1,6 +1,16 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 contextBridge.exposeInMainWorld('aidd', {
+  aiSidecar: {
+    show: (input: unknown) => ipcRenderer.invoke('aiSidecar:show', input),
+    hide: () => ipcRenderer.invoke('aiSidecar:hide'),
+    navigate: (input: unknown) => ipcRenderer.invoke('aiSidecar:navigate', input),
+    setBounds: (input: unknown) => ipcRenderer.invoke('aiSidecar:setBounds', input),
+    openExternal: (input: unknown) => ipcRenderer.invoke('aiSidecar:openExternal', input),
+    reload: () => ipcRenderer.invoke('aiSidecar:reload'),
+    goBack: () => ipcRenderer.invoke('aiSidecar:goBack'),
+    goForward: () => ipcRenderer.invoke('aiSidecar:goForward')
+  },
   getDroppedFilePath: (file: unknown) => webUtils.getPathForFile(file as any),
   notify: (input: unknown) => ipcRenderer.invoke('app:notify', input),
   showItemInFolder: (filePath: string) => ipcRenderer.invoke('app:showItemInFolder', filePath),

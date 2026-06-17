@@ -220,7 +220,7 @@ const pageHelpContent: Record<Screen, PageHelpContent> = {
   }
 };
 
-export function PageHelp({ screen }: { screen: Screen }) {
+export function PageHelp({ screen, rightOffset = 20 }: { screen: Screen; rightOffset?: number }) {
   const [open, setOpen] = useState(false);
   const content = useMemo(() => pageHelpContent[screen], [screen]);
 
@@ -245,7 +245,8 @@ export function PageHelp({ screen }: { screen: Screen }) {
     <>
       <Button
         type="button"
-        className="fixed bottom-5 right-5 z-40 h-11 rounded-full px-4 shadow-lg"
+        className="fixed bottom-5 z-40 h-11 rounded-full px-4 shadow-lg"
+        style={{ right: rightOffset }}
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
         aria-expanded={open}

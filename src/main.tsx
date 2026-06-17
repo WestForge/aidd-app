@@ -17,6 +17,7 @@ import { Reviews } from './components/Reviews';
 import { Settings } from './components/Settings';
 import { ProjectValidation } from './components/ProjectValidation';
 import { PageHelp } from './components/PageHelp';
+import { AiWebChatSidecar, useAiWebChatSidecarState } from './components/AiWebChatSidecar';
 
 export type Screen = 'projects' | 'project-create' | 'home' | 'foundation' | 'standards' | 'capabilities' | 'components' | 'delivery-packages' | 'bundle-editor' | 'reviews' | 'validation' | 'settings';
 
@@ -181,6 +182,7 @@ function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => getStoredThemeMode());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readLocalStorage('aidd.sidebarCollapsed') === 'true');
   const [capabilityToOpen, setCapabilityToOpen] = useState<string | null>(null);
+  const aiSidecar = useAiWebChatSidecarState();
 
   useEffect(() => {
     const applyTheme = () => {
@@ -329,7 +331,8 @@ function App() {
         {screen === 'validation' && <ProjectValidation activeProject={activeProject} />}
         {screen === 'settings' && <Settings activeProject={activeProject} themeMode={themeMode} onThemeModeChange={setThemeMode} />}
       </main>
-      <PageHelp screen={screen} />
+      <AiWebChatSidecar open={aiSidecar.open} provider={aiSidecar.provider} onOpenChange={aiSidecar.setOpen} onProviderChange={aiSidecar.setProvider} />
+      <PageHelp screen={screen} rightOffset={aiSidecar.open ? 444 : 20} />
     </div>
   );
 }

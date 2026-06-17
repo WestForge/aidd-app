@@ -1,3 +1,4 @@
+import { registerAiSidecarIpcHandlers } from './aiSidecarIpc';
 import { registerAppWorkflowIpcHandlers } from './appWorkflowIpc';
 import { registerDragIpcHandlers } from './dragIpc';
 import { registerFileSystemIpcHandlers } from './fileSystemIpc';
@@ -6,6 +7,7 @@ import { registerProjectDomainIpcHandlers } from './projectDomainIpc';
 import { registerProjectIpcHandlers } from './projectIpc';
 
 export function registerIpcHandlers() {
+  registerAiSidecarIpcHandlers();
   registerProjectIpcHandlers();
   registerDragIpcHandlers();
   registerAppWorkflowIpcHandlers();

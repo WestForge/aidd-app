@@ -1,5 +1,23 @@
 /// <reference types="vite/client" />
 
+
+type AiddAiWebProvider = 'chatgpt' | 'claude' | 'grok' | 'gemini';
+
+interface AiddAiSidecarBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface AiddAiSidecarStatus {
+  visible?: boolean;
+  provider?: AiddAiWebProvider;
+  url?: string;
+  ok?: boolean;
+  bounds?: AiddAiSidecarBounds;
+}
+
 interface AiddProjectCreateInput {
   name: string;
   description: string;
@@ -1041,6 +1059,16 @@ interface AiddPrepareComponentContractDragFileInput {
 
 interface Window {
   aidd: {
+    aiSidecar: {
+      show: (input: { provider?: AiddAiWebProvider }) => Promise<AiddAiSidecarStatus>;
+      hide: () => Promise<AiddAiSidecarStatus>;
+      navigate: (input: { provider?: AiddAiWebProvider }) => Promise<AiddAiSidecarStatus>;
+      setBounds: (input: AiddAiSidecarBounds) => Promise<AiddAiSidecarStatus>;
+      openExternal: (input: { provider?: AiddAiWebProvider }) => Promise<AiddAiSidecarStatus>;
+      reload: () => Promise<AiddAiSidecarStatus>;
+      goBack: () => Promise<AiddAiSidecarStatus>;
+      goForward: () => Promise<AiddAiSidecarStatus>;
+    };
     getDroppedFilePath: (file: File) => string;
     notify: (input: AiddNotifyInput) => Promise<boolean>;
     showItemInFolder: (filePath: string) => Promise<boolean>;
