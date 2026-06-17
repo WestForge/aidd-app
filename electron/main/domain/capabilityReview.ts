@@ -1,0 +1,639 @@
+import matter from '../../frontmatter';
+import { readZipFile, safeZipReadEntryName, writeZipFile } from '../shared/zip';
+import type { ZipEntryInput } from '../shared/zip';
+import { app } from 'electron';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import { CAPABILITY_LEGACY_SECTION_FILES, CAPABILITY_TEMPLATE_SECTIONS, buildCapabilityIndexMarkdown, buildCapabilitySectionMarkdown, normaliseCapabilitySections, readSectionFromFirstExistingFile, sectionBodyFromMarkdown } from './capabilityCore';
+import { refreshCapabilitiesIndex, refreshComponentsIndex } from './componentCore';
+import { buildProjectFoundationReviewMarkdown, createComponent, escapeRegExp, readProjectName, shouldIncludeInReviewBundle } from './componentReview';
+import { TEMPLATE_ID, TEMPLATE_VERSION, exists, readJson, slugify, writeJson } from './projectCore';
+import { contentLooksComplete, firstMarkdownHeading, titleFromSlug } from './projectMaintenance';
+import { collectMarkdownFiles, readProjectSetup } from './projectStatus';
+import { normaliseRelativePath, parseMarkdownSafe } from './projectValidation';
+import type { CapabilityReviewPackageImportResult, CapabilityReviewPackageResult, CapabilitySectionInput, CreateCapabilityInput, DeleteCapabilityInput, ImportCapabilityReviewPackageInput, ReadCapabilityInput, SetupStepStatus, UpdateCapabilityInput } from './types';
+
+export function isSafeCapabilityReviewReturnPath(relativePath: string) {
+  const normalised = safeZipReadEntryName(relativePath);
+  if (!normalised || !normalised.startsWith('capabilities/')) return false;
+  const parts = normalised.split('/');
+  if (parts.length < 3) return false;
+  if (!normalised.toLowerCase().endsWith('.md')) return false;
+  const base = path.basename(normalised).toLowerCase();
+  if (base === 'index.md') return false;
+  return true;
+}
+
+export async function collectCapabilityReviewEntries(projectPath: string, capabilitySlug?: string) {
+  const capabilitiesRoot = path.join(projectPath, 'capabilities');
+  const entries: ZipEntryInput[] = [];
+  const includedFiles: string[] = [];
+  const requestedSlug = capabilitySlug ? slugify(capabilitySlug) : null;
+  let capabilityCount = 0;
+
+  if (!(await exists(capabilitiesRoot))) {
+    return { entries, includedFiles, capabilityCount };
+  }
+
+  for (const capabilityDirEntry of await fsp.readdir(capabilitiesRoot, { withFileTypes: true })) {
+    if (!capabilityDirEntry.isDirectory() || capabilityDirEntry.name.startsWith('_')) continue;
+
+    const slug = capabilityDirEntry.name;
+    if (requestedSlug && slug !== requestedSlug) continue;
+    const capabilityDir = path.join(capabilitiesRoot, slug);
+    const manifestPath = path.join(capabilityDir, 'capability.json');
+    if (!(await exists(manifestPath))) continue;
+    capabilityCount += 1;
+
+    let sectionFiles = CAPABILITY_TEMPLATE_SECTIONS.map((section) => section.fileName);
+    try {
+      const manifest = await readJson<any>(manifestPath);
+      const manifestSectionFiles = Array.isArray(manifest?.template?.sectionFiles)
+        ? manifest.template.sectionFiles.map(String)
+        : Array.isArray(manifest?.sections)
+          ? manifest.sections.map((section: any) => String(section.fileName || '')).filter(Boolean)
+          : [];
+      if (manifestSectionFiles.length) sectionFiles = manifestSectionFiles;
+    } catch {}
+
+    const existingMarkdown = (await collectMarkdownFiles(capabilityDir)).filter((relativeFile) => {
+      const base = path.basename(relativeFile).toLowerCase();
+      return base !== 'index.md';
+    });
+
+    const candidateFiles = Array.from(new Set([...sectionFiles, ...existingMarkdown])).filter((fileName) => {
+      const normalised = normaliseRelativePath(fileName);
+      const base = path.basename(normalised).toLowerCase();
+      const unsafe = path.isAbsolute(fileName) || normalised.split('/').some((part) => part === '..' || part === '.');
+      return !unsafe && normalised.toLowerCase().endsWith('.md') && base !== 'index.md';
+    });
+
+    for (const relativeFile of candidateFiles) {
+      const full = path.join(capabilityDir, relativeFile);
+      if (!(await exists(full))) continue;
+      const raw = await fsp.readFile(full, 'utf8');
+      if (!shouldIncludeInReviewBundle(raw)) continue;
+      const zipPath = `capabilities/${slug}/${normaliseRelativePath(relativeFile)}`;
+      entries.push({ name: zipPath, data: Buffer.from(raw, 'utf8') });
+      includedFiles.push(zipPath);
+    }
+  }
+
+  return { entries, includedFiles: includedFiles.sort((a, b) => a.localeCompare(b)), capabilityCount };
+}
+
+export function buildCapabilityReviewBundleReadme(input: { projectName: string; capabilityCount: number; capabilityFileCount: number; foundationFileCount: number; targetCapability?: string | null }) {
+  const targetCapability = input.targetCapability || '<included-capability-id>';
+  return `# AIDD Capability Review Package
+
+This zip was generated by AIDD for capability review.
+
+## Review scope
+
+You are reviewing **only the capability included in this package**.
+
+Target capability: \`${targetCapability}\`
+
+Do not review or modify components, delivery packages, source code, or project structure unless explicitly required to understand this capability.
+
+\`PROJECT.md\` is **context only**.
+
+Focus your review on:
+
+- clarity of outcomes
+- scope boundaries
+- user journeys
+- functional and quality requirements
+- UX expectations
+- risks and edge cases
+- validation and acceptance checks
+- suitability for implementation planning
+
+## Your task
+
+Review the included capability section files under \`capabilities/${targetCapability}/\` and improve them so they are clearer, more complete, and more useful for delivery planning.
+
+Use \`PROJECT.md\` only as background context.
+
+## Allowed changes
+
+You may update files only under:
+
+- \`capabilities/${targetCapability}/\`
+
+You must return a zip containing only:
+
+- updated Markdown files under \`capabilities/${targetCapability}/\`
+- \`REVIEW.md\`
+
+The included \`REVIEW.md\` is a template. Complete it and return it with the updated capability files.
+
+## Do not return
+
+Do not return:
+
+- \`PROJECT.md\`
+- \`README.md\`
+- \`MANIFEST.json\`
+- capability \`index.md\` files
+- source code
+- components
+- files outside \`capabilities/${targetCapability}/\`
+- unrelated capabilities
+
+## Required return shape
+
+\`\`\`txt
+capabilities/
+  ${targetCapability}/
+    <updated-section-files>.md
+REVIEW.md
+\`\`\`
+
+AIDD will accept a returned zip only when it contains a \`capabilities/\` directory.
+
+## REVIEW.md must include
+
+- Summary of changes
+- Pros: what is already strong or useful
+- Cons: gaps, inconsistencies, weak areas, or risks
+- Capabilities reviewed
+- Files changed
+- Assumptions made
+- Questions or unresolved issues
+
+## Excluding files from future review bundles
+
+To exclude a Markdown file from future review bundles, add this to its front matter:
+
+\`\`\`yaml
+aidd:
+  includeInReviewBundle: false
+\`\`\`
+
+## Package summary
+
+- Project: ${input.projectName}
+- Target capability: ${targetCapability}
+- Foundation files included: ${input.foundationFileCount}
+- Capabilities found: ${input.capabilityCount}
+- Capability files included: ${input.capabilityFileCount}
+`;
+}
+
+export function buildCapabilityReviewTemplate(input: { projectName: string; targetCapability?: string | null }) {
+  return `# Capability Review
+
+Project: ${input.projectName}
+Target capability: ${input.targetCapability || '<included-capability-id>'}
+
+## Summary of changes
+
+- TODO
+
+## Pros
+
+- TODO
+
+## Cons
+
+- TODO
+
+## Capabilities reviewed
+
+- TODO
+
+## Files changed
+
+- TODO
+
+## Assumptions made
+
+- TODO
+
+## Questions or unresolved issues
+
+- TODO
+`;
+}
+
+export async function readCapabilityReviewSectionMetadata(projectPath: string, slug: string) {
+  const dir = path.join(projectPath, 'capabilities', slug);
+  const titleCandidates: string[] = [];
+  const components = new Set<string>();
+  const sections: CapabilitySectionInput[] = [];
+
+  for (const template of CAPABILITY_TEMPLATE_SECTIONS) {
+    const filePath = path.join(dir, template.fileName);
+    if (!(await exists(filePath))) continue;
+
+    const raw = await fsp.readFile(filePath, 'utf8');
+    const parsed = parseMarkdownSafe(raw);
+    const aidd = parsed.ok ? ((parsed.parsed.data as any)?.aidd || {}) : {};
+    const body = sectionBodyFromMarkdown(raw);
+    const heading = firstMarkdownHeading(raw);
+    const aiddTitle = String(aidd.title || '').trim();
+
+    if (aiddTitle) titleCandidates.push(aiddTitle.replace(new RegExp(`${escapeRegExp(template.title)}$`, 'i'), '').trim());
+    if (heading) titleCandidates.push(heading.replace(new RegExp(`${escapeRegExp(template.title)}$`, 'i'), '').trim());
+
+    if (Array.isArray(aidd.components)) {
+      for (const item of aidd.components) {
+        const value = String(item || '').trim();
+        if (value) components.add(value);
+      }
+    }
+
+    const status = String(aidd.status || (contentLooksComplete(raw) ? 'complete' : 'draft')) as SetupStepStatus;
+    sections.push({
+      key: template.key,
+      fileName: template.fileName,
+      title: template.title,
+      body,
+      status
+    });
+  }
+
+  const title = titleCandidates.find((candidate) => candidate.trim()) || titleFromSlug(slug);
+  const status = sections.length && sections.every((section) => section.status === 'complete' || section.status === 'skipped')
+    ? 'complete'
+    : 'draft';
+
+  return {
+    title,
+    status: status as SetupStepStatus,
+    components: Array.from(components),
+    sections: normaliseCapabilitySections(sections, {})
+  };
+}
+
+export async function reconcileCapabilityAfterReviewImport(projectPath: string, slug: string) {
+  const canonicalSlug = slugify(slug);
+  const dir = path.join(projectPath, 'capabilities', canonicalSlug);
+  const manifestPath = path.join(dir, 'capability.json');
+  const metadata = await readCapabilityReviewSectionMetadata(projectPath, canonicalSlug);
+  const createdManifest = !(await exists(manifestPath));
+
+  await fsp.mkdir(dir, { recursive: true });
+
+  if (createdManifest) {
+    await writeJson(manifestPath, {
+      slug: canonicalSlug,
+      title: metadata.title,
+      status: metadata.status,
+      components: metadata.components,
+      createdAt: new Date().toISOString(),
+      importedAt: new Date().toISOString(),
+      template: {
+        id: TEMPLATE_ID,
+        version: TEMPLATE_VERSION,
+        sectionFiles: CAPABILITY_TEMPLATE_SECTIONS.map((section) => section.fileName)
+      }
+    });
+  }
+
+  const capability = await readCapability({ projectPath, slug: canonicalSlug }).catch(async () => ({
+    slug: canonicalSlug,
+    title: metadata.title,
+    status: metadata.status,
+    components: metadata.components,
+    sections: metadata.sections
+  }));
+
+  await updateCapability({
+    projectPath,
+    slug: canonicalSlug,
+    title: capability.title || metadata.title,
+    status: (capability.status || metadata.status) as SetupStepStatus,
+    componentSlugs: Array.isArray((capability as any).components) ? (capability as any).components : metadata.components,
+    sections: metadata.sections
+  });
+
+  return { slug: canonicalSlug, createdManifest };
+}
+
+export async function importCapabilityReviewPackage(input: ImportCapabilityReviewPackageInput): Promise<CapabilityReviewPackageImportResult> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.zipPath) throw new Error('Review response zip path is required.');
+  const root = path.resolve(input.projectPath);
+  const zipPath = path.resolve(input.zipPath);
+  if (!(await exists(root))) throw new Error(`Project path does not exist: ${input.projectPath}`);
+  if (!(await exists(zipPath))) throw new Error(`Review response zip does not exist: ${input.zipPath}`);
+  if (path.extname(zipPath).toLowerCase() !== '.zip') throw new Error('Review response must be a .zip file.');
+
+  const entries = await readZipFile(zipPath);
+  const hasCapabilitiesDirectory = entries.some((entry) => {
+    const name = normaliseRelativePath(entry.name).replace(/^\/+/, '');
+    return name === 'capabilities/' || name.startsWith('capabilities/');
+  });
+  if (!hasCapabilitiesDirectory) {
+    throw new Error('Review response rejected: the zip must contain a capabilities/ directory.');
+  }
+
+  const importedFiles: string[] = [];
+  const skippedFiles: string[] = [];
+  let reviewMarkdown: string | undefined;
+
+  for (const entry of entries) {
+    const relativePath = safeZipReadEntryName(entry.name);
+    if (!relativePath || entry.directory) continue;
+    if (relativePath === 'REVIEW.md') {
+      reviewMarkdown = entry.data.toString('utf8');
+      continue;
+    }
+    if (!isSafeCapabilityReviewReturnPath(relativePath)) {
+      skippedFiles.push(relativePath);
+      continue;
+    }
+
+    const target = path.resolve(root, relativePath);
+    if (!target.startsWith(`${root}${path.sep}`)) {
+      skippedFiles.push(relativePath);
+      continue;
+    }
+
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.writeFile(target, entry.data, 'utf8');
+    importedFiles.push(relativePath);
+  }
+
+  const capabilitySlugs = Array.from(new Set(importedFiles.map((file) => file.split('/')[1]).filter(Boolean).map((slug) => slugify(slug)))).sort((a, b) => a.localeCompare(b));
+  const importedCapabilities: string[] = [];
+
+  for (const slug of capabilitySlugs) {
+    const result = await reconcileCapabilityAfterReviewImport(root, slug);
+    importedCapabilities.push(result.slug);
+  }
+
+  await refreshCapabilitiesIndex(root);
+  await refreshComponentsIndex(root);
+
+  return {
+    accepted: true,
+    zipPath,
+    importedFiles: importedFiles.sort((a, b) => a.localeCompare(b)),
+    skippedFiles: skippedFiles.sort((a, b) => a.localeCompare(b)),
+    capabilityCount: capabilitySlugs.length,
+    importedCapabilities: Array.from(new Set(importedCapabilities)).sort((a, b) => a.localeCompare(b)),
+    reviewIncluded: Boolean(reviewMarkdown),
+    ...(reviewMarkdown ? { reviewMarkdown } : {})
+  };
+}
+
+export async function createCapabilityReviewBundle(projectPath: string, capabilitySlug?: string): Promise<CapabilityReviewPackageResult> {
+  if (!projectPath) throw new Error('Project path is required.');
+  const root = path.resolve(projectPath);
+  if (!(await exists(root))) throw new Error(`Project path does not exist: ${projectPath}`);
+
+  const projectName = await readProjectName(root);
+  const createdAt = new Date().toISOString();
+  const stamp = createdAt.replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const requestedSlug = capabilitySlug ? slugify(capabilitySlug) : null;
+  const fileName = requestedSlug
+    ? `${slugify(projectName)}-${requestedSlug}-capability-review-${stamp}.zip`
+    : `${slugify(projectName)}-capability-review-${stamp}.zip`;
+  const outputDir = requestedSlug
+    ? path.join(app.getPath('userData'), 'review-bundles', slugify(projectName), 'capabilities', requestedSlug)
+    : path.join(app.getPath('userData'), 'review-bundles', slugify(projectName), 'capabilities');
+  const filePath = path.join(outputDir, fileName);
+
+  const foundation = await buildProjectFoundationReviewMarkdown(root);
+  const capabilities = await collectCapabilityReviewEntries(root, requestedSlug || undefined);
+  if (requestedSlug && capabilities.capabilityCount === 0) {
+    throw new Error(`Capability not found or has no reviewable files: ${requestedSlug}`);
+  }
+
+  const manifest = {
+    bundleType: 'capability-review',
+    schemaVersion: 1,
+    projectName,
+    createdAt,
+    generatedBy: 'AIDD',
+    outputIsOutsideProject: true,
+    allowedReturnPaths: [
+      'capabilities/**/*.md',
+      'REVIEW.md'
+    ],
+    disallowedReturnPaths: [
+      'PROJECT.md',
+      'README.md',
+      'MANIFEST.json',
+      'capabilities/**/index.md',
+      '**/*.json',
+      'code/**',
+      'foundation/**',
+      'components/**',
+      'delivery/**'
+    ],
+    foundationSources: foundation.includedFiles,
+    targetCapability: requestedSlug || null,
+    capabilityFiles: capabilities.includedFiles,
+    returnInstructions: {
+      zipMustContain: ['capabilities/<capability-id>/<updated-section-files>.md', 'REVIEW.md'],
+      reviewTemplateIncluded: true,
+      onlyReturnChangedCapabilitySectionFiles: true
+    }
+  };
+
+  const zipEntries: ZipEntryInput[] = [
+    { name: 'README.md', data: Buffer.from(buildCapabilityReviewBundleReadme({ projectName, capabilityCount: capabilities.capabilityCount, capabilityFileCount: capabilities.includedFiles.length, foundationFileCount: foundation.includedFiles.length, targetCapability: requestedSlug || null }), 'utf8') },
+    { name: 'REVIEW.md', data: Buffer.from(buildCapabilityReviewTemplate({ projectName, targetCapability: requestedSlug || null }), 'utf8') },
+    { name: 'MANIFEST.json', data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8') },
+    { name: 'PROJECT.md', data: Buffer.from(foundation.markdown, 'utf8') },
+    ...capabilities.entries
+  ];
+
+  await writeZipFile(filePath, zipEntries);
+  return {
+    filePath,
+    fileName,
+    capabilityCount: capabilities.capabilityCount,
+    capabilityFileCount: capabilities.includedFiles.length,
+    foundationFileCount: foundation.includedFiles.length,
+    entryCount: zipEntries.length
+  };
+}
+
+export async function createCapability(root: string, input: CreateCapabilityInput) {
+  const title = input.title.trim();
+  const slug = slugify(title);
+  const componentSlugs: string[] = Array.from(new Set<string>(input.componentSlugs || []));
+
+  if (input.inlineComponent?.title?.trim()) {
+    const created = await createComponent(root, input.inlineComponent.title.trim(), input.inlineComponent.description);
+    if (!componentSlugs.includes(created)) componentSlugs.push(created);
+  }
+
+  const dir = path.join(root, 'capabilities', slug);
+  if (await exists(dir)) return slug;
+
+  const fallback: Partial<Record<string, string>> = {
+    outcomes: input.outcome || input.description || '',
+    scope: '',
+    'user-journeys': '',
+    'functional-requirements': '',
+    'ux-ui': '',
+    risks: input.notes || '',
+    validation: ''
+  };
+  const sections = normaliseCapabilitySections(input.sections, fallback);
+  const status = input.status || 'draft';
+
+  await fsp.mkdir(dir, { recursive: true });
+  await writeJson(path.join(dir, 'capability.json'), {
+    slug,
+    title,
+    status,
+    components: componentSlugs,
+    createdAt: new Date().toISOString(),
+    template: {
+      id: TEMPLATE_ID,
+      version: TEMPLATE_VERSION,
+      sectionFiles: sections.map((section) => section.fileName)
+    }
+  });
+
+  await fsp.writeFile(path.join(dir, 'index.md'), buildCapabilityIndexMarkdown({ slug, title, status, components: componentSlugs, sections }), 'utf8');
+  for (const section of sections) {
+    await fsp.writeFile(path.join(dir, section.fileName), buildCapabilitySectionMarkdown({ slug, capabilityTitle: title, section, capabilityStatus: status, components: componentSlugs }), 'utf8');
+  }
+
+  await refreshCapabilitiesIndex(root);
+  await refreshComponentsIndex(root);
+  return slug;
+}
+
+export function extractSection(content: string, heading: string) {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`## ${escaped}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`, 'i');
+  const match = content.match(pattern);
+  return match ? match[1].trim() : '';
+}
+
+export async function readCapability(input: ReadCapabilityInput) {
+  const slug = slugify(input.slug);
+  const dir = path.join(input.projectPath, 'capabilities', slug);
+  const manifestPath = path.join(dir, 'capability.json');
+  const markdownPath = path.join(dir, 'index.md');
+  if (!(await exists(manifestPath))) throw new Error(`Capability not found: ${slug}`);
+  const manifest = await readJson<any>(manifestPath);
+  const rawIndex = await exists(markdownPath) ? await fsp.readFile(markdownPath, 'utf8') : '';
+  const parsedIndex = matter(rawIndex);
+  const aidd = (parsedIndex.data as any)?.aidd || {};
+  const title = String(manifest.title || aidd.title || slug);
+  const components: string[] = (Array.isArray(manifest.components) ? manifest.components : Array.isArray(manifest.modules) ? manifest.modules : (Array.isArray(aidd.components) ? aidd.components : []))
+    .map((component: unknown) => String(component))
+    .filter(Boolean);
+  const status = String(manifest.status || aidd.status || 'draft');
+
+  const fallbackFromLegacyIndex: Partial<Record<string, string>> = {
+    outcomes: extractSection(parsedIndex.content, 'Outcome') || extractSection(parsedIndex.content, 'Description'),
+    risks: extractSection(parsedIndex.content, 'Notes')
+  };
+
+  const sections = [];
+  for (const template of CAPABILITY_TEMPLATE_SECTIONS) {
+    const filePath = path.join(dir, template.fileName);
+    let body = fallbackFromLegacyIndex[template.key] || '';
+    let sectionStatus: SetupStepStatus = body.trim() ? 'draft' : 'not-started';
+    if (await exists(filePath)) {
+      const raw = await fsp.readFile(filePath, 'utf8');
+      const parsed = matter(raw);
+      const sectionAidd = (parsed.data as any)?.aidd || {};
+      body = sectionBodyFromMarkdown(raw);
+      sectionStatus = sectionAidd.status || (body.trim() ? 'draft' : 'not-started');
+    } else {
+      const legacySection = await readSectionFromFirstExistingFile(dir, CAPABILITY_LEGACY_SECTION_FILES[template.key] || []);
+      if (legacySection) {
+        body = legacySection.body;
+        sectionStatus = legacySection.status;
+      } else if (!body.trim()) {
+        body = template.body;
+        sectionStatus = 'draft';
+      }
+    }
+    sections.push({
+      key: template.key,
+      fileName: template.fileName,
+      title: template.title,
+      body,
+      status: sectionStatus,
+      prompt: template.prompt
+    });
+  }
+
+  return {
+    slug,
+    title,
+    status,
+    components,
+    description: sections.find((section) => section.key === 'outcomes')?.body || '',
+    outcome: sections.find((section) => section.key === 'outcomes')?.body || '',
+    notes: sections.find((section) => section.key === 'risks')?.body || '',
+    sections,
+    body: parsedIndex.content.replace(/^\s*\n/, ''),
+    filePath: markdownPath
+  };
+}
+
+export async function updateCapability(input: UpdateCapabilityInput) {
+  const slug = slugify(input.slug);
+  const dir = path.join(input.projectPath, 'capabilities', slug);
+  const manifestPath = path.join(dir, 'capability.json');
+  if (!(await exists(manifestPath))) throw new Error(`Capability not found: ${slug}`);
+  const manifest = await readJson<any>(manifestPath);
+  const title = input.title.trim() || manifest.title || slug;
+  const components: string[] = Array.from(new Set<string>(input.componentSlugs || manifest.components || manifest.modules || []));
+  const status = input.status || manifest.status || 'draft';
+  const fallback: Partial<Record<string, string>> = {
+    outcomes: input.outcome || input.description || '',
+    risks: input.notes || ''
+  };
+  const sections = normaliseCapabilitySections(input.sections, fallback);
+
+  await writeJson(manifestPath, {
+    ...manifest,
+    title,
+    status,
+    components,
+    modules: undefined,
+    updatedAt: new Date().toISOString(),
+    template: {
+      id: TEMPLATE_ID,
+      version: TEMPLATE_VERSION,
+      sectionFiles: sections.map((section) => section.fileName)
+    }
+  });
+
+  await fsp.writeFile(path.join(dir, 'index.md'), buildCapabilityIndexMarkdown({ slug, title, status, components, sections }), 'utf8');
+  for (const section of sections) {
+    await fsp.writeFile(path.join(dir, section.fileName), buildCapabilitySectionMarkdown({ slug, capabilityTitle: title, section, capabilityStatus: status, components }), 'utf8');
+  }
+
+  await refreshCapabilitiesIndex(input.projectPath);
+  await refreshComponentsIndex(input.projectPath);
+  return readProjectSetup(input.projectPath);
+}
+
+export async function deleteCapability(input: DeleteCapabilityInput) {
+  const rawSlug = String(input.slug || '').trim();
+  if (!input.projectPath || !rawSlug) throw new Error('Project path and capability slug are required.');
+
+  const slug = slugify(rawSlug);
+  if (!slug || slug !== rawSlug) throw new Error('Capability delete rejected: invalid capability slug.');
+
+  const capabilitiesRoot = path.resolve(input.projectPath, 'capabilities');
+  const capabilityDir = path.resolve(capabilitiesRoot, slug);
+
+  if (capabilityDir === capabilitiesRoot || !capabilityDir.startsWith(`${capabilitiesRoot}${path.sep}`)) {
+    throw new Error('Capability delete rejected: unsafe capability path.');
+  }
+
+  const manifestPath = path.join(capabilityDir, 'capability.json');
+  if (!(await exists(manifestPath))) throw new Error(`Capability not found: ${slug}`);
+
+  await fsp.rm(capabilityDir, { recursive: true, force: false });
+  await refreshCapabilitiesIndex(input.projectPath);
+  await refreshComponentsIndex(input.projectPath);
+  return readProjectSetup(input.projectPath);
+}
