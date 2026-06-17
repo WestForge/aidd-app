@@ -9,5 +9,6 @@ export * from './capabilityCore';
 export * from './componentTechnicalChanges';
 export * from './componentReview';
 export * from './capabilityReview';
+export * from './changes';
 export * from './delivery';
 export * from './sourceDecisionsGit';

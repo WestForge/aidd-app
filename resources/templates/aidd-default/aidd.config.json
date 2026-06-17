@@ -3,6 +3,7 @@
   "foundationDir": "foundation",
   "componentsDir": "components",
   "capabilitiesDir": "capabilities",
+  "changesDir": "changes",
   "deliveryDir": "delivery",
   "deliveryDelivery PackagesDir": "delivery/packages",
   "sourceRoots": []

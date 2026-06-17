@@ -19,7 +19,6 @@ interface DeliveryPackagesProps {
   packages: DeliveryBundle[];
   selectedId: string;
   onSelectPackage: (id: string) => void;
-  onCreatePackage: () => void;
   activeProject?: AiddTrackedProject | null;
 }
 
@@ -28,8 +27,10 @@ type DeliveryColumnId = 'packaging' | 'approved' | 'in-progress' | 'done';
 type DeliveryWorkItem = {
   id: string;
   title: string;
-  packageType?: 'capability' | 'technical';
+  packageType?: 'capability' | 'technical' | 'change';
   status: string;
+  changeIds?: string[];
+  sourceCapabilities?: string[];
   sourceCapability?: string;
   sourceTechnicalChange?: {
     componentSlug: string;
@@ -142,7 +143,7 @@ function workspacePublishLabel(item: DeliveryWorkItem) {
   return 'Not published';
 }
 
-export function DeliveryPackages({ packages, selectedId, onSelectPackage, onCreatePackage, activeProject }: DeliveryPackagesProps) {
+export function DeliveryPackages({ packages, selectedId, onSelectPackage, activeProject }: DeliveryPackagesProps) {
   const [items, setItems] = useState<DeliveryWorkItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
@@ -233,7 +234,6 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, onCrea
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Button onClick={onCreatePackage}>New Delivery Package</Button>
         </div>
       </header>
 
@@ -294,7 +294,7 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, onCrea
                             </div>
                             <div className="flex shrink-0 flex-col items-end gap-1">
                               <Badge variant={item.packageType === 'technical' ? 'outline' : 'secondary'} className="text-[10px]">
-                                {item.packageType === 'technical' ? 'Technical' : 'Capability'}
+                                {item.packageType === 'technical' ? 'Technical' : item.packageType === 'change' ? 'Change' : 'Capability'}
                               </Badge>
                               <Badge variant="secondary" className="text-[10px]">
                                 {statusLabels[item.status] ?? item.status.replace(/-/g, ' ')}
@@ -304,6 +304,12 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, onCrea
 
                           <div className="mt-3 space-y-2 text-xs text-muted-foreground">
                             {item.sourceCapability && <div>Capability: {item.sourceCapability}</div>}
+                            {(item.sourceCapabilities?.length || 0) > 0 && (
+                              <div>Capabilities: {item.sourceCapabilities?.join(', ')}</div>
+                            )}
+                            {(item.changeIds?.length || 0) > 0 && (
+                              <div>Changes: {item.changeIds?.join(', ')}</div>
+                            )}
                             {item.sourceTechnicalChange && (
                               <div>
                                 Technical change: {item.sourceTechnicalChange.technicalChangeId} ({item.sourceTechnicalChange.componentSlug})
@@ -355,7 +361,7 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, onCrea
                   })}
 
                   {!loading && columnItems.length === 0 && (
-                    <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">No delivery packages.</div>
+                    <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">No delivery packages yet. Mark a Change as ready, then create a delivery package from the Changes page.</div>
                   )}
                 </CardContent>
               </Card>

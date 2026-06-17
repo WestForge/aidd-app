@@ -7,6 +7,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { CAPABILITY_LEGACY_SECTION_FILES, CAPABILITY_TEMPLATE_SECTIONS } from './capabilityCore';
 import { readCapability, updateCapability } from './capabilityReview';
+import { CHANGE_SECTIONS, normaliseChangeRecord, titleFromChangeId } from './changes';
 import { COMPONENT_TEMPLATE_SECTIONS } from './componentCore';
 import { readComponent, updateComponent } from './componentReview';
 import { normaliseTechnicalChangeRecord } from './componentTechnicalChanges';
@@ -736,6 +737,7 @@ export function normaliseDeliveryPackageTypeForRepair(value: unknown): DeliveryP
   const text = String(value || '').trim().toLowerCase();
   if (!text) return undefined;
   if (text.includes('technical')) return 'technical';
+  if (text.includes('change')) return 'change';
   if (text.includes('capability') || text.includes('delivery')) return 'capability';
   return undefined;
 }
@@ -941,6 +943,104 @@ export async function repairDeliveryPackageManifests(projectPath: string, change
 
   if (repaired === 0) {
     pushRepairLog(logs, 'info', 'delivery-repair', 'No delivery package manifests needed repair.');
+  }
+}
+
+export async function repairChangeRecords(projectPath: string, changes: string[], warnings: string[], logs: ProjectRepairLogEntry[]) {
+  pushRepairLog(logs, 'info', 'change-repair', 'Checking Change manifests and section files.');
+  const root = path.join(projectPath, 'changes');
+  if (!(await exists(root))) return;
+  let repaired = 0;
+
+  for (const folder of await listEntityFolders(projectPath, 'changes')) {
+    const changeDir = path.join(root, folder);
+    const manifestPath = path.join(changeDir, 'change.json');
+    const now = new Date().toISOString();
+    let manifest: any = null;
+
+    if (await exists(manifestPath)) {
+      const parsed = await readJsonSafe<any>(manifestPath);
+      if (parsed.ok) {
+        manifest = parsed.data || {};
+      } else {
+        const message = `changes/${folder}/change.json could not be parsed: ${parsed.error}`;
+        warnings.push(message);
+        pushRepairLog(logs, 'warning', 'change-repair', message, { path: `changes/${folder}/change.json` });
+        continue;
+      }
+    } else {
+      let title = titleFromChangeId(folder);
+      const intentPath = path.join(changeDir, 'intent.md');
+      if (await exists(intentPath)) {
+        const heading = firstMarkdownHeading(await fsp.readFile(intentPath, 'utf8'));
+        if (heading) title = heading.replace(/\s+Intent$/i, '').trim() || title;
+      }
+      manifest = {
+        id: folder,
+        title,
+        type: 'implement-capability',
+        status: 'draft',
+        priority: 'normal',
+        risk: 'unknown',
+        linkedCapabilities: [],
+        linkedComponents: [],
+        deliveryPackageIds: [],
+        source: 'manual',
+        legacyTechnicalChange: null,
+        relativePath: normaliseRelativePath(path.relative(projectPath, changeDir)),
+        createdAt: now,
+        updatedAt: now,
+        repairedAt: now
+      };
+      await writeJson(manifestPath, manifest);
+      changes.push(`Rebuilt missing Change manifest for changes/${folder}`);
+      pushRepairLog(logs, 'success', 'change-repair', 'Rebuilt missing Change manifest.', { path: `changes/${folder}/change.json` });
+      repaired++;
+    }
+
+    const record = normaliseChangeRecord(manifest, projectPath, changeDir);
+    const normalised = {
+      ...record,
+      deliveryPackageIds: Array.from(new Set(record.deliveryPackageIds)),
+      updatedAt: record.updatedAt || now
+    };
+    const normalisedManifest = {
+      id: normalised.id,
+      title: normalised.title,
+      type: normalised.type,
+      status: normalised.status,
+      priority: normalised.priority,
+      risk: normalised.risk,
+      linkedCapabilities: normalised.linkedCapabilities,
+      linkedComponents: normalised.linkedComponents,
+      deliveryPackageIds: normalised.deliveryPackageIds,
+      source: normalised.source,
+      legacyTechnicalChange: normalised.legacyTechnicalChange || null,
+      relativePath: normalised.relativePath,
+      createdAt: normalised.createdAt,
+      updatedAt: normalised.updatedAt,
+      repairedAt: now
+    };
+    if (JSON.stringify(manifest) !== JSON.stringify(normalisedManifest)) {
+      await writeJson(manifestPath, normalisedManifest);
+      changes.push(`Normalised Change manifest for changes/${folder}`);
+      pushRepairLog(logs, 'success', 'change-repair', 'Normalised Change manifest.', { path: `changes/${folder}/change.json` });
+      repaired++;
+    }
+
+    for (const section of CHANGE_SECTIONS) {
+      const filePath = path.join(changeDir, section.fileName);
+      if (await exists(filePath)) continue;
+      await fsp.mkdir(path.dirname(filePath), { recursive: true });
+      await fsp.writeFile(filePath, `# ${section.title}\n\nTODO: Add ${section.title.toLowerCase()}.\n`, 'utf8');
+      changes.push(`Created missing Change section changes/${folder}/${section.fileName}`);
+      pushRepairLog(logs, 'success', 'change-repair', 'Created missing Change section file.', { path: `changes/${folder}/${section.fileName}` });
+      repaired++;
+    }
+  }
+
+  if (repaired === 0) {
+    pushRepairLog(logs, 'info', 'change-repair', 'No Change records needed repair.');
   }
 }
 
@@ -1415,7 +1515,7 @@ export async function repairProject(projectPath: string): Promise<ProjectRepairR
   await migrateLegacyFolderContents(projectPath, stamp, 'bundles', 'delivery/packages', changes, logs);
   await migrateLegacyFolderContents(projectPath, stamp, 'delivery/bundles', 'delivery/packages', changes, logs);
 
-  for (const dir of ['foundation', 'foundation/standards', 'foundation/delivery-planning', 'capabilities', 'components', 'delivery', 'delivery/packages', 'source-code', 'source-code/projects', '.aidd']) {
+  for (const dir of ['foundation', 'foundation/standards', 'foundation/delivery-planning', 'capabilities', 'components', 'changes', 'delivery', 'delivery/packages', 'source-code', 'source-code/projects', '.aidd']) {
     await ensureDir(dir);
   }
 
@@ -1495,6 +1595,14 @@ export async function repairProject(projectPath: string): Promise<ProjectRepairR
   );
 
   await ensureMarkdown(
+    'changes/index.md',
+    'changes-index',
+    'changes',
+    'Changes',
+    '# Changes\n\nChanges describe intended product, component, technical, documentation, or investigation work before it is scheduled for delivery.\n\n## Active changes\n\nNo changes yet.'
+  );
+
+  await ensureMarkdown(
     'delivery/packages/index.md',
     'delivery-packages-index',
     'delivery-packages-index',
@@ -1511,6 +1619,7 @@ export async function repairProject(projectPath: string): Promise<ProjectRepairR
   await refreshProjectSummaryMetadata(projectPath, changes, logs);
 
   await repairEntitySectionDocuments(projectPath, stamp, changes, warnings, logs);
+  await repairChangeRecords(projectPath, changes, warnings, logs);
   await repairDeliveryPackageManifests(projectPath, changes, warnings, logs);
 
   pushRepairLog(logs, 'info', 'validation', 'Running validation after safe data repair.');

@@ -144,6 +144,7 @@ async function repair() {
     'foundation/delivery-planning',
     'capabilities',
     'components',
+    'changes',
     'delivery',
     'delivery/packages',
     'source-code',
@@ -190,6 +191,14 @@ async function repair() {
     status: 'draft',
     required: true
   }, `# Delivery Planning\n\n## Breakdown Approach\n\nDefine how capabilities should be broken into delivery packages.\n\n## Source Code Review\n\nDefine how mapped source code should be reviewed before implementation planning.\n\n## Implementation Strategy\n\nDefine how implementation plans should be created.\n\n## Testing Strategy\n\nDefine how standards influence testing and verification.\n\n## AI Review Criteria\n\nDefine how AI output should be reviewed against source code, capabilities, components, and standards.\n\n## Required Evidence\n\nDefine what evidence is required before a delivery package can be accepted.`);
+
+  await ensureMarkdownFile('changes/index.md', {
+    type: 'changes-index',
+    id: 'changes',
+    title: 'Changes',
+    status: 'draft',
+    required: true
+  }, `# Changes\n\nChanges describe intended product, component, technical, documentation, or investigation work before it is scheduled for delivery.\n\n## Active changes\n\nNo changes yet.`);
 
   await removeEmptyObsoleteFoundationFiles();
 

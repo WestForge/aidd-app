@@ -322,12 +322,12 @@ function sectionReady(section: CapabilitySection) {
 
 export function Capabilities({
   activeProject,
-  onDeliveryPackageCreated,
+  onChangeCreated,
   initialCapabilitySlug,
   onInitialCapabilityOpened,
 }: {
   activeProject?: AiddTrackedProject | null;
-  onDeliveryPackageCreated?: (id: string) => void;
+  onChangeCreated?: (id: string) => void;
   initialCapabilitySlug?: string | null;
   onInitialCapabilityOpened?: () => void;
 }) {
@@ -356,7 +356,7 @@ export function Capabilities({
   }, [activeProject?.path]);
   const foundationBlockers = useMemo(() => {
     if (!setup)
-      return ["Load the project foundation before creating delivery packages."];
+      return ["Load the project foundation before planning Changes."];
     const blockers = setup.foundation
       .filter((doc) => doc.required !== false && doc.status !== "complete")
       .map((doc) => `${doc.title} is ${statusLabel(doc.status)}`);
@@ -374,10 +374,6 @@ export function Capabilities({
   const activeSection =
     sections.find((section) => section.key === activeSectionKey) ?? sections[0];
   const allSectionsReady = sections.every(sectionReady);
-  const canCreateDeliveryPackage =
-    foundationReady &&
-    (status === "active" || status === "complete") &&
-    allSectionsReady;
   const canCreateReviewPackage = Boolean(activeProject?.path && selectedSlug && title.trim());
 
   const prepareCapabilitySectionDragFile = async (section: CapabilitySection) => {
@@ -595,19 +591,27 @@ export function Capabilities({
     }
   };
 
-  const createDeliveryPackage = async () => {
+  const createChangeFromCapability = async () => {
     if (!activeProject?.path || !selectedSlug) return;
     setSaving(true);
     setError(null);
     try {
-      const result = await window.aidd.createDeliveryPackageFromCapability({
+      await window.aidd.updateCapability({
+        projectPath: activeProject.path,
+        slug: selectedSlug,
+        title,
+        componentSlugs: selectedComponents,
+        status,
+        sections,
+      });
+      const result = await window.aidd.createChangeFromCapability({
         projectPath: activeProject.path,
         capabilitySlug: selectedSlug,
       });
       await load();
-      setMessage(`Created delivery package ${result.id}.`);
-      await window.aidd.notify?.({ title: 'Delivery package created', body: result.id });
-      onDeliveryPackageCreated?.(result.id);
+      setMessage(`Created Change ${result.id}.`);
+      await window.aidd.notify?.({ title: 'Change created', body: result.id });
+      onChangeCreated?.(result.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -935,10 +939,10 @@ export function Capabilities({
           {view === "edit" && (
             <Button
               variant="outline"
-              onClick={createDeliveryPackage}
-              disabled={saving || !canCreateDeliveryPackage}
+              onClick={createChangeFromCapability}
+              disabled={saving || !selectedSlug}
             >
-              <PackagePlus className="h-4 w-4" /> Create Delivery Package
+              <PackagePlus className="h-4 w-4" /> Plan Change
             </Button>
           )}
           {view === "edit" && selectedSlug && (

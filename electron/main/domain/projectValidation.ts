@@ -8,6 +8,7 @@ import { readCapability } from './capabilityReview';
 import { COMPONENT_TEMPLATE_SECTIONS, componentSourceIsConfigured, normaliseComponentSource, normaliseComponentSourceDetection, resolveComponentSourceDirectory } from './componentCore';
 import { readProjectName } from './componentReview';
 import { normaliseStatusForDelivery, readDeliveryPackage, readDeliveryPackages } from './delivery';
+import { CHANGE_SECTIONS, CHANGE_STATUSES, CHANGE_TYPES } from './changes';
 import { TEMPLATE_ID, TEMPLATE_VERSION, exists, isObsoleteTemplateFile, readEntities, readJson, readProjects, readWorkspacePathForProject, slugify, templatePath, writeJson } from './projectCore';
 import { isTerminalDeliveryStatus } from './projectStatus';
 import { readSourceProjects } from './sourceDecisionsGit';
@@ -973,6 +974,7 @@ export async function validateProjectDataIntegrity(projectPath: string, section:
     'foundation/delivery-planning',
     'capabilities',
     'components',
+    'changes',
     'delivery',
     'delivery/packages',
     'source-code',
@@ -1024,6 +1026,7 @@ export async function validateProjectDataIntegrity(projectPath: string, section:
     'foundation/delivery-planning/index.md',
     'capabilities/index.md',
     'components/index.md',
+    'changes/index.md',
     'delivery/packages/index.md'
   ];
 
@@ -1189,12 +1192,15 @@ export async function validateEntityDataIntegrity(projectPath: string, section: 
   const before = section.items.length;
   const components = await collectHealthEntities(projectPath, section, 'components', 'component.json', 'component');
   const capabilities = await collectHealthEntities(projectPath, section, 'capabilities', 'capability.json', 'capability');
+  const changes = await collectHealthEntities(projectPath, section, 'changes', 'change.json', 'change');
   const sourceProjects = await collectHealthEntities(projectPath, section, 'source-code/projects', 'source-project.json', 'source-project');
   const deliveryPackages = await collectHealthEntities(projectPath, section, 'delivery/packages', 'package.json', 'delivery-package');
 
   const componentSlugs = new Set(components.map((component) => component.slug));
   const sourceIds = new Set(sourceProjects.map((sourceProject) => String(sourceProject.data.id || sourceProject.slug)));
   const capabilitySlugs = new Set(capabilities.map((capability) => capability.slug));
+  const changeIds = new Set(changes.map((change) => change.slug));
+  const knownDeliveryPackageIds = new Set(deliveryPackages.map((deliveryPackage) => deliveryPackage.slug));
 
   for (const capability of capabilities) {
     if (Array.isArray(capability.data.modules) && !Array.isArray(capability.data.components)) {
@@ -1241,6 +1247,75 @@ export async function validateEntityDataIntegrity(projectPath: string, section: 
     await validateEntitySectionFiles(projectPath, section, component, COMPONENT_TEMPLATE_SECTIONS, 'component-section');
   }
 
+  for (const change of changes) {
+    const type = String(change.data.type || '').trim();
+    if (!CHANGE_TYPES.has(type as any)) {
+      pushValidation(section, {
+        id: `change-invalid-type-${change.folder}`,
+        title: 'Change type is invalid',
+        message: `${change.relativePath} uses type ${type || 'missing'}.`,
+        severity: 'error',
+        path: change.relativePath,
+        action: 'Open the Change and choose a valid type.'
+      });
+    }
+
+    const status = String(change.data.status || '').trim();
+    if (!CHANGE_STATUSES.has(status as any)) {
+      pushValidation(section, {
+        id: `change-invalid-status-${change.folder}`,
+        title: 'Change status is invalid',
+        message: `${change.relativePath} uses status ${status || 'missing'}.`,
+        severity: 'error',
+        path: change.relativePath,
+        action: 'Open the Change and choose a valid status.'
+      });
+    }
+
+    const linkedCapabilities = Array.isArray(change.data.linkedCapabilities) ? change.data.linkedCapabilities.map(String).filter(Boolean) : [];
+    const missingCapabilities = linkedCapabilities.filter((slug: string) => !capabilitySlugs.has(slug));
+    if (missingCapabilities.length) {
+      pushValidation(section, {
+        id: `change-missing-capability-links-${change.folder}`,
+        title: 'Change links to missing capabilities',
+        message: `${change.title} references missing capabilities: ${missingCapabilities.join(', ')}.`,
+        severity: 'error',
+        path: change.relativePath,
+        action: 'Create the missing capabilities or remove the broken links.'
+      });
+    }
+
+    const linkedComponents = Array.isArray(change.data.linkedComponents) ? change.data.linkedComponents.map(String).filter(Boolean) : [];
+    const missingComponents = linkedComponents.filter((slug: string) => !componentSlugs.has(slug));
+    if (missingComponents.length) {
+      pushValidation(section, {
+        id: `change-missing-component-links-${change.folder}`,
+        title: 'Change links to missing components',
+        message: `${change.title} references missing components: ${missingComponents.join(', ')}.`,
+        severity: 'error',
+        path: change.relativePath,
+        action: 'Create the missing components or remove the broken links.'
+      });
+    }
+
+    const linkedDeliveryPackageIds = Array.isArray(change.data.deliveryPackageIds) ? change.data.deliveryPackageIds.map(String).filter(Boolean) : [];
+    const missingPackages = linkedDeliveryPackageIds.filter((id: string) => !knownDeliveryPackageIds.has(id));
+    if (missingPackages.length) {
+      pushValidation(section, {
+        id: `change-missing-delivery-links-${change.folder}`,
+        title: 'Change links to missing delivery packages',
+        message: `${change.title} references missing delivery packages: ${missingPackages.join(', ')}.`,
+        severity: 'warning',
+        path: change.relativePath,
+        action: 'Remove stale package ids or restore the missing delivery packages.'
+      });
+    }
+
+    for (const template of CHANGE_SECTIONS) {
+      await validateMarkdownIntegrity(projectPath, `${change.rootDir}/${change.folder}/${template.fileName}`, section, true);
+    }
+  }
+
   for (const deliveryPackage of deliveryPackages) {
     const sourceCapability = String(deliveryPackage.data.sourceCapability || deliveryPackage.data.capability || '').trim();
     if (sourceCapability && !capabilitySlugs.has(sourceCapability)) {
@@ -1256,6 +1331,19 @@ export async function validateEntityDataIntegrity(projectPath: string, section: 
 
     await validateMarkdownIntegrity(projectPath, `${deliveryPackage.rootDir}/${deliveryPackage.folder}/snapshot.md`, section, false);
     await validateMarkdownIntegrity(projectPath, `${deliveryPackage.rootDir}/${deliveryPackage.folder}/implementation-strategy.md`, section, false);
+
+    const linkedChangeIds = Array.isArray(deliveryPackage.data.changeIds) ? deliveryPackage.data.changeIds.map(String).filter(Boolean) : [];
+    const missingChanges = linkedChangeIds.filter((id: string) => !changeIds.has(id));
+    if (missingChanges.length) {
+      pushValidation(section, {
+        id: `delivery-missing-changes-${deliveryPackage.folder}`,
+        title: 'Delivery package references missing Changes',
+        message: `${deliveryPackage.title} references missing Changes: ${missingChanges.join(', ')}.`,
+        severity: 'warning',
+        path: deliveryPackage.relativePath,
+        action: 'Restore the missing Changes or remove stale change ids from the delivery package manifest.'
+      });
+    }
   }
 
   const legacyModules = await listEntityFolders(projectPath, 'modules');

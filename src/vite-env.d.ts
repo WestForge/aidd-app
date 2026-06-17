@@ -362,6 +362,11 @@ interface AiddProjectStatus {
   componentCount: number;
   capabilityCount: number;
   bundleCount: number;
+  changeCount: number;
+  readyChangeCount: number;
+  changesInDeliveryCount: number;
+  changesInReviewCount: number;
+  acceptedChangeCount: number;
   foundation: AiddProjectStatusItem[];
   setup: AiddProjectStatusItem[];
   nextAction: string;
@@ -704,12 +709,99 @@ interface AiddCreateCapabilityInput {
   sections?: AiddCapabilitySection[];
 }
 
+type AiddChangeType =
+  | 'implement-capability'
+  | 'update-capability'
+  | 'component-change'
+  | 'technical-refactor'
+  | 'bug-fix'
+  | 'ux-improvement'
+  | 'documentation-standards-change'
+  | 'spike-investigation';
+
+type AiddChangeStatus =
+  | 'draft'
+  | 'ready'
+  | 'in-delivery'
+  | 'in-review'
+  | 'accepted'
+  | 'rejected'
+  | 'superseded';
+
+type AiddChangePriority = 'low' | 'normal' | 'high' | 'urgent';
+type AiddChangeRisk = 'low' | 'medium' | 'high' | 'unknown';
+type AiddChangeSource = 'manual' | 'capability' | 'component' | 'component-technical-change' | 'review-import';
+
+interface AiddChangeReadiness {
+  ready: boolean;
+  blockers: string[];
+}
+
+interface AiddChangeSection {
+  key: string;
+  fileName: string;
+  title: string;
+  body: string;
+  editable: boolean;
+}
+
+interface AiddChangeRecord {
+  id: string;
+  title: string;
+  type: AiddChangeType;
+  status: AiddChangeStatus;
+  priority: AiddChangePriority;
+  risk: AiddChangeRisk;
+  linkedCapabilities: string[];
+  linkedComponents: string[];
+  deliveryPackageIds: string[];
+  source: AiddChangeSource;
+  legacyTechnicalChange?: {
+    componentSlug: string;
+    technicalChangeId: string;
+  } | null;
+  relativePath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AiddChangeDetail extends AiddChangeRecord {
+  sections: AiddChangeSection[];
+  readiness: AiddChangeReadiness;
+}
+
+interface AiddCreateChangeInput {
+  projectPath: string;
+  title: string;
+  type: AiddChangeType;
+  status?: AiddChangeStatus;
+  priority?: AiddChangePriority;
+  risk?: AiddChangeRisk;
+  linkedCapabilities?: string[];
+  linkedComponents?: string[];
+}
+
+interface AiddSaveChangeInput {
+  projectPath: string;
+  id: string;
+  title?: string;
+  type?: AiddChangeType;
+  status?: AiddChangeStatus;
+  priority?: AiddChangePriority;
+  risk?: AiddChangeRisk;
+  linkedCapabilities?: string[];
+  linkedComponents?: string[];
+  sections?: AiddChangeSection[];
+}
+
 
 interface AiddDeliveryPackageSummary {
   id: string;
   title: string;
-  packageType?: 'capability' | 'technical';
+  packageType?: 'capability' | 'technical' | 'change';
   status: AiddSetupStatus | string;
+  changeIds?: string[];
+  sourceCapabilities?: string[];
   sourceCapability?: string;
   sourceTechnicalChange?: {
     componentSlug: string;
@@ -1131,6 +1223,16 @@ interface Window {
     readCapability: (input: AiddReadCapabilityInput) => Promise<AiddCapabilityDetail>;
     updateCapability: (input: AiddUpdateCapabilityInput) => Promise<AiddProjectSetupState>;
     deleteCapability: (input: AiddDeleteCapabilityInput) => Promise<AiddProjectSetupState>;
+    readChanges: (projectPath: string) => Promise<AiddChangeRecord[]>;
+    readChange: (input: { projectPath: string; id: string }) => Promise<AiddChangeDetail>;
+    createChange: (input: AiddCreateChangeInput) => Promise<AiddChangeDetail>;
+    saveChange: (input: AiddSaveChangeInput) => Promise<AiddChangeDetail>;
+    updateChangeStatus: (input: { projectPath: string; id: string; status: AiddChangeStatus }) => Promise<AiddChangeRecord[]>;
+    deleteChange: (input: { projectPath: string; id: string }) => Promise<AiddChangeRecord[]>;
+    createChangeFromCapability: (input: { projectPath: string; capabilitySlug: string; type?: 'implement-capability' | 'update-capability' }) => Promise<AiddChangeDetail>;
+    createChangeFromComponent: (input: { projectPath: string; componentSlug: string; type?: Extract<AiddChangeType, 'component-change' | 'technical-refactor' | 'bug-fix' | 'ux-improvement'> }) => Promise<AiddChangeDetail>;
+    createChangeFromTechnicalChange: (input: { projectPath: string; componentSlug: string; technicalChangeId: string }) => Promise<AiddChangeDetail>;
+    createDeliveryPackageFromChanges: (input: { projectPath: string; changeIds: string[] }) => Promise<{ id: string; path: string }>;
     createDeliveryPackageFromCapability: (input: { projectPath: string; capabilitySlug: string }) => Promise<{ id: string; path: string }>;
     createDeliveryPackageFromTechnicalChange: (input: { projectPath: string; componentSlug: string; technicalChangeId: string }) => Promise<{ id: string; path: string }>;
     readDeliveryPackages: (projectPath: string) => Promise<AiddDeliveryPackageSummary[]>;

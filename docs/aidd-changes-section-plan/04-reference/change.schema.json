@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AIDD Change Record",
+  "type": "object",
+  "required": [
+    "id",
+    "title",
+    "type",
+    "status",
+    "priority",
+    "risk",
+    "linkedCapabilities",
+    "linkedComponents",
+    "deliveryPackageIds",
+    "source",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^CHG-[0-9]{3,5}-[a-z0-9-]+$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "enum": [
+        "implement-capability",
+        "update-capability",
+        "component-change",
+        "technical-refactor",
+        "bug-fix",
+        "ux-improvement",
+        "documentation-standards-change",
+        "spike-investigation"
+      ]
+    },
+    "status": {
+      "enum": [
+        "draft",
+        "ready",
+        "in-delivery",
+        "in-review",
+        "accepted",
+        "rejected",
+        "superseded"
+      ]
+    },
+    "priority": {
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "urgent"
+      ]
+    },
+    "risk": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "unknown"
+      ]
+    },
+    "linkedCapabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "linkedComponents": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "deliveryPackageIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "source": {
+      "enum": [
+        "manual",
+        "capability",
+        "component",
+        "component-technical-change",
+        "review-import"
+      ]
+    },
+    "legacyTechnicalChange": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "componentSlug",
+            "technicalChangeId"
+          ],
+          "properties": {
+            "componentSlug": {
+              "type": "string"
+            },
+            "technicalChangeId": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "relativePath": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string"
+    },
+    "updatedAt": {
+      "type": "string"
+    }
+  }
+}

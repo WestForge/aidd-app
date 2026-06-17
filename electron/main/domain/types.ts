@@ -49,6 +49,11 @@ export interface ProjectStatus {
   componentCount: number;
   capabilityCount: number;
   bundleCount: number;
+  changeCount: number;
+  readyChangeCount: number;
+  changesInDeliveryCount: number;
+  changesInReviewCount: number;
+  acceptedChangeCount: number;
   foundation: ProjectStatusItem[];
   setup: ProjectStatusItem[];
   nextAction: string;
@@ -679,6 +684,131 @@ export interface DeleteCapabilityInput {
   slug: string;
 }
 
+export type ChangeType =
+  | 'implement-capability'
+  | 'update-capability'
+  | 'component-change'
+  | 'technical-refactor'
+  | 'bug-fix'
+  | 'ux-improvement'
+  | 'documentation-standards-change'
+  | 'spike-investigation';
+
+export type ChangeStatus =
+  | 'draft'
+  | 'ready'
+  | 'in-delivery'
+  | 'in-review'
+  | 'accepted'
+  | 'rejected'
+  | 'superseded';
+
+export type ChangePriority = 'low' | 'normal' | 'high' | 'urgent';
+export type ChangeRisk = 'low' | 'medium' | 'high' | 'unknown';
+export type ChangeSource = 'manual' | 'capability' | 'component' | 'component-technical-change' | 'review-import';
+
+export interface ChangeReadiness {
+  ready: boolean;
+  blockers: string[];
+}
+
+export interface ChangeSection {
+  key: string;
+  fileName: string;
+  title: string;
+  body: string;
+  editable: boolean;
+}
+
+export interface ChangeRecord {
+  id: string;
+  title: string;
+  type: ChangeType;
+  status: ChangeStatus;
+  priority: ChangePriority;
+  risk: ChangeRisk;
+  linkedCapabilities: string[];
+  linkedComponents: string[];
+  deliveryPackageIds: string[];
+  source: ChangeSource;
+  legacyTechnicalChange?: {
+    componentSlug: string;
+    technicalChangeId: string;
+  } | null;
+  relativePath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChangeDetail extends ChangeRecord {
+  sections: ChangeSection[];
+  readiness: ChangeReadiness;
+}
+
+export interface CreateChangeInput {
+  projectPath: string;
+  title: string;
+  type: ChangeType;
+  status?: ChangeStatus;
+  priority?: ChangePriority;
+  risk?: ChangeRisk;
+  linkedCapabilities?: string[];
+  linkedComponents?: string[];
+  source?: ChangeSource;
+  legacyTechnicalChange?: {
+    componentSlug: string;
+    technicalChangeId: string;
+  } | null;
+  sections?: ChangeSection[];
+}
+
+export interface ReadChangeInput {
+  projectPath: string;
+  id: string;
+}
+
+export interface SaveChangeInput {
+  projectPath: string;
+  id: string;
+  title?: string;
+  type?: ChangeType;
+  status?: ChangeStatus;
+  priority?: ChangePriority;
+  risk?: ChangeRisk;
+  linkedCapabilities?: string[];
+  linkedComponents?: string[];
+  sections?: ChangeSection[];
+}
+
+export interface UpdateChangeStatusInput {
+  projectPath: string;
+  id: string;
+  status: ChangeStatus;
+}
+
+export interface DeleteChangeInput {
+  projectPath: string;
+  id: string;
+}
+
+export interface CreateChangeFromCapabilityInput {
+  projectPath: string;
+  capabilitySlug: string;
+  type?: Extract<ChangeType, 'implement-capability' | 'update-capability'>;
+}
+
+export interface CreateChangeFromComponentInput {
+  projectPath: string;
+  componentSlug: string;
+  type?: Extract<ChangeType, 'component-change' | 'technical-refactor' | 'bug-fix' | 'ux-improvement'>;
+}
+
+export interface CreateChangeFromTechnicalChangeInput {
+  projectPath: string;
+  componentSlug: string;
+  technicalChangeId: string;
+}
+
 export interface CreateDeliveryPackageFromCapabilityInput {
   projectPath: string;
   capabilitySlug: string;
@@ -690,13 +820,20 @@ export interface CreateDeliveryPackageFromTechnicalChangeInput {
   technicalChangeId: string;
 }
 
-export type DeliveryPackageType = 'capability' | 'technical';
+export interface CreateDeliveryPackageFromChangesInput {
+  projectPath: string;
+  changeIds: string[];
+}
+
+export type DeliveryPackageType = 'capability' | 'technical' | 'change';
 
 export interface DeliveryPackageSummary {
   id: string;
   title: string;
   packageType?: DeliveryPackageType;
   status: string;
+  changeIds?: string[];
+  sourceCapabilities?: string[];
   sourceCapability?: string;
   sourceTechnicalChange?: {
     componentSlug: string;
@@ -884,7 +1021,7 @@ export interface StandardsReviewPackageImportResult {
 }
 
 export interface HealthEntity {
-  kind: 'component' | 'capability' | 'source-project' | 'delivery-package';
+  kind: 'component' | 'capability' | 'change' | 'source-project' | 'delivery-package';
   rootDir: string;
   folder: string;
   manifestName: string;

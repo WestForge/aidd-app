@@ -11,6 +11,7 @@ import { Home } from './components/Home';
 import { SetupWorkflow } from './components/SetupWorkflow';
 import { Capabilities } from './components/Capabilities';
 import { Components } from './components/Components';
+import { Changes } from './components/Changes';
 import { DeliveryPackages } from './components/DeliveryPackages';
 import { BundleEditor } from './components/BundleEditor';
 import { Reviews } from './components/Reviews';
@@ -19,7 +20,7 @@ import { ProjectValidation } from './components/ProjectValidation';
 import { PageHelp } from './components/PageHelp';
 import { AiWebChatSidecar, useAiWebChatSidecarState } from './components/AiWebChatSidecar';
 
-export type Screen = 'projects' | 'project-create' | 'home' | 'foundation' | 'standards' | 'capabilities' | 'components' | 'delivery-packages' | 'bundle-editor' | 'reviews' | 'validation' | 'settings';
+export type Screen = 'projects' | 'project-create' | 'home' | 'foundation' | 'standards' | 'capabilities' | 'components' | 'changes' | 'delivery-packages' | 'bundle-editor' | 'reviews' | 'validation' | 'settings';
 
 type ThemeMode = 'system' | 'light' | 'dark';
 
@@ -182,6 +183,7 @@ function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => getStoredThemeMode());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readLocalStorage('aidd.sidebarCollapsed') === 'true');
   const [capabilityToOpen, setCapabilityToOpen] = useState<string | null>(null);
+  const [changeToOpen, setChangeToOpen] = useState<string | null>(null);
   const aiSidecar = useAiWebChatSidecarState();
 
   useEffect(() => {
@@ -246,6 +248,7 @@ function App() {
   const selectPackage = (id: string, target: Screen = 'bundle-editor') => { setSelectedId(id); setScreen(target); };
   const createPackage = () => { const id = nextPackageId(packages); const item = createBlankPackage(id); setPackages((current) => [item, ...current]); setSelectedId(id); setScreen('bundle-editor'); };
   const openCreatedDeliveryPackage = (id: string) => { setSelectedId(id); setScreen('bundle-editor'); };
+  const openCreatedChange = (id: string) => { setChangeToOpen(id); setScreen('changes'); };
   const transitionSelectedPackage = (status: BundleStatus) => updatePackage(applyStatus(selectedPackage, status));
   const submitSelectedForReview = () => { const readiness = checkReadiness(selectedPackage); if (!readiness.readyForReview) return; transitionSelectedPackage('needs-review'); setScreen('reviews'); };
 
@@ -294,7 +297,6 @@ function App() {
             packages={packages}
             selectedId={selectedId}
             onSelectPackage={selectPackage}
-            onCreatePackage={createPackage}
             activeProject={activeProject}
             onProjectUpdated={(project) => {
               void refreshProjects(project);
@@ -323,9 +325,10 @@ function App() {
             onOpenComponents={() => setScreen('components')}
           />
         )}
-        {screen === 'capabilities' && <Capabilities activeProject={activeProject} onDeliveryPackageCreated={openCreatedDeliveryPackage} initialCapabilitySlug={capabilityToOpen} onInitialCapabilityOpened={() => setCapabilityToOpen(null)} />}
-        {screen === 'components' && <Components activeProject={activeProject} onOpenCapability={(slug) => { setCapabilityToOpen(slug); setScreen('capabilities'); }} onDeliveryPackageCreated={openCreatedDeliveryPackage} />}
-        {screen === 'delivery-packages' && <DeliveryPackages packages={packages} selectedId={selectedId} onSelectPackage={selectPackage} onCreatePackage={createPackage} activeProject={activeProject} />}
+        {screen === 'capabilities' && <Capabilities activeProject={activeProject} onChangeCreated={openCreatedChange} initialCapabilitySlug={capabilityToOpen} onInitialCapabilityOpened={() => setCapabilityToOpen(null)} />}
+        {screen === 'components' && <Components activeProject={activeProject} onOpenCapability={(slug) => { setCapabilityToOpen(slug); setScreen('capabilities'); }} onChangeCreated={openCreatedChange} />}
+        {screen === 'changes' && <Changes activeProject={activeProject} initialChangeId={changeToOpen} onInitialChangeOpened={() => setChangeToOpen(null)} onDeliveryPackageCreated={openCreatedDeliveryPackage} />}
+        {screen === 'delivery-packages' && <DeliveryPackages packages={packages} selectedId={selectedId} onSelectPackage={selectPackage} activeProject={activeProject} />}
         {screen === 'bundle-editor' && <BundleEditor bundle={selectedPackage} onChange={updatePackage} onSubmitForReview={submitSelectedForReview} activeProject={activeProject} onBack={() => setScreen('delivery-packages')} />}
         {screen === 'reviews' && <Reviews bundles={packages} selectedId={selectedId} onSelectBundle={(id) => selectPackage(id, 'reviews')} bundle={selectedPackage} onChange={updatePackage} />}
         {screen === 'validation' && <ProjectValidation activeProject={activeProject} />}

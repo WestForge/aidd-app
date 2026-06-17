@@ -22,7 +22,6 @@ interface HomeProps {
   packages: DeliveryBundle[];
   selectedId: string;
   onSelectPackage: (id: string) => void;
-  onCreatePackage: () => void;
   activeProject: AiddTrackedProject | null;
   onProjectUpdated: (project: AiddTrackedProject) => void;
   onOpenSetup: () => void;

@@ -9,11 +9,17 @@ import {
   createComponentTechnicalChange,
   createComponentTechnicalChangeReviewPackage,
   createComponentTechnicalReviewBundle,
+  createChange,
+  createChangeFromCapability,
+  createChangeFromComponent,
+  createChangeFromTechnicalChange,
   createDecisionRecord,
+  createDeliveryPackageFromChanges,
   createDeliveryPackageFromCapability,
   createDeliveryPackageFromTechnicalChange,
   createDeliveryPackagePhase,
   createDeliveryPackageReviewBundle,
+  deleteChange,
   deleteCapability,
   deleteComponent,
   deleteDeliveryPackage,
@@ -25,6 +31,8 @@ import {
   importComponentTechnicalReviewPackage,
   importDeliveryReviewPackage,
   publishDeliveryPackageToWorkspace,
+  readChange,
+  readChanges,
   readCapability,
   readComponent,
   readComponentTechnicalChange,
@@ -34,10 +42,12 @@ import {
   readProjectSetup,
   readSourceProjects,
   readSourceReference,
+  saveChange,
   saveComponentTechnicalChange,
   saveDeliveryPackage,
   selectComponentSourceDirectory,
   updateCapability,
+  updateChangeStatus,
   updateComponent,
   updateComponentTechnicalChangeStatus,
   writeSourceProject,
@@ -48,12 +58,18 @@ import type {
   ComponentTechnicalChangeReviewPackageInput,
   ComponentTechnicalReviewPackageInput,
   CreateCapabilityInput,
+  CreateChangeFromCapabilityInput,
+  CreateChangeFromComponentInput,
+  CreateChangeFromTechnicalChangeInput,
+  CreateChangeInput,
+  CreateDeliveryPackageFromChangesInput,
   CreateComponentInput,
   CreateComponentTechnicalChangeInput,
   CreateDeliveryPackageFromCapabilityInput,
   CreateDeliveryPackageFromTechnicalChangeInput,
   CreateDeliveryPackagePhaseInput,
   DecisionInput,
+  DeleteChangeInput,
   DeleteCapabilityInput,
   DeleteComponentInput,
   DeleteDeliveryPackageInput,
@@ -67,11 +83,14 @@ import type {
   ImportDeliveryReviewPackageInput,
   PackageCapabilityReviewInput,
   PackageComponentReviewInput,
+  ReadChangeInput,
   ReadCapabilityInput,
   ReadComponentInput,
   ReadComponentTechnicalChangeInput,
   SaveComponentTechnicalChangeInput,
+  SaveChangeInput,
   SaveDeliveryPackageInput,
+  UpdateChangeStatusInput,
   UpdateCapabilityInput,
   UpdateComponentInput,
   UpdateComponentTechnicalChangeStatusInput
@@ -213,6 +232,51 @@ export function registerProjectDomainIpcHandlers() {
     return withProjectSaveSync(input.projectPath, () => deleteCapability(input));
   });
 
+  ipcMain.handle('project:readChanges', async (_event, projectPath: string) => {
+    if (!projectPath) throw new Error('Project path is required.');
+    return readChanges(projectPath);
+  });
+
+  ipcMain.handle('project:readChange', async (_event, input: ReadChangeInput) => {
+    if (!input?.projectPath || !input?.id) throw new Error('Project path and change id are required.');
+    return readChange(input);
+  });
+
+  ipcMain.handle('project:createChange', async (_event, input: CreateChangeInput) => {
+    if (!input?.projectPath || !input?.title?.trim() || !input?.type) throw new Error('Project path, change title and change type are required.');
+    return withProjectSaveSync(input.projectPath, () => createChange(input));
+  });
+
+  ipcMain.handle('project:saveChange', async (_event, input: SaveChangeInput) => {
+    if (!input?.projectPath || !input?.id) throw new Error('Project path and change id are required.');
+    return withProjectSaveSync(input.projectPath, () => saveChange(input));
+  });
+
+  ipcMain.handle('project:updateChangeStatus', async (_event, input: UpdateChangeStatusInput) => {
+    if (!input?.projectPath || !input?.id || !input?.status) throw new Error('Project path, change id and status are required.');
+    return withProjectSaveSync(input.projectPath, () => updateChangeStatus(input));
+  });
+
+  ipcMain.handle('project:deleteChange', async (_event, input: DeleteChangeInput) => {
+    if (!input?.projectPath || !input?.id) throw new Error('Project path and change id are required.');
+    return withProjectSaveSync(input.projectPath, () => deleteChange(input));
+  });
+
+  ipcMain.handle('project:createChangeFromCapability', async (_event, input: CreateChangeFromCapabilityInput) => {
+    if (!input?.projectPath || !input?.capabilitySlug) throw new Error('Project path and capability slug are required.');
+    return withProjectSaveSync(input.projectPath, () => createChangeFromCapability(input));
+  });
+
+  ipcMain.handle('project:createChangeFromComponent', async (_event, input: CreateChangeFromComponentInput) => {
+    if (!input?.projectPath || !input?.componentSlug) throw new Error('Project path and component slug are required.');
+    return withProjectSaveSync(input.projectPath, () => createChangeFromComponent(input));
+  });
+
+  ipcMain.handle('project:createChangeFromTechnicalChange', async (_event, input: CreateChangeFromTechnicalChangeInput) => {
+    if (!input?.projectPath || !input?.componentSlug || !input?.technicalChangeId) throw new Error('Project path, component slug and technical change id are required.');
+    return withProjectSaveSync(input.projectPath, () => createChangeFromTechnicalChange(input));
+  });
+
   ipcMain.handle('project:createDeliveryPackageFromCapability', async (_event, input: CreateDeliveryPackageFromCapabilityInput) => {
     if (!input.projectPath || !input.capabilitySlug) throw new Error('Project path and capability slug are required.');
     return withProjectSaveSync(input.projectPath, () => createDeliveryPackageFromCapability(input));
@@ -221,6 +285,11 @@ export function registerProjectDomainIpcHandlers() {
   ipcMain.handle('project:createDeliveryPackageFromTechnicalChange', async (_event, input: CreateDeliveryPackageFromTechnicalChangeInput) => {
     if (!input.projectPath || !input.componentSlug || !input.technicalChangeId) throw new Error('Project path, component slug and technical change id are required.');
     return withProjectSaveSync(input.projectPath, () => createDeliveryPackageFromTechnicalChange(input));
+  });
+
+  ipcMain.handle('project:createDeliveryPackageFromChanges', async (_event, input: CreateDeliveryPackageFromChangesInput) => {
+    if (!input?.projectPath || !Array.isArray(input.changeIds) || input.changeIds.length === 0) throw new Error('Project path and at least one change id are required.');
+    return withProjectSaveSync(input.projectPath, () => createDeliveryPackageFromChanges(input));
   });
 
   ipcMain.handle('project:readDeliveryPackages', async (_event, projectPath: string) => readDeliveryPackages(projectPath));

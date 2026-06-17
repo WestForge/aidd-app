@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { readCapability } from './capabilityReview';
+import { appendDeliveryPackageToChanges, evaluateChangeReadiness, readChange } from './changes';
 import { componentSourceIsConfigured, normaliseComponentSource, resolveComponentSourceDirectory } from './componentCore';
 import { isSafeComponentTechnicalReviewSegment, readComponent, readComponentContractMarkdownForReview, readProjectName, shouldIncludeInReviewBundle } from './componentReview';
 import { countTechnicalChangePatches, normaliseTechnicalChangeRecord, readComponentTechnicalChange, readComponentTechnicalChanges, writeTechnicalChangeMetadata } from './componentTechnicalChanges';
@@ -15,7 +16,7 @@ import { collectMarkdownFiles } from './projectStatus';
 import { WORKSPACE_PUBLISH_TEMPLATE_VERSION, buildPublishedComponentsMarkdown, buildPublishedFoundationMarkdown, buildPublishedStandardsMarkdown, deliveryReviewCapabilitySnapshotFileName, generatedDocHeader, isSameOrInsideDiskPath, normaliseDiskPath, normaliseRelativePath, sameDiskPath, setupStatusLabel, sha256Text, workspaceDeliveryPackagePath } from './projectValidation';
 import { readSourceProjects } from './sourceDecisionsGit';
 import { readFoundationDocuments, readStandardSections, standardSectionDone } from './standards';
-import type { ComponentTechnicalChangeDetail, ComponentTechnicalChangeRecord, CreateDeliveryPackageFromCapabilityInput, CreateDeliveryPackageFromTechnicalChangeInput, CreateDeliveryPackagePhaseInput, DeleteDeliveryPackageInput, DeliveryPackageDetail, DeliveryPackageFileDetail, DeliveryPackagePhaseDetail, DeliveryPackageSummary, DeliveryPackageTechnicalChangeSummary, DeliveryPackageType, DeliveryReviewCollectedSource, DeliveryReviewPackageImportResult, DeliveryReviewPackageInput, DeliveryReviewPackageResult, DeliveryReviewSourceRoot, DeliveryWorkspacePublishInput, DeliveryWorkspacePublishResult, FoundationDocument, ImportDeliveryReviewPackageInput, SaveDeliveryPackageInput, StandardSection } from './types';
+import type { ChangeDetail, ComponentTechnicalChangeDetail, ComponentTechnicalChangeRecord, CreateDeliveryPackageFromCapabilityInput, CreateDeliveryPackageFromChangesInput, CreateDeliveryPackageFromTechnicalChangeInput, CreateDeliveryPackagePhaseInput, DeleteDeliveryPackageInput, DeliveryPackageDetail, DeliveryPackageFileDetail, DeliveryPackagePhaseDetail, DeliveryPackageSummary, DeliveryPackageTechnicalChangeSummary, DeliveryPackageType, DeliveryReviewCollectedSource, DeliveryReviewPackageImportResult, DeliveryReviewPackageInput, DeliveryReviewPackageResult, DeliveryReviewSourceRoot, DeliveryWorkspacePublishInput, DeliveryWorkspacePublishResult, FoundationDocument, ImportDeliveryReviewPackageInput, SaveDeliveryPackageInput, StandardSection } from './types';
 
 export async function assertProjectFoundationReady(projectPath: string) {
   const foundation = await readFoundationDocuments(projectPath);
@@ -165,6 +166,8 @@ export function deliveryPackageSourceHash(detail: DeliveryPackageDetail) {
     title: detail.title,
     packageType: detail.packageType || 'capability',
     status: detail.status,
+    changeIds: detail.changeIds || [],
+    sourceCapabilities: detail.sourceCapabilities || [],
     sourceCapability: detail.sourceCapability,
     sourceTechnicalChange: detail.sourceTechnicalChange || null,
     components: detail.components,
@@ -191,6 +194,8 @@ export function buildPublishedDeliveryStrategyFileMarkdown(detail: DeliveryPacka
     packageType: detail.packageType || 'capability',
     status: detail.status,
     sourceCapability: detail.sourceCapability || '',
+    sourceCapabilities: detail.sourceCapabilities || [],
+    changeIds: detail.changeIds || [],
     sourceTechnicalChange: detail.sourceTechnicalChange || null,
     components: detail.components || [],
     publishedBy: 'AIDD'
@@ -641,6 +646,339 @@ export async function createDeliveryPackageFromTechnicalChange(input: CreateDeli
   return { id, path: dir };
 }
 
+function changeSectionBody(change: ChangeDetail, key: string) {
+  return change.sections.find((section) => section.key === key)?.body?.trim() || '';
+}
+
+function productFacingChange(change: ChangeDetail) {
+  return !['technical-refactor', 'documentation-standards-change', 'spike-investigation'].includes(change.type);
+}
+
+function buildChangeSnapshot(change: ChangeDetail) {
+  const sections = change.sections
+    .filter((section) => section.key !== 'review')
+    .map((section) => [
+      `### ${section.title}`,
+      '',
+      `- Source: ${change.relativePath}/${section.fileName}`,
+      '',
+      section.body.trim() || '_No content captured._'
+    ].join('\n'))
+    .join('\n\n');
+
+  return [
+    `## Change: ${change.title}`,
+    '',
+    `- Id: \`${change.id}\``,
+    `- Type: \`${change.type}\``,
+    `- Status: \`${change.status}\``,
+    `- Priority: \`${change.priority}\``,
+    `- Risk: \`${change.risk}\``,
+    change.linkedCapabilities.length ? `- Linked capabilities: ${change.linkedCapabilities.map((slug) => `\`${slug}\``).join(', ')}` : '- Linked capabilities: _none_',
+    change.linkedComponents.length ? `- Linked components: ${change.linkedComponents.map((slug) => `\`${slug}\``).join(', ')}` : '- Linked components: _none_',
+    '',
+    sections || '_No change sections captured._'
+  ].join('\n');
+}
+
+function changeTypeStrategyGuidance(change: ChangeDetail) {
+  switch (change.type) {
+    case 'implement-capability':
+      return [
+        '- Implement the capability slice described in this Change.',
+        '- Include linked component work only where needed for the scoped capability slice.',
+        '- Do not implement the whole capability unless the Change scope says so.'
+      ];
+    case 'update-capability':
+      return [
+        '- Update the existing capability behaviour described in the Change.',
+        '- Preserve capability behaviour that is outside the stated scope.',
+        '- Use acceptance criteria to separate required changes from nice-to-have improvements.'
+      ];
+    case 'component-change':
+      return [
+        '- Keep work inside the linked component boundaries unless scope explicitly expands them.',
+        '- Respect the component source mapping, interfaces, and ownership notes.',
+        '- Report missing component dependencies instead of silently introducing coupling.'
+      ];
+    case 'technical-refactor':
+      return [
+        '- Preserve product behaviour unless the Change explicitly lists a behaviour change.',
+        '- Use component constraints and verification requirements to guide edits.',
+        '- Prefer small, reviewable internal changes over broad rewrites.'
+      ];
+    case 'bug-fix':
+      return [
+        '- Reproduce or explain the observed behaviour before changing code.',
+        '- Implement the expected behaviour only for the scoped case.',
+        '- Add regression checks listed in the acceptance criteria.'
+      ];
+    case 'ux-improvement':
+      return [
+        '- Implement the user-facing state, copy, feedback, accessibility, and interaction changes described in scope.',
+        '- Preserve existing workflows outside the scoped UX improvement.',
+        '- Verify responsive and error/empty/loading states where relevant.'
+      ];
+    case 'documentation-standards-change':
+      return [
+        '- Update documentation or standards only.',
+        '- Do not change runtime/product behaviour unless another ready Change authorises it.',
+        '- Check consistency with linked capabilities and components.'
+      ];
+    case 'spike-investigation':
+      return [
+        '- Answer the investigation question and record evidence.',
+        '- Do not make production changes unless explicitly authorised by the Change.',
+        '- Produce follow-up decisions or Changes when implementation work is needed.'
+      ];
+    default:
+      return ['- Keep work bounded to this Change.'];
+  }
+}
+
+async function buildLinkedCapabilitySnapshots(projectPath: string, capabilitySlugs: string[]) {
+  const snapshots: string[] = [];
+  for (const slug of capabilitySlugs) {
+    try {
+      const capability = await readCapability({ projectPath, slug });
+      snapshots.push([
+        `## Capability: ${capability.title}`,
+        '',
+        `- Slug: \`${capability.slug}\``,
+        `- Status: \`${capability.status}\``,
+        capability.components?.length ? `- Components: ${capability.components.map((item: string) => `\`${item}\``).join(', ')}` : '- Components: _none_',
+        '',
+        Array.isArray((capability as any).sections) && (capability as any).sections.length
+          ? (capability as any).sections.map((section: any) => [
+              `### ${section.title}`,
+              '',
+              section.body?.trim() || '_No content captured._'
+            ].join('\n')).join('\n\n')
+          : capability.body?.trim() || '_No capability body captured._'
+      ].join('\n'));
+    } catch (error) {
+      snapshots.push(`## Capability: ${slug}\n\n_Could not read linked capability: ${error instanceof Error ? error.message : String(error)}_`);
+    }
+  }
+  return snapshots;
+}
+
+async function buildLinkedComponentSnapshots(projectPath: string, componentSlugs: string[]) {
+  const snapshots: string[] = [];
+  for (const slug of componentSlugs) {
+    try {
+      const component = await readComponent({ projectPath, slug });
+      const contract = await readComponentContractMarkdownForReview(projectPath, component).catch(() => '');
+      snapshots.push([
+        `## Component: ${component.title}`,
+        '',
+        `- Slug: \`${component.slug}\``,
+        `- Status: \`${component.status}\``,
+        component.source?.directory ? `- Source: \`${component.source.directory}\`` : '- Source: _not configured_',
+        component.capabilities?.length ? `- Capabilities: ${component.capabilities.map((item: string) => `\`${item}\``).join(', ')}` : '- Capabilities: _none_',
+        '',
+        '### Component contract',
+        '',
+        contract.trim() || '_No component contract has been generated._',
+        '',
+        '### Component sections',
+        '',
+        Array.isArray(component.sections) && component.sections.length
+          ? component.sections.map((section: any) => [
+              `#### ${section.title}`,
+              '',
+              section.body?.trim() || '_No content captured._'
+            ].join('\n')).join('\n\n')
+          : '_No component sections captured._'
+      ].join('\n'));
+    } catch (error) {
+      snapshots.push(`## Component: ${slug}\n\n_Could not read linked component: ${error instanceof Error ? error.message : String(error)}_`);
+    }
+  }
+  return snapshots;
+}
+
+function buildChangesSummaryMarkdown(changes: ChangeDetail[]) {
+  return [
+    '# Changes',
+    '',
+    'This delivery package was generated from ready Changes.',
+    '',
+    ...changes.map((change) => [
+      `## ${change.id} ${change.title}`,
+      '',
+      `- Type: \`${change.type}\``,
+      `- Priority: \`${change.priority}\``,
+      `- Risk: \`${change.risk}\``,
+      `- Capabilities: ${change.linkedCapabilities.length ? change.linkedCapabilities.map((slug) => `\`${slug}\``).join(', ') : '_none_'}`,
+      `- Components: ${change.linkedComponents.length ? change.linkedComponents.map((slug) => `\`${slug}\``).join(', ') : '_none_'}`,
+      '',
+      '### Intent',
+      '',
+      changeSectionBody(change, 'intent') || '_No intent captured._',
+      '',
+      '### Scope',
+      '',
+      changeSectionBody(change, 'scope') || '_No scope captured._',
+      '',
+      '### Acceptance criteria',
+      '',
+      changeSectionBody(change, 'acceptance-criteria') || '_No acceptance criteria captured._',
+      ''
+    ].join('\n')),
+    ''
+  ].join('\n');
+}
+
+async function nextDeliveryPackageId(projectPath: string, title: string) {
+  const existing = await readEntities(projectPath, 'delivery/packages', 'package.json');
+  let nextNumber = existing.length + 1;
+  const root = path.join(projectPath, 'delivery', 'packages');
+  let id = `DP-${String(nextNumber).padStart(3, '0')}-${slugify(title || 'change-delivery')}`;
+  while (await exists(path.join(root, id))) {
+    nextNumber += 1;
+    id = `DP-${String(nextNumber).padStart(3, '0')}-${slugify(title || 'change-delivery')}`;
+  }
+  return id;
+}
+
+export async function createDeliveryPackageFromChanges(input: CreateDeliveryPackageFromChangesInput) {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  const changeIds = Array.from(new Set((input.changeIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
+  if (!changeIds.length) throw new Error('Select at least one Change.');
+
+  const changes = await Promise.all(changeIds.map((id) => readChange({ projectPath: input.projectPath, id })));
+  for (const change of changes) {
+    const readiness = evaluateChangeReadiness(change);
+    if (!readiness.ready) throw new Error(`${change.id} is not ready: ${readiness.blockers.join('; ')}`);
+    if (change.status === 'accepted') throw new Error(`${change.id} has already been accepted. Duplicate or supersede it before packaging it again.`);
+    if (change.status === 'in-delivery') throw new Error(`${change.id} is already in delivery.`);
+    if (change.status !== 'ready') throw new Error(`${change.id} must be marked ready before it can be packaged.`);
+  }
+
+  let foundationSnapshot = '';
+  if (changes.some(productFacingChange)) {
+    const { foundation, standardSections } = await assertProjectFoundationReady(input.projectPath);
+    foundationSnapshot = buildProjectFoundationSnapshot(foundation, standardSections);
+  } else {
+    const { standardSections } = await assertProjectTechnicalStandardsReady(input.projectPath);
+    foundationSnapshot = buildProjectTechnicalStandardsSnapshot(standardSections);
+  }
+
+  const title = changes.length === 1 ? changes[0].title : `${changes.length} ready changes`;
+  const id = await nextDeliveryPackageId(input.projectPath, title);
+  const dir = path.join(input.projectPath, 'delivery', 'packages', id);
+  if (await exists(dir)) throw new Error(`Delivery package already exists: ${id}`);
+  await fsp.mkdir(dir, { recursive: true });
+
+  const linkedCapabilities = Array.from(new Set(changes.flatMap((change) => change.linkedCapabilities)));
+  const linkedComponents = Array.from(new Set(changes.flatMap((change) => change.linkedComponents)));
+  const capabilitySnapshots = await buildLinkedCapabilitySnapshots(input.projectPath, linkedCapabilities);
+  const componentSnapshots = await buildLinkedComponentSnapshots(input.projectPath, linkedComponents);
+  const createdAt = new Date().toISOString();
+
+  const changesSummary = buildChangesSummaryMarkdown(changes);
+  const linkedContext = [
+    '# Linked Context',
+    '',
+    '## Capabilities',
+    '',
+    capabilitySnapshots.length ? capabilitySnapshots.join('\n\n---\n\n') : '_No linked capabilities._',
+    '',
+    '## Components',
+    '',
+    componentSnapshots.length ? componentSnapshots.join('\n\n---\n\n') : '_No linked components._',
+    ''
+  ].join('\n');
+
+  const snapshot = matter.stringify([
+    `# Change Delivery Snapshot: ${title}`,
+    '',
+    'This snapshot freezes ready Change intent, project context, and linked capability/component context at the point the delivery package was created.',
+    '',
+    foundationSnapshot,
+    '',
+    '## Ready Changes Snapshot',
+    '',
+    changes.map(buildChangeSnapshot).join('\n\n---\n\n'),
+    '',
+    '## Linked Capability Snapshots',
+    '',
+    capabilitySnapshots.length ? capabilitySnapshots.join('\n\n---\n\n') : '_No linked capabilities._',
+    '',
+    '## Linked Component Snapshots',
+    '',
+    componentSnapshots.length ? componentSnapshots.join('\n\n---\n\n') : '_No linked components._',
+    ''
+  ].join('\n'), {
+    aidd: { type: 'change-delivery-package-snapshot', templateVersion: TEMPLATE_VERSION },
+    id,
+    title,
+    packageType: 'change',
+    changeIds,
+    sourceCapabilities: linkedCapabilities,
+    components: linkedComponents,
+    status: 'draft',
+    createdAt
+  });
+
+  const strategy = matter.stringify([
+    '# Implementation Strategy',
+    '',
+    'This package executes ready AIDD Changes. Keep implementation bounded to the Change scope and acceptance criteria.',
+    '',
+    '## Objective',
+    '',
+    changes.length === 1
+      ? `Deliver ${changes[0].id}: ${changes[0].title}.`
+      : `Deliver ${changes.length} ready Changes: ${changes.map((change) => change.id).join(', ')}.`,
+    '',
+    '## Change-aware guidance',
+    '',
+    ...changes.flatMap((change) => [
+      `### ${change.id} ${change.title}`,
+      '',
+      ...changeTypeStrategyGuidance(change),
+      ''
+    ]),
+    '## Proposed approach',
+    '',
+    'TODO: Describe the implementation approach after reviewing the Change scope, linked context, and source code.',
+    '',
+    '## Verification strategy',
+    '',
+    'TODO: Define tests, commands, manual checks, and evidence required for these Changes.',
+    ''
+  ].join('\n'), {
+    aidd: { type: 'implementation-strategy', templateVersion: TEMPLATE_VERSION },
+    id: `${id}-strategy`,
+    deliveryPackage: id,
+    packageType: 'change',
+    changeIds,
+    status: 'draft',
+    createdAt
+  });
+
+  await writeJson(path.join(dir, 'package.json'), {
+    id,
+    title,
+    packageType: 'change',
+    status: 'draft',
+    changeIds,
+    sourceCapabilities: linkedCapabilities,
+    components: linkedComponents,
+    technicalChanges: [],
+    excludedTechnicalChanges: [],
+    createdAt
+  });
+  await fsp.writeFile(path.join(dir, 'snapshot.md'), snapshot, 'utf8');
+  await fsp.writeFile(path.join(dir, 'implementation-strategy.md'), strategy, 'utf8');
+  await fsp.writeFile(path.join(dir, 'changes.md'), changesSummary, 'utf8');
+  await fsp.writeFile(path.join(dir, 'linked-context.md'), linkedContext, 'utf8');
+  await appendDeliveryPackageToChanges(input.projectPath, changeIds, id);
+  return { id, path: dir };
+}
+
 export function deliveryStatusFromManifest(manifest: any, packaged: boolean, phaseCount: number): string {
   const raw = String(manifest.status || '').trim().toLowerCase();
   if (raw) return normaliseStatusForDelivery(raw);
@@ -660,6 +998,13 @@ export function normaliseStatusForDelivery(status?: string) {
   if (value === 'review' || value === 'in-review' || value === 'needs-review' || value === 'needs-verification') return 'packaging';
   if (value === 'approved' || value === 'in-progress' || value === 'done') return value;
   return 'packaging';
+}
+
+export function normaliseDeliveryPackageType(value: unknown): DeliveryPackageType {
+  const packageType = String(value || '').trim().toLowerCase();
+  if (packageType === 'technical') return 'technical';
+  if (packageType === 'change') return 'change';
+  return 'capability';
 }
 
 export function deliveryTechnicalChangeSummary(change: ComponentTechnicalChangeRecord, relativePath?: string): DeliveryPackageTechnicalChangeSummary {
@@ -842,8 +1187,10 @@ export async function readDeliveryPackageSummariesFrom(root: string, relativeDir
     items.push({
       id,
       title: String(manifest.title || manifest.name || entry.name),
-      packageType: manifest.packageType === 'technical' ? 'technical' : 'capability',
+      packageType: normaliseDeliveryPackageType(manifest.packageType),
       status: deliveryStatusFromManifest(manifest, packaged, phaseCount),
+      changeIds: Array.isArray(manifest.changeIds) ? manifest.changeIds.map(String).filter(Boolean) : undefined,
+      sourceCapabilities: Array.isArray(manifest.sourceCapabilities) ? manifest.sourceCapabilities.map(String).filter(Boolean) : undefined,
       sourceCapability: manifest.sourceCapability || manifest.capability || manifest.capabilitySlug,
       sourceTechnicalChange: manifest.sourceTechnicalChange && typeof manifest.sourceTechnicalChange === 'object'
         ? {
@@ -970,8 +1317,10 @@ export async function readDeliveryPackage(input: { projectPath: string; id: stri
   const summary = (await readDeliveryPackages(input.projectPath)).find((item) => item.id === fallbackId) || {
     id: fallbackId,
     title: String(manifest.title || manifest.name || input.id),
-    packageType: manifest.packageType === 'technical' ? 'technical' : 'capability',
+    packageType: normaliseDeliveryPackageType(manifest.packageType),
     status: String(manifest.status || 'draft'),
+    changeIds: Array.isArray(manifest.changeIds) ? manifest.changeIds.map(String).filter(Boolean) : undefined,
+    sourceCapabilities: Array.isArray(manifest.sourceCapabilities) ? manifest.sourceCapabilities.map(String).filter(Boolean) : undefined,
     sourceCapability: manifest.sourceCapability || manifest.capability || manifest.capabilitySlug,
     sourceTechnicalChange: manifest.sourceTechnicalChange && typeof manifest.sourceTechnicalChange === 'object'
       ? {
@@ -1583,7 +1932,11 @@ export async function collectDeliveryPackageEntries(projectPath: string, detail:
 
 export async function collectDeliveryReviewComponents(projectPath: string, detail: DeliveryPackageDetail, warnings: string[]) {
   const componentSlugs = new Set<string>((detail.components || []).map((component) => slugify(component)).filter(Boolean));
-  let capabilitySlug = detail.sourceCapability ? slugify(detail.sourceCapability) : '';
+  let capabilitySlug = detail.sourceCapability
+    ? slugify(detail.sourceCapability)
+    : detail.sourceCapabilities?.[0]
+      ? slugify(detail.sourceCapabilities[0])
+      : '';
   let capability: Awaited<ReturnType<typeof readCapability>> | null = null;
 
   if (capabilitySlug) {
@@ -2093,12 +2446,12 @@ export async function createDeliveryPackageReviewBundle(input: DeliveryReviewPac
 
   const standards = await readStandardSections(root);
   const sourceProjects = await readSourceProjects(root);
-  const packageType = detail.packageType === 'technical' ? 'technical' : 'capability';
+  const packageType = normaliseDeliveryPackageType(detail.packageType);
   const componentContext = related.components.length
     ? related.components
     : (await readEntities(root, 'components', 'component.json')).concat(await readEntities(root, 'modules', 'module.json'));
   const contextEntries: ZipEntryInput[] = [];
-  if (packageType === 'capability') {
+  if (packageType !== 'technical') {
     const foundation = await readFoundationDocuments(root);
     contextEntries.push({ name: 'package/foundation.md', data: Buffer.from(buildPublishedFoundationMarkdown(projectName, foundation), 'utf8') });
   }
@@ -2154,6 +2507,8 @@ export async function createDeliveryPackageReviewBundle(input: DeliveryReviewPac
     packageTitle: detail.title,
     packageType,
     sourceCapability: related.capabilitySlug,
+    sourceCapabilities: detail.sourceCapabilities || [],
+    changeIds: detail.changeIds || [],
     sourceTechnicalChange: detail.sourceTechnicalChange || null,
     components: related.components.map((component) => ({
       slug: component.slug,
@@ -2284,6 +2639,8 @@ export async function publishDeliveryPackageToWorkspace(input: DeliveryWorkspace
     title: detail.title,
     packageType: detail.packageType || 'capability',
     status: 'approved',
+    changeIds: detail.changeIds || [],
+    sourceCapabilities: detail.sourceCapabilities || [],
     sourceCapability: detail.sourceCapability || '',
     sourceTechnicalChange: detail.sourceTechnicalChange || null,
     components: detail.components,

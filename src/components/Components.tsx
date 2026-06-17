@@ -11,7 +11,6 @@ import {
   FolderOpen,
   GitBranch,
   Layers,
-  PackageOpen,
   Pencil,
   PlayCircle,
   Plug,
@@ -522,11 +521,11 @@ function joinDiskPath(base: string, relativePath: string) {
 export function Components({
   activeProject,
   onOpenCapability,
-  onDeliveryPackageCreated,
+  onChangeCreated,
 }: {
   activeProject?: AiddTrackedProject | null;
   onOpenCapability?: (slug: string) => void;
-  onDeliveryPackageCreated?: (id: string) => void;
+  onChangeCreated?: (id: string) => void;
 }) {
   const [setup, setSetup] = useState<AiddProjectSetupState | null>(null);
   const [view, setView] = useState<ComponentView>("list");
@@ -774,6 +773,36 @@ export function Components({
       });
       setSetup(next);
       void window.aidd.notify({ title: "Saved", body: "Component saved." });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const createChangeFromComponent = async () => {
+    if (!activeProject?.path || !editingSlug) return;
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await window.aidd.updateComponent({
+        projectPath: activeProject.path,
+        slug: editingSlug,
+        title,
+        status,
+        sourceProjects: selectedSourceProjects,
+        source: sourceConfig,
+        sections,
+      });
+      const change = await window.aidd.createChangeFromComponent({
+        projectPath: activeProject.path,
+        componentSlug: editingSlug,
+        type: "component-change",
+      });
+      setMessage(`Created Change ${change.id}.`);
+      void window.aidd.notify({ title: "Change created", body: change.id });
+      onChangeCreated?.(change.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1259,7 +1288,7 @@ export function Components({
     }
   };
 
-  const createDeliveryPackageFromTechnicalChange = async (
+  const createChangeFromTechnicalChange = async (
     changeOverride?: AiddComponentTechnicalChangeRecord | AiddComponentTechnicalChangeDetail,
   ) => {
     if (!activeProject?.path || !editingSlug) return;
@@ -1273,7 +1302,7 @@ export function Components({
         const saved = await persistTechnicalChange();
         changeId = saved?.id || targetChange.id;
       }
-      const result = await window.aidd.createDeliveryPackageFromTechnicalChange({
+      const result = await window.aidd.createChangeFromTechnicalChange({
         projectPath: activeProject.path,
         componentSlug: editingSlug,
         technicalChangeId: changeId,
@@ -1293,10 +1322,10 @@ export function Components({
         setTechnicalChangeSections(refreshed.sections || []);
       }
       void window.aidd.notify({
-        title: "Technical delivery package created",
+        title: "Change created",
         body: result.id,
       });
-      onDeliveryPackageCreated?.(result.id);
+      onChangeCreated?.(result.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1315,12 +1344,6 @@ export function Components({
     event.dataTransfer.setData("text/plain", technicalChangeReviewPackageDragFilePath);
     event.preventDefault();
     window.aidd.startNativeFileDrag(technicalChangeReviewPackageDragFilePath);
-  };
-
-  const openLatestTechnicalChangeDeliveryPackage = (change: AiddComponentTechnicalChangeRecord | AiddComponentTechnicalChangeDetail) => {
-    const latestPackageId = change.deliveryPackageIds[change.deliveryPackageIds.length - 1];
-    if (!latestPackageId) return;
-    onDeliveryPackageCreated?.(latestPackageId);
   };
 
   const importTechnicalChangeReviewPackage = async (event: DragEvent<HTMLButtonElement>) => {
@@ -1754,24 +1777,14 @@ export function Components({
               <FolderOpen className="h-4 w-4" />
               Folder
             </Button>
-            {editingTechnicalChange.deliveryPackageIds.length > 0 && onDeliveryPackageCreated && (
-              <Button
-                variant="outline"
-                onClick={() => openLatestTechnicalChangeDeliveryPackage(editingTechnicalChange)}
-                title="Open the latest delivery package created from this technical change."
-              >
-                <PackageOpen className="h-4 w-4" />
-                Open package
-              </Button>
-            )}
             <Button
-              variant={editingTechnicalChange.status === "approved" ? "default" : "outline"}
-              onClick={() => void createDeliveryPackageFromTechnicalChange(editingTechnicalChange)}
-              disabled={saving || editingTechnicalChange.status !== "approved"}
-              title={editingTechnicalChange.status === "approved" ? "Create a delivery package from this approved technical change." : "Approve this technical change before creating a delivery package."}
+              variant="outline"
+              onClick={() => void createChangeFromTechnicalChange(editingTechnicalChange)}
+              disabled={saving}
+              title="Create a global Change from this managed technical change."
             >
-              <PackageOpen className="h-4 w-4" />
-              Create delivery package
+              <FileText className="h-4 w-4" />
+              Create Change
             </Button>
             <Button onClick={() => void saveTechnicalChange()} disabled={saving || !editingTechnicalChange.title.trim()}>
               <Save className="h-4 w-4" />
@@ -1947,6 +1960,17 @@ export function Components({
             <GitBranch className="h-4 w-4" />
             Configure source
           </Button>
+          {view === "edit" && editingSlug && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void createChangeFromComponent()}
+              disabled={saving}
+            >
+              <FileText className="h-4 w-4" />
+              Plan Change
+            </Button>
+          )}
           {view === "edit" && editingSlug && (
             <Button
               type="button"
@@ -2378,7 +2402,7 @@ export function Components({
                 <div>
                   <CardTitle>Technical Reviews & Changes</CardTitle>
                   <CardDescription>
-                    Imported technical reviews feed managed technical changes. Approve a change before turning it into a delivery package.
+                    Imported technical reviews feed managed technical changes. Promote them into global Changes before delivery.
                   </CardDescription>
                 </div>
                 <Button type="button" size="sm" onClick={() => void createTechnicalChange()} disabled={!editingSlug || saving}>
@@ -2463,7 +2487,7 @@ export function Components({
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-sm font-medium">Managed technical changes</div>
-                    <div className="text-xs text-muted-foreground">Approved changes can be packaged directly into delivery.</div>
+                    <div className="text-xs text-muted-foreground">Promote managed technical changes into global Changes before delivery.</div>
                   </div>
                   <Badge variant="outline">{technicalChanges.length}</Badge>
                 </div>
@@ -2503,18 +2527,10 @@ export function Components({
                             <FolderOpen className="h-4 w-4" />
                             Folder
                           </Button>
-                          {change.deliveryPackageIds.length > 0 && onDeliveryPackageCreated && (
-                            <Button type="button" variant="outline" size="sm" onClick={() => openLatestTechnicalChangeDeliveryPackage(change)}>
-                              <PackageOpen className="h-4 w-4" />
-                              Open package
-                            </Button>
-                          )}
-                          {change.status === "approved" && (
-                            <Button type="button" size="sm" disabled={saving} onClick={() => void createDeliveryPackageFromTechnicalChange(change)}>
-                              <PackageOpen className="h-4 w-4" />
-                              Create delivery package
-                            </Button>
-                          )}
+                          <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void createChangeFromTechnicalChange(change)}>
+                            <FileText className="h-4 w-4" />
+                            Create Change
+                          </Button>
                           {(change.status === "draft" || change.status === "rejected") && (
                             <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void updateTechnicalChangeStatus(change, "needs-review")}>
                               <Eye className="h-4 w-4" />

@@ -107,12 +107,12 @@ const pageHelpContent: Record<Screen, PageHelpContent> = {
       'Creating and editing capability documents.',
       'Defining behaviour, boundaries, assumptions, and acceptance expectations.',
       'Keeping capabilities focused on what the product must support.',
-      'Creating delivery packages from well-understood slices of capability work.'
+      'Planning Changes from well-understood slices of capability work.'
     ],
     goodOutcome: [
       'Each capability has a clear purpose and scope.',
       'Technical design is kept separate from the capability definition.',
-      'Delivery packages can be created from stable capability context.'
+      'Changes can be created from stable capability context.'
     ],
     tip: 'A capability is not a component. Write what the system needs to do before deciding where the code should live.'
   },
@@ -133,13 +133,30 @@ const pageHelpContent: Record<Screen, PageHelpContent> = {
     ],
     tip: 'Use this page when the question is “where does this live?” rather than “what should the product do?”'
   },
+  changes: {
+    title: 'Changes',
+    summary: 'Plan intended work before packaging it for delivery.',
+    purpose: 'Changes describe the intended work before it becomes an executable delivery package. Link a change to capabilities and components, define scope and acceptance criteria, then create a delivery package only when the change is ready.',
+    useThisPageFor: [
+      'Creating product, component, technical, bug fix, UX, documentation, or spike Changes.',
+      'Linking the Change to capability and component context.',
+      'Capturing intent, scope, acceptance criteria, implementation notes, decisions, and review notes.',
+      'Creating delivery packages from ready Changes.'
+    ],
+    goodOutcome: [
+      'Every delivery package starts from explicit intended work.',
+      'The scope is small enough to execute and review.',
+      'Acceptance criteria and linked context are clear before packaging.'
+    ],
+    tip: 'Use Changes for work you intend to do. Use Capabilities and Components for what the system is and how it is structured.'
+  },
   'delivery-packages': {
     title: 'Delivery',
     summary: 'Plan and track implementation slices.',
-    purpose: 'Delivery packages are the controlled units of work that can be reviewed, packaged, handed to AI, verified, and accepted. They keep implementation focused and tied to project context.',
+    purpose: 'Delivery packages are executable units of approved Change work that can be reviewed, handed to AI, verified, and accepted. They keep implementation focused and tied to project context.',
     useThisPageFor: [
       'Seeing all delivery packages and their status.',
-      'Creating a new package for a specific slice of work.',
+      'Opening packages generated from ready Changes.',
       'Opening an existing package to refine scope or package it for review.',
       'Tracking whether work is draft, in review, approved, implemented, or accepted.'
     ],

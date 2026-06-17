@@ -2,6 +2,7 @@ import matter from '../../frontmatter';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { CAPABILITY_TEMPLATE_SECTIONS, sectionBodyFromMarkdown } from './capabilityCore';
+import { readChanges } from './changes';
 import { componentSourceIsConfigured, normaliseComponentSource } from './componentCore';
 import { TEMPLATE_VERSION, exists, parseFrontmatter, readEntities, readJson } from './projectCore';
 import { combineStandardsBody, deriveStandardsStatus, fileStatus, readFoundationDocuments, readStandardSections } from './standards';
@@ -293,6 +294,12 @@ export async function readProjectStatus(projectPath: string): Promise<ProjectSta
   const componentCount = await dirCount(projectPath, 'components', 'component.json') || await dirCount(projectPath, 'modules', 'module.json');
   const capabilityCount = await dirCount(projectPath, 'capabilities', 'capability.json');
   const bundleCount = await deliveryBundleCount(projectPath);
+  const changes = await readChanges(projectPath);
+  const changeCount = changes.length;
+  const readyChangeCount = changes.filter((change) => change.status === 'ready').length;
+  const changesInDeliveryCount = changes.filter((change) => change.status === 'in-delivery').length;
+  const changesInReviewCount = changes.filter((change) => change.status === 'in-review').length;
+  const acceptedChangeCount = changes.filter((change) => change.status === 'accepted').length;
   const gitInitialized = await exists(path.join(projectPath, '.git'));
   const standardSections = await readStandardSections(projectPath);
   const standardsStatus = deriveStandardsStatus(standardSections);
@@ -305,6 +312,7 @@ export async function readProjectStatus(projectPath: string): Promise<ProjectSta
     { id: 'capability', label: 'First capability created', complete: capabilityCount > 0, detail: `${capabilityCount} capabilit${capabilityCount === 1 ? 'y' : 'ies'} found.` },
     { id: 'component', label: 'First component created', complete: componentCount > 0, detail: `${componentCount} component${componentCount === 1 ? '' : 's'} found.` },
     { id: 'git', label: 'Git versioning initialised', complete: gitInitialized, detail: gitInitialized ? 'Local Git repository exists.' : 'No local Git repository found.' },
+    { id: 'change', label: 'First Change planned', complete: changeCount > 0, detail: `${changeCount} Change${changeCount === 1 ? '' : 's'} found.` },
     { id: 'package', label: 'First delivery package created', complete: bundleCount > 0, detail: `${bundleCount} delivery package${bundleCount === 1 ? '' : 's'} found.` }
   ];
 
@@ -330,10 +338,14 @@ export async function readProjectStatus(projectPath: string): Promise<ProjectSta
     status = 'ready-for-planning';
     label = 'Ready for planning';
     nextAction = capabilityCount === 0 ? 'Create the first capability.' : 'Create the first component.';
-  } else if (bundleCount === 0) {
+  } else if (changeCount === 0) {
     status = 'ready-for-ai-delivery';
     label = 'Ready for AI delivery';
-    nextAction = 'Create the first delivery package.';
+    nextAction = 'Plan the first Change.';
+  } else if (bundleCount === 0) {
+    status = readyChangeCount > 0 ? 'ready-for-ai-delivery' : 'active';
+    label = readyChangeCount > 0 ? 'Ready for AI delivery' : 'Active';
+    nextAction = readyChangeCount > 0 ? 'Create a delivery package from a ready Change.' : 'Mark a Change ready when its scope and acceptance criteria are clear.';
   } else {
     status = 'active';
     label = 'Active';
@@ -350,6 +362,11 @@ export async function readProjectStatus(projectPath: string): Promise<ProjectSta
     componentCount,
     capabilityCount,
     bundleCount,
+    changeCount,
+    readyChangeCount,
+    changesInDeliveryCount,
+    changesInReviewCount,
+    acceptedChangeCount,
     foundation,
     setup,
     nextAction
