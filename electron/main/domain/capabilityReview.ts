@@ -13,6 +13,54 @@ import { collectMarkdownFiles, readProjectSetup } from './projectStatus';
 import { normaliseRelativePath, parseMarkdownSafe } from './projectValidation';
 import type { CapabilityReviewPackageImportResult, CapabilityReviewPackageResult, CapabilitySectionInput, CreateCapabilityInput, DeleteCapabilityInput, ImportCapabilityReviewPackageInput, ReadCapabilityInput, SetupStepStatus, UpdateCapabilityInput } from './types';
 
+const ROADMAP_HORIZONS = new Set(['now', 'next', 'later', 'parking-lot']);
+const ROADMAP_SIZES = new Set(['tiny', 'small', 'medium', 'large', 'too-large']);
+const ROADMAP_CONFIDENCE = new Set(['low', 'medium', 'high']);
+const ROADMAP_RISK_LEVELS = new Set(['low', 'medium', 'high']);
+const ROADMAP_REVIEW_BURDENS = new Set(['low', 'medium', 'high']);
+
+function hasOwn(input: object, key: string) {
+  return Object.prototype.hasOwnProperty.call(input, key);
+}
+
+function normaliseEnumValue(value: unknown, allowed: Set<string>) {
+  const text = String(value || '').trim().toLowerCase();
+  return allowed.has(text) ? text : undefined;
+}
+
+function normaliseDateOnly(value: unknown) {
+  const text = String(value || '').trim();
+  if (!text) return undefined;
+  return text.match(/^\d{4}-\d{2}-\d{2}/)?.[0] || undefined;
+}
+
+function normaliseStringArray(value: unknown) {
+  return Array.isArray(value) ? Array.from(new Set(value.map((item) => String(item || '').trim()).filter(Boolean))) : undefined;
+}
+
+function existingRoadmapValue(manifest: any, key: string) {
+  return manifest?.roadmap?.[key] ?? manifest?.[key];
+}
+
+function resolveRoadmapManifestFields(input: CreateCapabilityInput | UpdateCapabilityInput, manifest: any = {}) {
+  const get = (key: string, normaliser: (value: unknown) => unknown, fallbackAllowed = true) => {
+    if (hasOwn(input, key)) return normaliser((input as any)[key]);
+    return fallbackAllowed ? normaliser(existingRoadmapValue(manifest, key)) : undefined;
+  };
+
+  return {
+    roadmapHorizon: get('roadmapHorizon', (value) => normaliseEnumValue(value, ROADMAP_HORIZONS)),
+    targetDate: get('targetDate', normaliseDateOnly),
+    estimatedSize: get('estimatedSize', (value) => normaliseEnumValue(value, ROADMAP_SIZES)),
+    estimateConfidence: get('estimateConfidence', (value) => normaliseEnumValue(value, ROADMAP_CONFIDENCE)),
+    riskLevel: get('riskLevel', (value) => normaliseEnumValue(value, ROADMAP_RISK_LEVELS)),
+    reviewBurden: get('reviewBurden', (value) => normaliseEnumValue(value, ROADMAP_REVIEW_BURDENS)),
+    suggestedSplit: hasOwn(input, 'suggestedSplit') ? Boolean((input as any).suggestedSplit) : Boolean(existingRoadmapValue(manifest, 'suggestedSplit')) || undefined,
+    estimateReason: hasOwn(input, 'estimateReason') ? normaliseStringArray((input as any).estimateReason) : normaliseStringArray(existingRoadmapValue(manifest, 'estimateReason')),
+    unknowns: hasOwn(input, 'unknowns') ? normaliseStringArray((input as any).unknowns) : normaliseStringArray(existingRoadmapValue(manifest, 'unknowns')),
+  };
+}
+
 export function isSafeCapabilityReviewReturnPath(relativePath: string) {
   const normalised = safeZipReadEntryName(relativePath);
   if (!normalised || !normalised.startsWith('capabilities/')) return false;
@@ -478,6 +526,7 @@ export async function createCapability(root: string, input: CreateCapabilityInpu
   };
   const sections = normaliseCapabilitySections(input.sections, fallback);
   const status = input.status || 'draft';
+  const roadmapFields = resolveRoadmapManifestFields(input);
 
   await fsp.mkdir(dir, { recursive: true });
   await writeJson(path.join(dir, 'capability.json'), {
@@ -485,6 +534,7 @@ export async function createCapability(root: string, input: CreateCapabilityInpu
     title,
     status,
     components: componentSlugs,
+    ...roadmapFields,
     createdAt: new Date().toISOString(),
     template: {
       id: TEMPLATE_ID,
@@ -525,6 +575,7 @@ export async function readCapability(input: ReadCapabilityInput) {
     .map((component: unknown) => String(component))
     .filter(Boolean);
   const status = String(manifest.status || aidd.status || 'draft');
+  const roadmapFields = resolveRoadmapManifestFields({ projectPath: input.projectPath, slug, title }, manifest);
 
   const fallbackFromLegacyIndex: Partial<Record<string, string>> = {
     outcomes: extractSection(parsedIndex.content, 'Outcome') || extractSection(parsedIndex.content, 'Description'),
@@ -567,6 +618,7 @@ export async function readCapability(input: ReadCapabilityInput) {
     title,
     status,
     components,
+    ...roadmapFields,
     description: sections.find((section) => section.key === 'outcomes')?.body || '',
     outcome: sections.find((section) => section.key === 'outcomes')?.body || '',
     notes: sections.find((section) => section.key === 'risks')?.body || '',
@@ -590,6 +642,7 @@ export async function updateCapability(input: UpdateCapabilityInput) {
     risks: input.notes || ''
   };
   const sections = normaliseCapabilitySections(input.sections, fallback);
+  const roadmapFields = resolveRoadmapManifestFields(input, manifest);
 
   await writeJson(manifestPath, {
     ...manifest,
@@ -597,6 +650,7 @@ export async function updateCapability(input: UpdateCapabilityInput) {
     status,
     components,
     modules: undefined,
+    ...roadmapFields,
     updatedAt: new Date().toISOString(),
     template: {
       id: TEMPLATE_ID,

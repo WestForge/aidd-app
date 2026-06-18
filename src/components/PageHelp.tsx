@@ -124,7 +124,7 @@ const pageHelpContent: Record<Screen, PageHelpContent> = {
       'Creating component documents for modules, services, UI areas, libraries, or runtime pieces.',
       'Linking components back to the capabilities they support.',
       'Recording source paths so delivery packages can include the right implementation context.',
-      'Keeping technical ownership and boundaries visible.'
+      'Keeping technical responsibilities and boundaries visible.'
     ],
     goodOutcome: [
       'A developer or AI agent can find the relevant source area quickly.',
@@ -166,6 +166,23 @@ const pageHelpContent: Record<Screen, PageHelpContent> = {
       'The team can see which packages are ready, blocked, or complete.'
     ],
     tip: 'A good delivery package should be small enough to review and specific enough that AI cannot wander.'
+  },
+  roadmap: {
+    title: 'Roadmap',
+    summary: 'Check whether target dates still look believable.',
+    purpose: 'Roadmap answers “are we on course?” by combining capability target dates, plain-language size, confidence, risk, review burden, linked Changes, delivery progress, and Git-derived last changed dates. It deliberately avoids story points and manually assigned owners.',
+    useThisPageFor: [
+      'Setting capability roadmap horizons: Now, Next, Later, or Parking lot.',
+      'Adding target dates without pretending they are fixed project-plan commitments.',
+      'Marking scope as tiny, small, medium, large, or too large.',
+      'Spotting capabilities that need splitting, clearer Changes, or adjusted target dates.'
+    ],
+    goodOutcome: [
+      'Capabilities have believable target dates and size signals.',
+      'Large or low-confidence items are visible before they become delivery problems.',
+      'The roadmap shows who last changed an item and when without creating fake ownership.'
+    ],
+    tip: 'Use “Assess scope” to copy an AI prompt that asks for size, risk, confidence, review burden, unknowns, and split recommendations — with no story points.'
   },
   'bundle-editor': {
     title: 'Delivery package editor',

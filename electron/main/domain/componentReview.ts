@@ -920,23 +920,91 @@ export function isSafeFoundationReviewReturnPath(relativePath: string) {
   return FOUNDATION_REVIEW_FILES.has(normalised);
 }
 
+async function statIfExists(filePath: string) {
+  try {
+    return await fsp.stat(filePath);
+  } catch {
+    return null;
+  }
+}
+
+async function collectFoundationReviewDirectoryEntries(responsePath: string) {
+  const resolvedPath = path.resolve(responsePath);
+  const responseStat = await statIfExists(resolvedPath);
+  if (!responseStat) throw new Error(`Review response path does not exist: ${responsePath}`);
+
+  let responseRoot: string;
+  if (responseStat.isFile()) {
+    if (path.basename(resolvedPath).toLowerCase() !== 'review.md') {
+      throw new Error('Review response must be a .zip file, a folder containing foundation/, or a REVIEW.md file beside foundation/.');
+    }
+    responseRoot = path.dirname(resolvedPath);
+  } else if (responseStat.isDirectory()) {
+    responseRoot = path.basename(resolvedPath).toLowerCase() === 'foundation'
+      ? path.dirname(resolvedPath)
+      : resolvedPath;
+  } else {
+    throw new Error('Review response must be a .zip file, a folder containing foundation/, or a REVIEW.md file beside foundation/.');
+  }
+
+  const foundationDir = path.join(responseRoot, 'foundation');
+  const foundationStat = await statIfExists(foundationDir);
+  if (!foundationStat?.isDirectory()) {
+    throw new Error('Review response rejected: the folder must contain a foundation/ directory.');
+  }
+
+  const entries: Awaited<ReturnType<typeof readZipFile>> = [];
+  const reviewPath = path.join(responseRoot, 'REVIEW.md');
+  const reviewStat = await statIfExists(reviewPath);
+  if (reviewStat?.isFile()) {
+    entries.push({
+      name: 'REVIEW.md',
+      data: await fsp.readFile(reviewPath),
+      directory: false
+    });
+  }
+
+  for (const entry of await fsp.readdir(foundationDir, { withFileTypes: true })) {
+    if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.md') continue;
+    entries.push({
+      name: `foundation/${entry.name}`,
+      data: await fsp.readFile(path.join(foundationDir, entry.name)),
+      directory: false
+    });
+  }
+
+  return entries;
+}
+
+async function readFoundationReviewResponseEntries(responsePath: string) {
+  const resolvedPath = path.resolve(responsePath);
+  const responseStat = await statIfExists(resolvedPath);
+  if (!responseStat) throw new Error(`Review response path does not exist: ${responsePath}`);
+
+  if (responseStat.isFile() && path.extname(resolvedPath).toLowerCase() === '.zip') {
+    const entries = await readZipFile(resolvedPath);
+    const hasFoundationDirectory = entries.some((entry) => {
+      const name = normaliseRelativePath(entry.name).replace(/^\/+/, '');
+      return name === 'foundation/' || name.startsWith('foundation/');
+    });
+    if (!hasFoundationDirectory) {
+      throw new Error('Review response rejected: the zip must contain a foundation/ directory.');
+    }
+    return entries;
+  }
+
+  return collectFoundationReviewDirectoryEntries(resolvedPath);
+}
+
 export async function importFoundationReviewPackage(input: ImportFoundationReviewPackageInput): Promise<FoundationReviewPackageImportResult> {
   if (!input.projectPath) throw new Error('Project path is required.');
-  if (!input.zipPath) throw new Error('Review response zip path is required.');
+  if (!input.zipPath) throw new Error('Review response path is required.');
   const root = path.resolve(input.projectPath);
-  const zipPath = path.resolve(input.zipPath);
+  const responsePath = path.resolve(input.zipPath);
   if (!(await exists(root))) throw new Error(`Project path does not exist: ${input.projectPath}`);
-  if (!(await exists(zipPath))) throw new Error(`Review response zip does not exist: ${input.zipPath}`);
-  if (path.extname(zipPath).toLowerCase() !== '.zip') throw new Error('Review response must be a .zip file.');
+  if (!(await exists(responsePath))) throw new Error(`Review response path does not exist: ${input.zipPath}`);
 
-  const entries = await readZipFile(zipPath);
-  const hasFoundationDirectory = entries.some((entry) => {
-    const name = normaliseRelativePath(entry.name).replace(/^\/+/, '');
-    return name === 'foundation/' || name.startsWith('foundation/');
-  });
-  if (!hasFoundationDirectory) {
-    throw new Error('Review response rejected: the zip must contain a foundation/ directory.');
-  }
+  const entries = await readFoundationReviewResponseEntries(responsePath);
 
   const importedFiles: string[] = [];
   const skippedFiles: string[] = [];
@@ -955,7 +1023,7 @@ export async function importFoundationReviewPackage(input: ImportFoundationRevie
     }
 
     const target = path.resolve(root, relativePath);
-    if (!target.startsWith(`${root}${path.sep}`)) {
+    if (!isSameOrInsideDiskPath(target, root) || target === root) {
       skippedFiles.push(relativePath);
       continue;
     }
@@ -967,7 +1035,7 @@ export async function importFoundationReviewPackage(input: ImportFoundationRevie
 
   return {
     accepted: true,
-    zipPath,
+    zipPath: responsePath,
     importedFiles: importedFiles.sort((a, b) => a.localeCompare(b)),
     skippedFiles: skippedFiles.sort((a, b) => a.localeCompare(b)),
     reviewIncluded: Boolean(reviewMarkdown),

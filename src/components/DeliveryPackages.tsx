@@ -3,10 +3,10 @@ import {
   CheckCircle2,
   Clock3,
   Loader2,
-  PackageOpen,
   FolderOpen,
   UploadCloud,
   RefreshCw,
+  Undo2,
   Trash2,
 } from 'lucide-react';
 import type { DeliveryBundle } from '../domain/types';
@@ -22,7 +22,7 @@ interface DeliveryPackagesProps {
   activeProject?: AiddTrackedProject | null;
 }
 
-type DeliveryColumnId = 'packaging' | 'approved' | 'in-progress' | 'done';
+type DeliveryColumnId = 'accepted' | 'in-progress' | 'done';
 
 type DeliveryWorkItem = {
   id: string;
@@ -57,57 +57,55 @@ const columns: Array<{
   id: DeliveryColumnId;
   title: string;
   description: string;
-  icon: typeof PackageOpen;
+  icon: typeof CheckCircle2;
 }> = [
-  { id: 'packaging', title: 'Packaging', description: 'Package context still being completed.', icon: PackageOpen },
-  { id: 'approved', title: 'Approved', description: 'Accepted and published to the workspace.', icon: CheckCircle2 },
+  { id: 'accepted', title: 'Accepted', description: 'Prepared packages ready to publish into the workspace.', icon: CheckCircle2 },
   { id: 'in-progress', title: 'In Progress', description: 'Implementation is underway.', icon: Loader2 },
   { id: 'done', title: 'Done', description: 'Delivered and accepted.', icon: CheckCircle2 },
 ];
 
 const statusLabels: Record<string, string> = {
-  draft: 'Packaging',
-  'not-started': 'Packaging',
-  packaging: 'Packaging',
-  'changes-requested': 'Packaging',
-  'needs-review': 'Packaging',
-  review: 'Packaging',
-  'in-review': 'Packaging',
-  'needs-verification': 'Packaging',
-  approved: 'Approved',
-  'approved-for-ai': 'Approved',
+  draft: 'Accepted',
+  'not-started': 'Accepted',
+  packaging: 'Accepted',
+  'changes-requested': 'Accepted',
+  'needs-review': 'Accepted',
+  review: 'Accepted',
+  'in-review': 'Accepted',
+  'needs-verification': 'Accepted',
+  approved: 'Accepted',
+  'approved-for-ai': 'Accepted',
+  accepted: 'Accepted',
   'in-progress': 'In Progress',
   'in-ai-execution': 'In Progress',
   active: 'In Progress',
   done: 'Done',
   complete: 'Done',
-  accepted: 'Done',
 };
 
 function normaliseStatus(status?: string): DeliveryColumnId {
   switch ((status || 'draft').toLowerCase()) {
+    case 'approved':
+    case 'approved-for-ai':
+    case 'accepted':
     case 'needs-review':
     case 'review':
     case 'in-review':
     case 'needs-verification':
-      return 'packaging';
-    case 'approved':
-    case 'approved-for-ai':
-      return 'approved';
+    case 'draft':
+    case 'not-started':
+    case 'packaging':
+    case 'changes-requested':
+      return 'accepted';
     case 'in-progress':
     case 'in-ai-execution':
     case 'active':
       return 'in-progress';
     case 'done':
     case 'complete':
-    case 'accepted':
       return 'done';
-    case 'draft':
-    case 'not-started':
-    case 'packaging':
-    case 'changes-requested':
     default:
-      return 'packaging';
+      return 'accepted';
   }
 }
 
@@ -147,6 +145,7 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, active
   const [items, setItems] = useState<DeliveryWorkItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [returningId, setReturningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadPackages = async () => {
@@ -220,6 +219,33 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, active
     }
   };
 
+  const returnPackageToChanges = async (item: DeliveryWorkItem) => {
+    if (!activeProject) return;
+    const confirmed = window.confirm(
+      `Return "${item.id}" to Changes?\n\nThis removes the accepted Delivery package and its workspace delivery folder. The linked Change will go back to Ready so it can be corrected and accepted again.`,
+    );
+    if (!confirmed) return;
+
+    setReturningId(item.id);
+    setError(null);
+    try {
+      const result = await window.aidd.returnDeliveryPackageToChanges({
+        projectPath: activeProject.path,
+        packageId: item.id,
+        removeWorkspacePackage: true,
+      });
+      setItems(result.deliveryPackages);
+      await window.aidd.notify({
+        title: 'Returned to Changes',
+        body: `${item.id} moved back to ${result.changeIds.join(', ')}`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not return the package to Changes.');
+    } finally {
+      setReturningId(null);
+    }
+  };
+
   const total = items.length;
 
   return (
@@ -255,12 +281,12 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, active
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold">Delivery flow</h2>
-            <p className="text-sm text-muted-foreground">Approved packages publish into the source workspace at <code>delivery/&lt;package-id&gt;</code>.</p>
+            <p className="text-sm text-muted-foreground">Accepted packages publish into the source workspace at <code>delivery/&lt;package-id&gt;</code>.</p>
           </div>
           <Badge variant="outline">{total} active item{total === 1 ? '' : 's'}</Badge>
         </div>
 
-        <div className="grid min-w-[920px] gap-4 xl:grid-cols-4">
+        <div className="grid min-w-[760px] gap-4 xl:grid-cols-3">
           {columns.map((column) => {
             const columnItems = grouped.get(column.id) ?? [];
             const Icon = column.icon;
@@ -338,7 +364,7 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, active
 
                         {activeProject && (
                           <div className="mt-3 flex flex-wrap justify-end gap-1 border-t pt-2 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
-                            {normaliseStatus(item.status) === 'approved' && (
+                            {normaliseStatus(item.status) === 'accepted' && (
                               <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => publishPackage(item)} disabled={publishingId === item.id}>
                                 {publishingId === item.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />}
                                 {item.workspacePublishStatus === 'published' ? 'Republish' : 'Publish'}
@@ -348,6 +374,12 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, active
                               <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openWorkspacePackage(item)}>
                                 <FolderOpen className="h-3.5 w-3.5" />
                                 Workspace
+                              </Button>
+                            )}
+                            {item.packageType === 'change' && normaliseStatus(item.status) === 'accepted' && (
+                              <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => returnPackageToChanges(item)} disabled={returningId === item.id}>
+                                {returningId === item.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
+                                Return
                               </Button>
                             )}
                             <Button variant="ghost" size="sm" className="h-7 px-2 text-destructive hover:text-destructive" onClick={() => deletePackage(item)}>
@@ -361,7 +393,7 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, active
                   })}
 
                   {!loading && columnItems.length === 0 && (
-                    <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">No delivery packages yet. Mark a Change as ready, then create a delivery package from the Changes page.</div>
+                    <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">No delivery packages yet. Prepare a Change, then create a package from the Changes page.</div>
                   )}
                 </CardContent>
               </Card>

@@ -64,7 +64,7 @@ export function registerAppWorkflowIpcHandlers() {
   });
 
   ipcMain.handle('project:importFoundationReviewPackage', async (_event, input: ImportFoundationReviewPackageInput) => {
-    if (!input?.projectPath || !input?.zipPath) throw new Error('Project path and foundation review response zip path are required.');
+    if (!input?.projectPath || !input?.zipPath) throw new Error('Project path and foundation review response path are required.');
     return withProjectSaveSync(input.projectPath, () => importFoundationReviewPackage(input));
   });
 

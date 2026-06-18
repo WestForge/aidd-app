@@ -327,6 +327,21 @@ function findDroppedFilePath(files: FileList | File[], extension: string) {
     file.name.toLowerCase().endsWith(expectedExtension),
   );
   if (!droppedFile) return "";
+  return getDroppedPath(droppedFile);
+}
+
+function findDroppedReviewResponsePath(files: FileList | File[]) {
+  const droppedFiles = Array.from(files || []);
+  const droppedFile =
+    droppedFiles.find((file) => {
+      const name = file.name.toLowerCase();
+      return name.endsWith(".zip") || name === "review.md";
+    }) || droppedFiles[0];
+  if (!droppedFile) return "";
+  return getDroppedPath(droppedFile);
+}
+
+function getDroppedPath(droppedFile: File) {
   return (
     window.aidd.getDroppedFilePath(droppedFile) ||
     (droppedFile as File & { path?: string }).path ||
@@ -659,14 +674,14 @@ export function SetupWorkflow({
     event.dataTransfer.dropEffect = "copy";
   };
 
-  const importFoundationReviewZip = async (event: React.DragEvent<HTMLButtonElement>) => {
+  const importFoundationReviewResponse = async (event: React.DragEvent<HTMLButtonElement>) => {
     event.preventDefault();
     setFoundationReviewDropActive(false);
     if (!activeProject?.path) return;
 
-    const zipPath = findDroppedFilePath(event.dataTransfer.files, ".zip");
-    if (!zipPath) {
-      const message = "Drop a returned Foundation review .zip file from your file system.";
+    const responsePath = findDroppedReviewResponsePath(event.dataTransfer.files);
+    if (!responsePath) {
+      const message = "Drop a returned Foundation review .zip, unpacked review folder, or REVIEW.md file.";
       setFoundationReviewError(message);
       void window.aidd.notify({ title: "Foundation review import rejected", body: message });
       return;
@@ -677,7 +692,7 @@ export function SetupWorkflow({
     try {
       const result = await window.aidd.importFoundationReviewPackage({
         projectPath: activeProject.path,
-        zipPath,
+        zipPath: responsePath,
       });
       await load();
       void window.aidd.notify({
@@ -992,7 +1007,7 @@ export function SetupWorkflow({
               }}
               onDragLeave={() => setFoundationReviewDropActive(false)}
               onDragOver={foundationReviewDragOver}
-              onDrop={importFoundationReviewZip}
+              onDrop={importFoundationReviewResponse}
             />
           </div>
         )}

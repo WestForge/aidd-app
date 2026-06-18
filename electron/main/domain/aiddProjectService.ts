@@ -11,4 +11,5 @@ export * from './componentReview';
 export * from './capabilityReview';
 export * from './changes';
 export * from './delivery';
+export * from './roadmap';
 export * from './sourceDecisionsGit';

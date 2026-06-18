@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, FolderGit2, GitPullRequestArrow, HeartPulse, Home, ListChecks, PackageCheck, Settings, ShieldCheck, Sparkles, Puzzle, type LucideIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FolderGit2, GitPullRequestArrow, HeartPulse, Home, ListChecks, Map, PackageCheck, Settings, ShieldCheck, Sparkles, Puzzle, type LucideIcon } from 'lucide-react';
 import type { Screen } from '../main';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -29,7 +29,8 @@ const primaryItems: SidebarItem[] = [
   { id: 'capabilities', label: 'Capabilities', icon: Sparkles },
   { id: 'components', label: 'Components', icon: Puzzle },
   { id: 'changes', label: 'Changes', icon: GitPullRequestArrow },
-  { id: 'delivery-packages', label: 'Delivery', icon: PackageCheck }
+  { id: 'delivery-packages', label: 'Delivery', icon: PackageCheck },
+  { id: 'roadmap', label: 'Roadmap', icon: Map }
 ];
 
 const utilityItems: SidebarItem[] = [

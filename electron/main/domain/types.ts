@@ -660,6 +660,15 @@ export interface CreateCapabilityInput {
   status?: SetupStepStatus;
   inlineComponent?: { title: string; description?: string };
   sections?: CapabilitySectionInput[];
+  roadmapHorizon?: RoadmapHorizon | '';
+  targetDate?: string;
+  estimatedSize?: RoadmapSize | '';
+  estimateConfidence?: RoadmapConfidence | '';
+  riskLevel?: RoadmapRiskLevel | '';
+  reviewBurden?: RoadmapReviewBurden | '';
+  suggestedSplit?: boolean;
+  estimateReason?: string[];
+  unknowns?: string[];
 }
 
 export interface ReadCapabilityInput {
@@ -677,11 +686,105 @@ export interface UpdateCapabilityInput {
   status?: SetupStepStatus;
   componentSlugs?: string[];
   sections?: CapabilitySectionInput[];
+  roadmapHorizon?: RoadmapHorizon | '';
+  targetDate?: string;
+  estimatedSize?: RoadmapSize | '';
+  estimateConfidence?: RoadmapConfidence | '';
+  riskLevel?: RoadmapRiskLevel | '';
+  reviewBurden?: RoadmapReviewBurden | '';
+  suggestedSplit?: boolean;
+  estimateReason?: string[];
+  unknowns?: string[];
 }
 
 export interface DeleteCapabilityInput {
   projectPath: string;
   slug: string;
+}
+
+export type RoadmapHorizon = 'now' | 'next' | 'later' | 'parking-lot';
+export type RoadmapSize = 'tiny' | 'small' | 'medium' | 'large' | 'too-large';
+export type RoadmapConfidence = 'low' | 'medium' | 'high';
+export type RoadmapRiskLevel = 'low' | 'medium' | 'high';
+export type RoadmapReviewBurden = 'low' | 'medium' | 'high';
+export type RoadmapCourseStatus = 'on-course' | 'tight' | 'at-risk' | 'off-course' | 'unknown';
+
+export interface EntityProvenance {
+  lastChangedBy?: string;
+  lastChangedEmail?: string;
+  lastChangedAt?: string;
+  source: 'git' | 'workspace' | 'import' | 'unknown';
+}
+
+export interface RoadmapCapabilityProgress {
+  totalChanges: number;
+  acceptedChanges: number;
+  openChanges: number;
+  readyChanges: number;
+  inDeliveryChanges: number;
+  inReviewChanges: number;
+  deliveryPackageCount: number;
+}
+
+export interface RoadmapCapabilityCourse {
+  status: RoadmapCourseStatus;
+  reasons: string[];
+  suggestedActions: string[];
+}
+
+export interface RoadmapCapability {
+  slug: string;
+  title: string;
+  status: string;
+  components: string[];
+  roadmapHorizon?: RoadmapHorizon;
+  targetDate?: string;
+  estimatedSize?: RoadmapSize;
+  estimateConfidence?: RoadmapConfidence;
+  riskLevel?: RoadmapRiskLevel;
+  reviewBurden?: RoadmapReviewBurden;
+  suggestedSplit?: boolean;
+  estimateReason: string[];
+  unknowns: string[];
+  provenance: EntityProvenance;
+  progress: RoadmapCapabilityProgress;
+  course: RoadmapCapabilityCourse;
+}
+
+export interface RoadmapSizeBucket {
+  size: RoadmapSize;
+  label: string;
+  count: number;
+}
+
+export interface RoadmapPressureMonth {
+  month: string;
+  capabilityCount: number;
+  largeOrTooLargeCount: number;
+  atRiskCount: number;
+  lowConfidenceCount: number;
+}
+
+export interface RoadmapReport {
+  generatedAt: string;
+  overallStatus: RoadmapCourseStatus;
+  summary: {
+    capabilityCount: number;
+    targetedCapabilityCount: number;
+    largeOrTooLargeCount: number;
+    lowConfidenceCount: number;
+    noLinkedChangeCount: number;
+    offCourseCount: number;
+    atRiskCount: number;
+    tightCount: number;
+    onCourseCount: number;
+    unknownCount: number;
+  };
+  summaryReasons: string[];
+  suggestedActions: string[];
+  sizeBuckets: RoadmapSizeBucket[];
+  pressureByTargetMonth: RoadmapPressureMonth[];
+  capabilities: RoadmapCapability[];
 }
 
 export type ChangeType =
@@ -707,6 +810,11 @@ export type ChangePriority = 'low' | 'normal' | 'high' | 'urgent';
 export type ChangeRisk = 'low' | 'medium' | 'high' | 'unknown';
 export type ChangeSource = 'manual' | 'capability' | 'component' | 'component-technical-change' | 'review-import';
 
+export interface ChangeStatusHistoryEntry {
+  status: ChangeStatus;
+  changedAt: string;
+}
+
 export interface ChangeReadiness {
   ready: boolean;
   blockers: string[];
@@ -718,6 +826,14 @@ export interface ChangeSection {
   title: string;
   body: string;
   editable: boolean;
+}
+
+export interface ChangePlanPhase {
+  id: string;
+  title: string;
+  status: string;
+  fileName: string;
+  body: string;
 }
 
 export interface ChangeRecord {
@@ -738,11 +854,57 @@ export interface ChangeRecord {
   relativePath: string;
   createdAt: string;
   updatedAt: string;
+  targetDate?: string;
+  size?: RoadmapSize;
+  blocked: boolean;
+  blockedReason?: string;
+  dependsOnChangeIds: string[];
+  statusHistory: ChangeStatusHistoryEntry[];
 }
 
 export interface ChangeDetail extends ChangeRecord {
   sections: ChangeSection[];
+  strategyBody: string;
+  phases: ChangePlanPhase[];
   readiness: ChangeReadiness;
+}
+
+export interface ChangeReviewPackageInput {
+  projectPath: string;
+  id: string;
+}
+
+export interface ChangeReviewPackageResult {
+  filePath: string;
+  fileName: string;
+  changeId: string;
+  changeFileCount: number;
+  capabilityFileCount: number;
+  componentFileCount: number;
+  standardsFileCount: number;
+  sourceRootCount: number;
+  sourceFileCount: number;
+  templateFileCount: number;
+  entryCount: number;
+  warnings: string[];
+}
+
+export interface ImportChangeReviewPackageInput {
+  projectPath: string;
+  id: string;
+  zipPath: string;
+}
+
+export interface ChangeReviewPackageImportResult {
+  accepted: boolean;
+  zipPath: string;
+  changeId: string;
+  importedFiles: string[];
+  skippedFiles: string[];
+  backedUpFiles: string[];
+  backupDirectory?: string;
+  reviewIncluded: boolean;
+  reviewMarkdown?: string;
 }
 
 export interface CreateChangeInput {
@@ -760,6 +922,14 @@ export interface CreateChangeInput {
     technicalChangeId: string;
   } | null;
   sections?: ChangeSection[];
+  strategyBody?: string;
+  phases?: ChangePlanPhase[];
+  targetDate?: string;
+  size?: RoadmapSize;
+  blocked?: boolean;
+  blockedReason?: string;
+  dependsOnChangeIds?: string[];
+  statusHistory?: ChangeStatusHistoryEntry[];
 }
 
 export interface ReadChangeInput {
@@ -778,6 +948,14 @@ export interface SaveChangeInput {
   linkedCapabilities?: string[];
   linkedComponents?: string[];
   sections?: ChangeSection[];
+  strategyBody?: string;
+  phases?: ChangePlanPhase[];
+  targetDate?: string;
+  size?: RoadmapSize;
+  blocked?: boolean;
+  blockedReason?: string;
+  dependsOnChangeIds?: string[];
+  statusHistory?: ChangeStatusHistoryEntry[];
 }
 
 export interface UpdateChangeStatusInput {
@@ -823,6 +1001,7 @@ export interface CreateDeliveryPackageFromTechnicalChangeInput {
 export interface CreateDeliveryPackageFromChangesInput {
   projectPath: string;
   changeIds: string[];
+  publishToWorkspace?: boolean;
 }
 
 export type DeliveryPackageType = 'capability' | 'technical' | 'change';
@@ -917,6 +1096,21 @@ export interface DeliveryReviewPackageImportResult {
 export interface DeleteDeliveryPackageInput {
   projectPath: string;
   id: string;
+}
+
+export interface ReturnDeliveryPackageToChangesInput {
+  projectPath: string;
+  packageId: string;
+  removeWorkspacePackage?: boolean;
+}
+
+export interface ReturnDeliveryPackageToChangesResult {
+  packageId: string;
+  changeIds: string[];
+  removedPackagePath: string;
+  removedWorkspacePath?: string;
+  deliveryPackages: DeliveryPackageSummary[];
+  message: string;
 }
 
 export interface DeliveryPackagePhaseDetail {
@@ -1054,6 +1248,7 @@ export interface DeliveryReviewSourceRoot {
 
 export interface DeliveryReviewCollectedSource {
   entries: ZipEntryInput[];
+  workspacePath: string;
   roots: DeliveryReviewSourceRoot[];
   skippedNestedRoots: Array<{ configuredDirectory: string; absolutePath: string; coveredBy: string; componentSlugs: string[] }>;
   includedFiles: string[];

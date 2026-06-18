@@ -7,16 +7,16 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { readCapability } from './capabilityReview';
-import { appendDeliveryPackageToChanges, evaluateChangeReadiness, readChange } from './changes';
+import { CHANGE_PHASE_FILE_PATTERN, CHANGE_SECTIONS, CHANGE_STRATEGY_FILE, appendDeliveryPackageToChanges, changeMetadata, changePhaseIdFromFileName, changeTypeLabel, evaluateChangeReadiness, findChangeTarget, readChange, saveChange } from './changes';
 import { componentSourceIsConfigured, normaliseComponentSource, resolveComponentSourceDirectory } from './componentCore';
 import { isSafeComponentTechnicalReviewSegment, readComponent, readComponentContractMarkdownForReview, readProjectName, shouldIncludeInReviewBundle } from './componentReview';
 import { countTechnicalChangePatches, normaliseTechnicalChangeRecord, readComponentTechnicalChange, readComponentTechnicalChanges, writeTechnicalChangeMetadata } from './componentTechnicalChanges';
 import { TEMPLATE_VERSION, copyDir, exists, readEntities, readJson, readTrackedProjectByPath, readWorkspacePathForProject, slugify, writeJson } from './projectCore';
 import { collectMarkdownFiles } from './projectStatus';
-import { WORKSPACE_PUBLISH_TEMPLATE_VERSION, buildPublishedComponentsMarkdown, buildPublishedFoundationMarkdown, buildPublishedStandardsMarkdown, deliveryReviewCapabilitySnapshotFileName, generatedDocHeader, isSameOrInsideDiskPath, normaliseDiskPath, normaliseRelativePath, sameDiskPath, setupStatusLabel, sha256Text, workspaceDeliveryPackagePath } from './projectValidation';
+import { WORKSPACE_PUBLISH_TEMPLATE_VERSION, buildPublishedCapabilityMarkdown, buildPublishedComponentsMarkdown, buildPublishedFoundationMarkdown, buildPublishedStandardsMarkdown, deliveryReviewCapabilitySnapshotFileName, generatedDocHeader, isSameOrInsideDiskPath, normaliseDiskPath, normaliseRelativePath, sameDiskPath, setupStatusLabel, sha256Text, workspaceDeliveryPackagePath } from './projectValidation';
 import { readSourceProjects } from './sourceDecisionsGit';
 import { readFoundationDocuments, readStandardSections, standardSectionDone } from './standards';
-import type { ChangeDetail, ComponentTechnicalChangeDetail, ComponentTechnicalChangeRecord, CreateDeliveryPackageFromCapabilityInput, CreateDeliveryPackageFromChangesInput, CreateDeliveryPackageFromTechnicalChangeInput, CreateDeliveryPackagePhaseInput, DeleteDeliveryPackageInput, DeliveryPackageDetail, DeliveryPackageFileDetail, DeliveryPackagePhaseDetail, DeliveryPackageSummary, DeliveryPackageTechnicalChangeSummary, DeliveryPackageType, DeliveryReviewCollectedSource, DeliveryReviewPackageImportResult, DeliveryReviewPackageInput, DeliveryReviewPackageResult, DeliveryReviewSourceRoot, DeliveryWorkspacePublishInput, DeliveryWorkspacePublishResult, FoundationDocument, ImportDeliveryReviewPackageInput, SaveDeliveryPackageInput, StandardSection } from './types';
+import type { ChangeDetail, ChangePlanPhase, ChangeReviewPackageImportResult, ChangeReviewPackageInput, ChangeReviewPackageResult, ComponentTechnicalChangeDetail, ComponentTechnicalChangeRecord, CreateDeliveryPackageFromCapabilityInput, CreateDeliveryPackageFromChangesInput, CreateDeliveryPackageFromTechnicalChangeInput, CreateDeliveryPackagePhaseInput, DeleteDeliveryPackageInput, DeliveryPackageDetail, DeliveryPackageFileDetail, DeliveryPackagePhaseDetail, DeliveryPackageSummary, DeliveryPackageTechnicalChangeSummary, DeliveryPackageType, DeliveryReviewCollectedSource, DeliveryReviewPackageImportResult, DeliveryReviewPackageInput, DeliveryReviewPackageResult, DeliveryReviewSourceRoot, DeliveryWorkspacePublishInput, DeliveryWorkspacePublishResult, FoundationDocument, ImportChangeReviewPackageInput, ImportDeliveryReviewPackageInput, ReturnDeliveryPackageToChangesInput, ReturnDeliveryPackageToChangesResult, SaveDeliveryPackageInput, StandardSection } from './types';
 
 export async function assertProjectFoundationReady(projectPath: string) {
   const foundation = await readFoundationDocuments(projectPath);
@@ -830,6 +830,60 @@ function buildChangesSummaryMarkdown(changes: ChangeDetail[]) {
   ].join('\n');
 }
 
+function buildPreparedChangeStrategyBody(changes: ChangeDetail[]) {
+  if (changes.length === 1) {
+    return (changes[0].strategyBody || '').trim();
+  }
+
+  return [
+    '# Implementation Strategy',
+    '',
+    `This package executes ${changes.length} ready Changes. Keep implementation bounded to the prepared strategies, scopes, acceptance criteria, and phases below.`,
+    '',
+    '## Combined Objective',
+    '',
+    `Deliver ${changes.map((change) => `${change.id}: ${change.title}`).join('; ')}.`,
+    '',
+    '## Change Strategies',
+    '',
+    ...changes.flatMap((change) => [
+      `### ${change.id} ${change.title}`,
+      '',
+      (change.strategyBody || '').trim() || '_No strategy captured._',
+      ''
+    ])
+  ].join('\n');
+}
+
+async function writePreparedChangePlanPhases(dir: string, packageId: string, changes: ChangeDetail[]) {
+  const phaseSources = changes.flatMap((change) =>
+    change.phases.map((phase) => ({ change, phase }))
+  );
+
+  for (const [index, source] of phaseSources.entries()) {
+    const title = changes.length === 1
+      ? source.phase.title
+      : `${source.change.id}: ${source.phase.title}`;
+    const fileName = `phase-${String(index + 1).padStart(2, '0')}-${slugify(title) || 'phase'}.md`;
+    const body = [
+      changes.length === 1 ? '' : `Source Change: ${source.change.id}`,
+      changes.length === 1 ? '' : '',
+      source.phase.body || ''
+    ].filter((line, lineIndex, lines) => line || lineIndex < lines.length - 1).join('\n').trim();
+
+    await writeMarkdownBody(path.join(dir, fileName), body, {
+      aidd: { type: 'delivery-package-phase', templateVersion: TEMPLATE_VERSION },
+      id: phaseIdFromFileName(fileName),
+      title,
+      status: 'approved',
+      deliveryPackage: packageId,
+      sourceChange: source.change.id,
+      sourceChangePhase: source.phase.id,
+      order: index + 1
+    });
+  }
+}
+
 async function nextDeliveryPackageId(projectPath: string, title: string) {
   const existing = await readEntities(projectPath, 'delivery/packages', 'package.json');
   let nextNumber = existing.length + 1;
@@ -854,6 +908,9 @@ export async function createDeliveryPackageFromChanges(input: CreateDeliveryPack
     if (change.status === 'accepted') throw new Error(`${change.id} has already been accepted. Duplicate or supersede it before packaging it again.`);
     if (change.status === 'in-delivery') throw new Error(`${change.id} is already in delivery.`);
     if (change.status !== 'ready') throw new Error(`${change.id} must be marked ready before it can be packaged.`);
+  }
+  if (input.publishToWorkspace) {
+    await requireDeliveryWorkspace(input.projectPath);
   }
 
   let foundationSnapshot = '';
@@ -918,44 +975,17 @@ export async function createDeliveryPackageFromChanges(input: CreateDeliveryPack
     changeIds,
     sourceCapabilities: linkedCapabilities,
     components: linkedComponents,
-    status: 'draft',
+    status: 'approved',
     createdAt
   });
 
-  const strategy = matter.stringify([
-    '# Implementation Strategy',
-    '',
-    'This package executes ready AIDD Changes. Keep implementation bounded to the Change scope and acceptance criteria.',
-    '',
-    '## Objective',
-    '',
-    changes.length === 1
-      ? `Deliver ${changes[0].id}: ${changes[0].title}.`
-      : `Deliver ${changes.length} ready Changes: ${changes.map((change) => change.id).join(', ')}.`,
-    '',
-    '## Change-aware guidance',
-    '',
-    ...changes.flatMap((change) => [
-      `### ${change.id} ${change.title}`,
-      '',
-      ...changeTypeStrategyGuidance(change),
-      ''
-    ]),
-    '## Proposed approach',
-    '',
-    'TODO: Describe the implementation approach after reviewing the Change scope, linked context, and source code.',
-    '',
-    '## Verification strategy',
-    '',
-    'TODO: Define tests, commands, manual checks, and evidence required for these Changes.',
-    ''
-  ].join('\n'), {
+  const strategy = matter.stringify(`${buildPreparedChangeStrategyBody(changes).trim()}\n`, {
     aidd: { type: 'implementation-strategy', templateVersion: TEMPLATE_VERSION },
     id: `${id}-strategy`,
     deliveryPackage: id,
     packageType: 'change',
     changeIds,
-    status: 'draft',
+    status: 'approved',
     createdAt
   });
 
@@ -963,7 +993,7 @@ export async function createDeliveryPackageFromChanges(input: CreateDeliveryPack
     id,
     title,
     packageType: 'change',
-    status: 'draft',
+    status: 'approved',
     changeIds,
     sourceCapabilities: linkedCapabilities,
     components: linkedComponents,
@@ -973,10 +1003,14 @@ export async function createDeliveryPackageFromChanges(input: CreateDeliveryPack
   });
   await fsp.writeFile(path.join(dir, 'snapshot.md'), snapshot, 'utf8');
   await fsp.writeFile(path.join(dir, 'implementation-strategy.md'), strategy, 'utf8');
+  await writePreparedChangePlanPhases(dir, id, changes);
   await fsp.writeFile(path.join(dir, 'changes.md'), changesSummary, 'utf8');
   await fsp.writeFile(path.join(dir, 'linked-context.md'), linkedContext, 'utf8');
   await appendDeliveryPackageToChanges(input.projectPath, changeIds, id);
-  return { id, path: dir };
+  const workspacePublish = input.publishToWorkspace
+    ? await publishDeliveryPackageToWorkspace({ projectPath: input.projectPath, packageId: id })
+    : undefined;
+  return { id, path: dir, ...(workspacePublish ? { workspacePublish } : {}) };
 }
 
 export function deliveryStatusFromManifest(manifest: any, packaged: boolean, phaseCount: number): string {
@@ -1607,6 +1641,8 @@ export function buildDeliveryReviewSamplePhaseMarkdown(detail: DeliveryPackageDe
     '',
     '- `src/...`',
     '',
+    '`src/` is the review bundle alias for the configured workspace directory. Replace the leading `src` segment with the workspace path from `MANIFEST.json` when recording real filesystem paths.',
+    '',
     '## Implementation notes',
     '',
     '- Keep changes within the listed source areas unless the package explicitly requires otherwise.',
@@ -1747,6 +1783,8 @@ export function buildDeliveryPhaseTemplateMarkdown(input: { packageId: string })
     'Expected source locations:',
     '',
     '- `src/...`',
+    '',
+    '`src/` is the review bundle alias for the configured workspace directory. Replace the leading `src` segment with the workspace path from `MANIFEST.json` when recording real filesystem paths.',
     '',
     '## Implementation notes',
     '',
@@ -2045,7 +2083,7 @@ export async function collectDeliveryReviewSourceRoots(projectPath: string, comp
 
 export async function collectDeliveryReviewSourceEntries(projectPath: string, components: Awaited<ReturnType<typeof readComponent>>[]): Promise<DeliveryReviewCollectedSource> {
   const warnings: string[] = [];
-  const { roots, skippedNestedRoots } = await collectDeliveryReviewSourceRoots(projectPath, components, warnings);
+  const { workspacePath, roots, skippedNestedRoots } = await collectDeliveryReviewSourceRoots(projectPath, components, warnings);
   const entries: ZipEntryInput[] = [];
   const includedFiles: string[] = [];
   const entryNames = new Set<string>();
@@ -2092,6 +2130,7 @@ export async function collectDeliveryReviewSourceEntries(projectPath: string, co
 
   return {
     entries,
+    workspacePath,
     roots,
     skippedNestedRoots,
     includedFiles: includedFiles.sort((a, b) => a.localeCompare(b)),
@@ -2245,6 +2284,807 @@ export function buildDeliveryReviewPackageReadme(input: {
   }
 
   return `${lines.join('\n')}\n`;
+}
+
+type ChangeReviewCapability = Awaited<ReturnType<typeof readCapability>>;
+type ChangeReviewComponent = Awaited<ReturnType<typeof readComponent>>;
+
+function uniqueSlugValues(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.map((value) => slugify(String(value || ''))).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+export async function collectChangeReviewRelatedContext(projectPath: string, detail: ChangeDetail, warnings: string[]) {
+  const capabilitySlugs = uniqueSlugValues(detail.linkedCapabilities);
+  const componentSlugs = new Set<string>(uniqueSlugValues(detail.linkedComponents));
+  if (detail.legacyTechnicalChange?.componentSlug) {
+    const legacyComponentSlug = slugify(detail.legacyTechnicalChange.componentSlug);
+    if (legacyComponentSlug) componentSlugs.add(legacyComponentSlug);
+  }
+
+  const capabilities: ChangeReviewCapability[] = [];
+  for (const capabilitySlug of capabilitySlugs) {
+    try {
+      const capability = await readCapability({ projectPath, slug: capabilitySlug });
+      capabilities.push(capability);
+      for (const componentSlug of uniqueSlugValues(capability.components || [])) {
+        componentSlugs.add(componentSlug);
+      }
+    } catch (error) {
+      warnings.push(`Capability could not be included: ${capabilitySlug} (${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
+
+  const components: ChangeReviewComponent[] = [];
+  for (const componentSlug of Array.from(componentSlugs).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))) {
+    try {
+      components.push(await readComponent({ projectPath, slug: componentSlug }));
+    } catch (error) {
+      warnings.push(`Component could not be included: ${componentSlug} (${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
+
+  return { capabilities, components };
+}
+
+export async function collectChangeReviewChangeEntries(projectPath: string, detail: ChangeDetail) {
+  await findChangeTarget(projectPath, detail.id);
+  const entries: ZipEntryInput[] = [];
+  const includedFiles: string[] = [];
+  const entryNames = new Set<string>();
+
+  function addBuffer(relativePath: string, data: Buffer | string) {
+    const zipPath = `change/${normaliseRelativePath(relativePath)}`;
+    if (entryNames.has(zipPath)) return false;
+    entries.push({ name: zipPath, data: Buffer.isBuffer(data) ? data : Buffer.from(data, 'utf8') });
+    includedFiles.push(zipPath);
+    entryNames.add(zipPath);
+    return true;
+  }
+
+  addBuffer('change.json', `${JSON.stringify(changeMetadata(detail), null, 2)}\n`);
+  for (const section of CHANGE_SECTIONS) {
+    const savedSection = detail.sections.find((item) =>
+      item.key === section.key || normaliseRelativePath(item.fileName).toLowerCase() === section.fileName.toLowerCase()
+    );
+    addBuffer(section.fileName, savedSection?.body || '');
+  }
+  addBuffer(CHANGE_STRATEGY_FILE, detail.strategyBody || '');
+  for (const [index, phase] of detail.phases.entries()) {
+    const fileName = CHANGE_PHASE_FILE_PATTERN.test(phase.fileName)
+      ? phase.fileName
+      : `phase-${String(index + 1).padStart(2, '0')}-${slugify(phase.title) || 'phase'}.md`;
+    addBuffer(fileName, matter.stringify((phase.body || '').trim() + '\n', {
+      aidd: { type: 'change-plan-phase', templateVersion: TEMPLATE_VERSION },
+      id: phase.id || changePhaseIdFromFileName(fileName),
+      title: phase.title || `Phase ${index + 1}`,
+      status: phase.status || 'draft',
+      change: detail.id,
+      order: index + 1
+    }));
+  }
+
+  return {
+    entries,
+    includedFiles: includedFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    changeFileCount: includedFiles.length
+  };
+}
+
+export function buildChangeReviewTemplateMarkdown(detail: ChangeDetail) {
+  const sectionFiles = CHANGE_SECTIONS.map((section) => `- \`change/${section.fileName}\` - ${section.title}`);
+  const phaseFiles = detail.phases.length
+    ? detail.phases.map((phase) => `- \`change/${phase.fileName}\` - ${phase.title}`)
+    : ['- `change/phase-01-short-kebab-name.md` - implementation phase'];
+  return [
+    '# Change Review Template',
+    '',
+    `Change: ${detail.id} - ${detail.title}`,
+    `Type: ${changeTypeLabel(detail.type)}`,
+    '',
+    'Use this template when revising the Change definition and completing the pre-delivery implementation plan from the review bundle.',
+    '',
+    '## Expected files',
+    '',
+    '- `change/change.json` - change metadata',
+    ...sectionFiles,
+    `- \`change/${CHANGE_STRATEGY_FILE}\` - implementation strategy`,
+    ...phaseFiles,
+    '',
+    '## Review tasks',
+    '',
+    '- Confirm the intent is specific enough for delivery planning.',
+    '- Confirm the scope has clear in-scope and out-of-scope boundaries.',
+    '- Confirm acceptance criteria are observable and testable.',
+    '- Confirm linked capabilities and components match the source snapshot.',
+    '- Use the packaged `src/` source snapshot to complete `change/implementation-strategy.md` with a practical implementation approach.',
+    '- Use `_templates/change/phase-template.md` to create or refine ordered `change/phase-*.md` files.',
+    '- Make each phase specific about source areas, tasks, acceptance criteria, verification evidence, blockers, and proposed AIDD updates.',
+    '- Record open questions, decisions, and review evidence in the relevant change files.',
+    '',
+    '## Source rules',
+    '',
+    '- Treat `src/` as read-only context.',
+    '- `src/` is a packaging alias inside this review zip, not a filesystem path.',
+    '- When writing source paths, replace the leading `src` segment with the configured workspace directory from `MANIFEST.json`.',
+    '- Example: if `MANIFEST.json` says the workspace is `C:\\workspace\\Project`, then `src/Source/Foo.cpp` means `C:\\workspace\\Project\\Source\\Foo.cpp`.',
+    '- Do not return edited source files as part of a change review response.',
+    '- Prepare delivery work in the Change plan files, then create a delivery package from the reviewed Change.',
+    ''
+  ].join('\n');
+}
+
+export function buildChangePhaseTemplateMarkdown(input: { changeId: string }) {
+  return [
+    '# Change Phase Template',
+    '',
+    `Change: ${input.changeId}`,
+    '',
+    'Use this template when creating or updating phase files in the returned Change review package.',
+    '',
+    '## File naming rules',
+    '',
+    'Place phase files directly under `change/`.',
+    '',
+    'Use this naming format:',
+    '',
+    '```text',
+    'change/phase-01-short-kebab-name.md',
+    'change/phase-02-short-kebab-name.md',
+    'change/phase-03-short-kebab-name.md',
+    '```',
+    '',
+    'Rules:',
+    '',
+    '- Use `phase-` as the prefix for new phase files.',
+    '- Use a two-digit sequence number: `01`, `02`, `03`.',
+    '- Use lowercase kebab-case after the sequence number.',
+    '- Keep one phase per file.',
+    '- Existing `stage-*.md` files may be edited if the Change already contains them, but new files should use the `phase-##-name.md` pattern.',
+    '',
+    'AIDD import accepts returned updates from:',
+    '',
+    '- `change/implementation-strategy.md`',
+    '- `change/phase-*.md`',
+    '- `change/stage-*.md`',
+    '',
+    'Do not return snapshot context files, `_templates/`, or `src/`.',
+    '',
+    '---',
+    '',
+    '# Phase {{phase_number}} - {{phase_title}}',
+    '',
+    '## Objective',
+    '',
+    'Describe the goal of this phase.',
+    '',
+    '## Scope',
+    '',
+    'This phase includes:',
+    '',
+    '- [ ] Task 1',
+    '- [ ] Task 2',
+    '- [ ] Task 3',
+    '',
+    'This phase does not include:',
+    '',
+    '- Out-of-scope item 1',
+    '- Out-of-scope item 2',
+    '',
+    '## Source areas',
+    '',
+    'Expected source locations:',
+    '',
+    '- `src/...`',
+    '',
+    '`src/` is the review bundle alias for the configured workspace directory. Replace the leading `src` segment with the workspace path from `MANIFEST.json` when recording real filesystem paths.',
+    '',
+    '## Implementation notes',
+    '',
+    'Guidance for the agentic AI:',
+    '',
+    '- Keep changes within the listed source areas unless the Change explicitly requires otherwise.',
+    '- Follow `package/standards.md`.',
+    '- Use `package/components.md`, `package/component-contracts/`, linked capability context, and the Change files for component/capability context.',
+    '- Record any required AIDD updates in the phase notes rather than changing snapshot context files.',
+    '',
+    '## Progress',
+    '',
+    'Status: Not started',
+    '',
+    'Allowed values:',
+    '',
+    '- Not started',
+    '- In progress',
+    '- Blocked',
+    '- Complete',
+    '- Needs review',
+    '',
+    '## Tasks',
+    '',
+    '- [ ] Understand the phase objective and relevant Change context.',
+    '- [ ] Inspect the listed source areas.',
+    '- [ ] Define the implementation steps for the later Delivery package.',
+    '- [ ] Identify tests or verification commands that should be run.',
+    '- [ ] Record expected changed files.',
+    '- [ ] Record evidence needed to prove the phase is complete.',
+    '- [ ] Record any questions or blockers.',
+    '- [ ] Mark the phase complete only when it is prepared enough for Delivery.',
+    '',
+    '## Acceptance criteria',
+    '',
+    '- [ ] Criterion 1',
+    '- [ ] Criterion 2',
+    '- [ ] Criterion 3',
+    '',
+    '## Expected changed files',
+    '',
+    'Record files or directories this phase is expected to touch:',
+    '',
+    '```text',
+    '',
+    '```',
+    '',
+    '## Verification plan',
+    '',
+    'Record commands, tests, screenshots, logs, or manual checks expected for this phase:',
+    '',
+    '```text',
+    '',
+    '```',
+    '',
+    '## Questions / blockers',
+    '',
+    '- None',
+    '',
+    '## Proposed AIDD updates',
+    '',
+    '- None',
+    '',
+    '## Completion note',
+    '',
+    'Summarise why this phase is ready to move into Delivery.',
+    ''
+  ].join('\n');
+}
+
+export function buildChangeReviewPackageReadme(input: {
+  projectName: string;
+  changeId: string;
+  title: string;
+  changeFileCount: number;
+  capabilityFileCount: number;
+  componentFileCount: number;
+  sourceRootCount: number;
+  sourceFileCount: number;
+  templateFileCount: number;
+  workspacePath?: string;
+  sourcePathMappings?: Array<{
+    packagePrefix: string;
+    absolutePath: string;
+    configuredDirectory: string;
+    isInsideWorkspace: boolean;
+  }>;
+  warnings: string[];
+}) {
+  const lines = [
+    '# AIDD Change Review',
+    '',
+    'This zip was generated by AIDD for reviewing a Change before it becomes a delivery package.',
+    '',
+    'The bundle is a self-contained snapshot. Review the saved Change files against linked capabilities, component definitions, standards, and source code.',
+    '',
+    '## Bundle layout',
+    '',
+    'Root files:',
+    '',
+    '- `README.md` - these instructions',
+    '- `MANIFEST.json` - machine-readable package metadata for AIDD and tooling',
+    '',
+    'Change files:',
+    '',
+    '- `change/change.json`',
+    '- `change/*.md`, including Change sections, `implementation-strategy.md`, and `phase-*.md` planning files',
+    '',
+    'Package context snapshots:',
+    '',
+    '- `package/foundation.md`',
+    '- `package/standards.md`',
+    '- `package/components.md`',
+    '- `package/capabilities/` when linked capabilities are present',
+    '- `package/component-contracts/` when linked components have contract context',
+    '',
+    'Template:',
+    '',
+    '- `_templates/change/change-review-template.md`',
+    '- `_templates/change/phase-template.md`',
+    '',
+    'Source code is included for review context under:',
+    '',
+    '- `src/`',
+    '',
+    '## Your task',
+    '',
+    'Review the Change and create a practical implementation plan using the included source code. When this review is returned and imported, the Change should be ready to become a Delivery package without additional planning work.',
+    '',
+    'Use:',
+    '',
+    '- `change/intent.md`, `change/scope.md`, and `change/acceptance-criteria.md` as the canonical Change definition under review',
+    '- `package/foundation.md` for project intent and context',
+    '- `package/standards.md` for implementation, testing, security, and delivery expectations',
+    '- `package/components.md` and `package/component-contracts/` for component ownership and source mapping',
+    '- `package/capabilities/` for linked capability context',
+    '- `change/implementation-strategy.md` as the main pre-delivery implementation plan',
+    '- `change/phase-*.md` or `change/stage-*.md` as the ordered implementation phases',
+    '- `_templates/change/phase-template.md` when creating or rewriting phase files',
+    '- `src/` as read-only source-code context',
+    '',
+    'Do not modify the source-code snapshot in this review bundle. Use it to make the strategy and phase files specific, grounded, and ready for the later Delivery package.',
+    '',
+    '## Phase file naming',
+    '',
+    'New phase files must be placed directly under `change/` and use this structure:',
+    '',
+    '```text',
+    'change/phase-01-short-kebab-name.md',
+    'change/phase-02-short-kebab-name.md',
+    'change/phase-03-short-kebab-name.md',
+    '```',
+    '',
+    'Rules:',
+    '',
+    '- Use `phase-` for new phase files.',
+    '- Use a two-digit phase number.',
+    '- Use lowercase kebab-case after the number.',
+    '- Keep one phase per file.',
+    '- Existing `stage-*.md` files may be edited if they were included in the Change, but new files should use `phase-##-name.md`.',
+    '',
+    '## Source-code snapshot rules',
+    '',
+    'AIDD has included a source-code snapshot under `src/` so the Change plan can be reviewed against the actual implementation surface.',
+    '',
+    '`src/` is a packaging alias inside this review zip. It is not a filesystem path in the implementation workspace.',
+    '',
+    input.workspacePath
+      ? `For files that are inside the configured workspace, replace the leading \`src\` segment with this workspace directory: \`${input.workspacePath}\`.`
+      : 'Use `MANIFEST.json` > `sourceSnapshot.pathMappings` to replace packaged `src/...` paths with real filesystem paths.',
+    '',
+    input.sourcePathMappings?.length
+      ? 'Source path mappings from this bundle:'
+      : 'No source path mappings were available for this bundle.',
+    '',
+    ...(input.sourcePathMappings?.length
+      ? input.sourcePathMappings.map((mapping) =>
+          `- \`${mapping.packagePrefix}\` -> \`${mapping.absolutePath}\`${mapping.isInsideWorkspace ? '' : ' (outside configured workspace)'}`
+        )
+      : []),
+    ...(input.sourcePathMappings?.length ? [''] : []),
+    'AIDD includes only source-code files under `src/`. It excludes build output, dependencies, generated folders, docs, delivery folders, and other non-source directories.',
+    '',
+    'When components point to nested source locations, AIDD keeps the highest source root and skips child roots so the same files are not included twice.',
+    '',
+    '## Phase completion expectations',
+    '',
+    'Markdown checkboxes are useful, but they are not enough on their own. Each phase should also record expected changed files, verification plan, blockers, and proposed AIDD updates before the Change is marked ready.',
+    '',
+    '## Return package rule',
+    '',
+    'When returning a revised Change, provide a zip that contains only the updated `change/` folder and optional `REVIEW.md`.',
+    '',
+    'AIDD accepts `change/` at the zip root, or inside one wrapping folder if the zip tool adds a parent directory.',
+    '',
+    'AIDD will import returned files from:',
+    '',
+    '- `change/change.json`',
+    '- `change/*.md` for known Change section files',
+    '- `change/implementation-strategy.md`',
+    '- `change/phase-*.md` or `change/stage-*.md` planning files',
+    '- `REVIEW.md` as review notes when `change/review.md` is not present',
+    '',
+    'Do not include `src/`, `package/`, `_templates/`, `MANIFEST.json`, or duplicated review context in the returned zip. The included source code and package context are snapshots for review only.',
+    '',
+    '## Package summary',
+    '',
+    `- Project: ${input.projectName}`,
+    `- Change: ${input.changeId} - ${input.title}`,
+    `- Change files: ${input.changeFileCount}`,
+    `- Capability files: ${input.capabilityFileCount}`,
+    `- Component files: ${input.componentFileCount}`,
+    `- Template files: ${input.templateFileCount}`,
+    `- Source roots: ${input.sourceRootCount}`,
+    `- Source files: ${input.sourceFileCount}`,
+    ''
+  ];
+
+  if (input.warnings.length) {
+    lines.push('## Warnings', '', ...input.warnings.map((warning) => `- ${warning}`), '');
+  }
+
+  return `${lines.join('\n')}\n`;
+}
+
+export async function createChangeReviewBundle(input: ChangeReviewPackageInput): Promise<ChangeReviewPackageResult> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.id) throw new Error('Change id is required.');
+  const root = path.resolve(input.projectPath);
+  if (!(await exists(root))) throw new Error(`Project path does not exist: ${input.projectPath}`);
+
+  const detail = await readChange({ projectPath: root, id: input.id });
+  const projectName = await readProjectName(root);
+  const createdAt = new Date().toISOString();
+  const stamp = createdAt.replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const fileName = `${slugify(projectName)}-${slugify(detail.id)}-change-review-${stamp}.zip`;
+  const outputDir = path.join(app.getPath('userData'), 'review-bundles', slugify(projectName), 'changes', slugify(detail.id));
+  const filePath = path.join(outputDir, fileName);
+  const warnings: string[] = [];
+
+  const change = await collectChangeReviewChangeEntries(root, detail);
+  const related = await collectChangeReviewRelatedContext(root, detail, warnings);
+  const source = await collectDeliveryReviewSourceEntries(root, related.components);
+  warnings.push(...source.warnings);
+
+  const foundation = await readFoundationDocuments(root);
+  const standards = await readStandardSections(root);
+  const sourceProjects = await readSourceProjects(root);
+  const componentContext = related.components.length
+    ? related.components
+    : (await readEntities(root, 'components', 'component.json')).concat(await readEntities(root, 'modules', 'module.json'));
+
+  const contextEntries: ZipEntryInput[] = [
+    { name: 'package/foundation.md', data: Buffer.from(buildPublishedFoundationMarkdown(projectName, foundation), 'utf8') },
+    { name: 'package/standards.md', data: Buffer.from(buildPublishedStandardsMarkdown(projectName, standards), 'utf8') },
+    { name: 'package/components.md', data: Buffer.from(buildPublishedComponentsMarkdown(projectName, componentContext, sourceProjects), 'utf8') }
+  ];
+
+  for (const capability of related.capabilities) {
+    contextEntries.push({
+      name: `package/capabilities/${deliveryReviewCapabilitySnapshotFileName(capability.slug)}`,
+      data: Buffer.from(buildPublishedCapabilityMarkdown(projectName, capability), 'utf8')
+    });
+  }
+
+  for (const component of related.components) {
+    try {
+      const contract = await readComponentContractMarkdownForReview(root, component);
+      contextEntries.push({
+        name: `package/component-contracts/${slugify(component.slug)}.md`,
+        data: Buffer.from(contract, 'utf8')
+      });
+    } catch (error) {
+      warnings.push(`Component contract could not be included: ${component.slug} (${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
+
+  const templateEntries: ZipEntryInput[] = [
+    {
+      name: '_templates/change/change-review-template.md',
+      data: Buffer.from(buildChangeReviewTemplateMarkdown(detail), 'utf8')
+    },
+    {
+      name: '_templates/change/phase-template.md',
+      data: Buffer.from(buildChangePhaseTemplateMarkdown({ changeId: detail.id }), 'utf8')
+    }
+  ];
+
+  const contextFiles = contextEntries.map((entry) => entry.name).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const templateFiles = templateEntries.map((entry) => entry.name).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const capabilityFileCount = contextFiles.filter((file) => file.startsWith('package/capabilities/')).length;
+  const componentFileCount = contextFiles.filter((file) => file === 'package/components.md' || file.startsWith('package/component-contracts/')).length;
+
+  const allEntries: ZipEntryInput[] = [
+    { name: 'README.md', data: Buffer.from(buildChangeReviewPackageReadme({
+      projectName,
+      changeId: detail.id,
+      title: detail.title,
+      changeFileCount: change.changeFileCount,
+      capabilityFileCount,
+      componentFileCount,
+      sourceRootCount: source.roots.length,
+      sourceFileCount: source.includedFiles.length,
+      templateFileCount: templateEntries.length,
+      workspacePath: source.workspacePath,
+      sourcePathMappings: source.roots.map((sourceRoot) => ({
+        packagePrefix: sourceRoot.packagePrefix ? `src/${sourceRoot.packagePrefix}` : 'src',
+        absolutePath: sourceRoot.absolutePath,
+        configuredDirectory: sourceRoot.configuredDirectory,
+        isInsideWorkspace: sourceRoot.isInsideWorkspace
+      })),
+      warnings
+    }), 'utf8') },
+    ...contextEntries,
+    ...change.entries,
+    ...templateEntries,
+    ...source.entries
+  ];
+
+  const manifest = {
+    bundleType: 'change-review',
+    schemaVersion: 1,
+    projectName,
+    createdAt,
+    generatedBy: 'AIDD',
+    outputIsOutsideProject: true,
+    snapshotIsSelfContained: true,
+    change: {
+      id: detail.id,
+      title: detail.title,
+      type: detail.type,
+      status: detail.status,
+      priority: detail.priority,
+      risk: detail.risk,
+      linkedCapabilities: detail.linkedCapabilities,
+      linkedComponents: detail.linkedComponents,
+      deliveryPackageIds: detail.deliveryPackageIds,
+      targetDate: detail.targetDate || null,
+      size: detail.size || null,
+      blocked: detail.blocked,
+      blockedReason: detail.blockedReason || null,
+      dependsOnChangeIds: detail.dependsOnChangeIds,
+      readiness: detail.readiness
+    },
+    capabilities: related.capabilities.map((capability) => ({
+      slug: capability.slug,
+      title: capability.title,
+      status: capability.status,
+      components: capability.components || []
+    })),
+    components: related.components.map((component) => ({
+      slug: component.slug,
+      title: component.title,
+      status: component.status,
+      source: normaliseComponentSource(component.source)
+    })),
+    includedFiles: {
+      context: contextFiles,
+      change: change.includedFiles,
+      templates: templateFiles,
+      source: source.includedFiles
+    },
+    sourceSnapshot: {
+      directory: 'src',
+      directoryIsPackagingAliasOnly: true,
+      workspacePath: source.workspacePath || null,
+      pathReplacementRule: 'For source files inside the configured workspace, replace the leading src path segment with workspacePath. For external roots, use pathMappings by longest packagePrefix match.',
+      pathMappings: source.roots.map((sourceRoot) => ({
+        packagePrefix: sourceRoot.packagePrefix ? `src/${sourceRoot.packagePrefix}` : 'src',
+        absolutePath: sourceRoot.absolutePath,
+        configuredDirectory: sourceRoot.configuredDirectory,
+        isInsideWorkspace: sourceRoot.isInsideWorkspace,
+        componentSlugs: sourceRoot.componentSlugs,
+        componentTitles: sourceRoot.componentTitles
+      })),
+      allowedExtensions: Array.from(DELIVERY_REVIEW_SOURCE_EXTENSIONS).sort((a, b) => a.localeCompare(b)),
+      excludedDirectories: Array.from(DELIVERY_REVIEW_EXCLUDED_SOURCE_DIRECTORIES).sort((a, b) => a.localeCompare(b)),
+      roots: source.roots.map((sourceRoot) => ({
+        configuredDirectory: sourceRoot.configuredDirectory,
+        absolutePath: sourceRoot.absolutePath,
+        packagePrefix: sourceRoot.packagePrefix ? `src/${sourceRoot.packagePrefix}` : 'src',
+        isInsideWorkspace: sourceRoot.isInsideWorkspace,
+        componentSlugs: sourceRoot.componentSlugs,
+        componentTitles: sourceRoot.componentTitles
+      })),
+      skippedNestedRoots: source.skippedNestedRoots
+    },
+    warnings,
+    reviewInstructions: {
+      returnedZipShouldContainOnly: ['change/', 'REVIEW.md'],
+      acceptedReturnPaths: ['change/change.json', 'change/*.md', 'change/implementation-strategy.md', 'change/phase-*.md', 'change/stage-*.md', 'REVIEW.md'],
+      sourceCodeIsIncludedForReview: true,
+      sourceCodeIsContextOnly: true,
+      doNotReturnBundledSourceCodeAsEditedFiles: true,
+      templatePaths: ['_templates/change/change-review-template.md', '_templates/change/phase-template.md']
+    }
+  };
+
+  allEntries.push({ name: 'MANIFEST.json', data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8') });
+
+  const uniqueEntries = new Map<string, ZipEntryInput>();
+  for (const entry of allEntries) {
+    const name = safeZipEntryName(entry.name);
+    if (!uniqueEntries.has(name)) uniqueEntries.set(name, { ...entry, name });
+  }
+
+  await writeZipFile(filePath, Array.from(uniqueEntries.values()));
+  return {
+    filePath,
+    fileName,
+    changeId: detail.id,
+    changeFileCount: change.changeFileCount,
+    capabilityFileCount,
+    componentFileCount,
+    standardsFileCount: 1,
+    sourceRootCount: source.roots.length,
+    sourceFileCount: source.includedFiles.length,
+    templateFileCount: templateEntries.length,
+    entryCount: uniqueEntries.size,
+    warnings
+  };
+}
+
+export function normaliseChangeReviewReturnEntryName(entryName: string) {
+  const normalised = safeZipReadEntryName(entryName);
+  if (!normalised) return null;
+  if (normalised === 'REVIEW.md') return normalised;
+  if (normalised.startsWith('change/')) return normalised;
+
+  const parts = normalised.split('/');
+  const isSingleWrapperChangePath = parts.length >= 3 && Boolean(parts[0]) && parts[1] === 'change';
+  if (isSingleWrapperChangePath) return parts.slice(1).join('/');
+
+  const isSingleWrapperReviewFile = parts.length === 2 && Boolean(parts[0]) && parts[1] === 'REVIEW.md';
+  if (isSingleWrapperReviewFile) return 'REVIEW.md';
+
+  return null;
+}
+
+function parseChangePlanPhaseReviewFile(fileName: string, data: Buffer): ChangePlanPhase {
+  const parsed = matter(data.toString('utf8'));
+  const baseName = path.basename(fileName);
+  return {
+    id: String(parsed.data.id || changePhaseIdFromFileName(baseName)),
+    title: String(parsed.data.title || changePhaseIdFromFileName(baseName).replace(/^(phase|stage)-\d{1,3}-/i, '').replace(/-/g, ' ')),
+    status: String(parsed.data.status || 'draft'),
+    fileName: baseName,
+    body: parsed.content.trim()
+  };
+}
+
+export async function importChangeReviewPackage(input: ImportChangeReviewPackageInput): Promise<ChangeReviewPackageImportResult> {
+  if (!input.projectPath) throw new Error('Project path is required.');
+  if (!input.id) throw new Error('Change id is required.');
+  if (!input.zipPath) throw new Error('Review response zip path is required.');
+  const root = path.resolve(input.projectPath);
+  const zipPath = path.resolve(input.zipPath);
+  if (!(await exists(zipPath))) throw new Error(`Review response zip does not exist: ${input.zipPath}`);
+
+  const detail = await readChange({ projectPath: root, id: input.id });
+  const target = await findChangeTarget(root, detail.id);
+  const sectionByFile = new Map(CHANGE_SECTIONS.map((section) => [section.fileName.toLowerCase(), section]));
+  const entries = await readZipFile(zipPath);
+  const importedFiles = new Set<string>();
+  const skippedFiles = new Set<string>();
+  const importedBodies = new Map<string, string>();
+  let importedStrategyBody: string | undefined;
+  const importedPhases = new Map<string, ChangePlanPhase>();
+  let importedMetadata: any = null;
+  let reviewMarkdown = '';
+
+  for (const entry of entries) {
+    if (entry.directory) continue;
+    const name = normaliseChangeReviewReturnEntryName(entry.name);
+    if (!name) {
+      skippedFiles.add(entry.name);
+      continue;
+    }
+
+    if (name === 'REVIEW.md') {
+      reviewMarkdown = entry.data.toString('utf8');
+      importedFiles.add(name);
+      continue;
+    }
+
+    if (name === 'change/change.json') {
+      try {
+        const metadata = JSON.parse(entry.data.toString('utf8'));
+        const metadataId = String(metadata?.id || '').trim();
+        if (metadataId && metadataId !== detail.id) {
+          skippedFiles.add(`${name} (id mismatch: ${metadataId})`);
+          continue;
+        }
+        importedMetadata = metadata;
+        importedFiles.add(name);
+      } catch (error) {
+        skippedFiles.add(`${name} (invalid JSON: ${error instanceof Error ? error.message : String(error)})`);
+      }
+      continue;
+    }
+
+    if (name.startsWith('change/')) {
+      const relativeFile = normaliseRelativePath(name.slice('change/'.length)).toLowerCase();
+      const section = sectionByFile.get(relativeFile);
+      if (section) {
+        importedBodies.set(section.fileName, entry.data.toString('utf8'));
+        importedFiles.add(`change/${section.fileName}`);
+        continue;
+      }
+
+      if (relativeFile === CHANGE_STRATEGY_FILE) {
+        importedStrategyBody = deliveryReviewImportBodyFromMarkdown(entry.data);
+        importedFiles.add(`change/${CHANGE_STRATEGY_FILE}`);
+        continue;
+      }
+
+      if (CHANGE_PHASE_FILE_PATTERN.test(relativeFile)) {
+        const phase = parseChangePlanPhaseReviewFile(relativeFile, entry.data);
+        importedPhases.set(phase.fileName.toLowerCase(), phase);
+        importedFiles.add(`change/${phase.fileName}`);
+        continue;
+      }
+
+      if (!section) {
+        skippedFiles.add(name);
+        continue;
+      }
+    }
+
+    skippedFiles.add(name);
+  }
+
+  if (reviewMarkdown && !importedBodies.has('review.md')) {
+    importedBodies.set('review.md', reviewMarkdown);
+    importedFiles.add('change/review.md');
+  }
+
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const backupDirectory = path.join(target.changeDir, '_review-backups', stamp);
+  const backedUpFiles = new Set<string>();
+
+  async function backupKnownFile(relativePath: string, absolutePath: string) {
+    if (!(await exists(absolutePath))) return;
+    const backupPath = path.join(backupDirectory, relativePath);
+    await fsp.mkdir(path.dirname(backupPath), { recursive: true });
+    await fsp.copyFile(absolutePath, backupPath);
+    backedUpFiles.add(relativePath);
+  }
+
+  if (importedMetadata) {
+    await backupKnownFile('change.json', target.metadataPath);
+  }
+  for (const fileName of importedBodies.keys()) {
+    await backupKnownFile(fileName, path.join(target.changeDir, fileName));
+  }
+  if (importedStrategyBody !== undefined) {
+    await backupKnownFile(CHANGE_STRATEGY_FILE, path.join(target.changeDir, CHANGE_STRATEGY_FILE));
+  }
+  for (const phase of importedPhases.values()) {
+    await backupKnownFile(phase.fileName, path.join(target.changeDir, phase.fileName));
+  }
+
+  const metadata = importedMetadata && typeof importedMetadata === 'object' ? importedMetadata : {};
+  const sections = detail.sections.map((section) => ({
+    ...section,
+    body: importedBodies.get(section.fileName) ?? section.body
+  }));
+  const phaseByFileName = new Map(detail.phases.map((phase) => [phase.fileName.toLowerCase(), phase]));
+  for (const phase of importedPhases.values()) {
+    phaseByFileName.set(phase.fileName.toLowerCase(), phase);
+  }
+  const phases = Array.from(phaseByFileName.values())
+    .sort((a, b) => a.fileName.localeCompare(b.fileName, undefined, { numeric: true }));
+
+  if (importedMetadata || importedBodies.size || importedStrategyBody !== undefined || importedPhases.size) {
+    await saveChange({
+      projectPath: root,
+      id: detail.id,
+      title: typeof metadata.title === 'string' ? metadata.title : detail.title,
+      type: typeof metadata.type === 'string' ? metadata.type : detail.type,
+      status: typeof metadata.status === 'string' ? metadata.status : detail.status,
+      priority: typeof metadata.priority === 'string' ? metadata.priority : detail.priority,
+      risk: typeof metadata.risk === 'string' ? metadata.risk : detail.risk,
+      linkedCapabilities: Array.isArray(metadata.linkedCapabilities) ? metadata.linkedCapabilities : detail.linkedCapabilities,
+      linkedComponents: Array.isArray(metadata.linkedComponents) ? metadata.linkedComponents : detail.linkedComponents,
+      targetDate: typeof metadata.targetDate === 'string' ? metadata.targetDate : detail.targetDate,
+      size: typeof metadata.size === 'string' ? metadata.size : detail.size,
+      blocked: typeof metadata.blocked === 'boolean' ? metadata.blocked : detail.blocked,
+      blockedReason: typeof metadata.blockedReason === 'string' ? metadata.blockedReason : detail.blockedReason,
+      dependsOnChangeIds: Array.isArray(metadata.dependsOnChangeIds) ? metadata.dependsOnChangeIds : detail.dependsOnChangeIds,
+      sections,
+      strategyBody: importedStrategyBody ?? detail.strategyBody,
+      phases
+    });
+  }
+
+  return {
+    accepted: true,
+    zipPath,
+    changeId: detail.id,
+    importedFiles: Array.from(importedFiles).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    skippedFiles: Array.from(skippedFiles).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    backedUpFiles: Array.from(backedUpFiles).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    ...(backedUpFiles.size ? { backupDirectory } : {}),
+    reviewIncluded: Boolean(reviewMarkdown),
+    ...(reviewMarkdown ? { reviewMarkdown } : {})
+  };
 }
 
 export function normaliseDeliveryReviewReturnEntryName(entryName: string) {
@@ -2686,6 +3526,75 @@ export async function publishDeliveryPackageToWorkspace(input: DeliveryWorkspace
     createdWritableFiles,
     removedFiles,
     message: `Published ${detail.id} delivery files to ${targetPath}`
+  };
+}
+
+async function removeWorkspaceDeliveryPackageForReturn(projectPath: string, packageId: string, manifest: any) {
+  const workspacePath = await readWorkspacePathForProject(projectPath);
+  if (!workspacePath) return undefined;
+
+  const expectedPath = workspaceDeliveryPackagePath(workspacePath, packageId);
+  const manifestPath = String(manifest?.workspaceDelivery?.path || '').trim();
+  const targetPath = manifestPath && sameDiskPath(manifestPath, expectedPath) ? manifestPath : expectedPath;
+  const resolvedTarget = path.resolve(targetPath);
+  if (!sameDiskPath(resolvedTarget, expectedPath) || !(await exists(resolvedTarget))) return undefined;
+
+  const publishedManifestPath = path.join(resolvedTarget, 'manifest.json');
+  if (await exists(publishedManifestPath)) {
+    const publishedManifest = await readJson<any>(publishedManifestPath);
+    if (String(publishedManifest.packageId || '') !== packageId || publishedManifest.type !== 'aidd-workspace-delivery-package') {
+      throw new Error(`Workspace delivery folder does not look like an AIDD package for ${packageId}: ${resolvedTarget}`);
+    }
+  }
+
+  await fsp.rm(resolvedTarget, { recursive: true, force: true });
+  return resolvedTarget;
+}
+
+export async function returnDeliveryPackageToChanges(input: ReturnDeliveryPackageToChangesInput): Promise<ReturnDeliveryPackageToChangesResult> {
+  const packageId = String(input.packageId || '').trim();
+  if (!input.projectPath || !packageId) throw new Error('Project path and delivery package id are required.');
+
+  const target = await findDeliveryPackageTarget(input.projectPath, packageId);
+  const manifestPath = path.join(target.dir, target.manifestName);
+  const manifest = await readJson<any>(manifestPath);
+  const packageType = normaliseDeliveryPackageType(manifest.packageType);
+  if (packageType !== 'change') {
+    throw new Error('Only Change delivery packages can be returned to Changes.');
+  }
+
+  const changeIds: string[] = Array.isArray(manifest.changeIds)
+    ? Array.from(new Set(manifest.changeIds
+        .map((id: unknown) => String(id || '').trim())
+        .filter((id: string) => id.length > 0)))
+    : [];
+  if (!changeIds.length) throw new Error(`Delivery package ${packageId} does not reference any Changes.`);
+
+  const removedWorkspacePath = input.removeWorkspacePackage === false
+    ? undefined
+    : await removeWorkspaceDeliveryPackageForReturn(input.projectPath, packageId, manifest);
+
+  for (const changeId of changeIds) {
+    const detail = await readChange({ projectPath: input.projectPath, id: changeId });
+    await saveChange({ projectPath: input.projectPath, id: changeId, status: 'ready' });
+    const nextTarget = await findChangeTarget(input.projectPath, changeId);
+    const deliveryPackageIds = detail.deliveryPackageIds.filter((id) => id !== packageId);
+    await writeJson(nextTarget.metadataPath, changeMetadata({
+      ...nextTarget.record,
+      deliveryPackageIds,
+      updatedAt: new Date().toISOString()
+    }));
+  }
+
+  await fsp.rm(target.dir, { recursive: true, force: true });
+  const deliveryPackages = await readDeliveryPackages(input.projectPath);
+  return {
+    packageId,
+    changeIds,
+    removedPackagePath: target.dir,
+    ...(removedWorkspacePath ? { removedWorkspacePath } : {}),
+    deliveryPackages,
+    message: `Returned ${packageId} to Changes.`
   };
 }
 

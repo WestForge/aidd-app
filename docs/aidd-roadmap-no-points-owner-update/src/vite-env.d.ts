@@ -851,11 +851,6 @@ type AiddChangePriority = 'low' | 'normal' | 'high' | 'urgent';
 type AiddChangeRisk = 'low' | 'medium' | 'high' | 'unknown';
 type AiddChangeSource = 'manual' | 'capability' | 'component' | 'component-technical-change' | 'review-import';
 
-interface AiddChangeStatusHistoryEntry {
-  status: AiddChangeStatus;
-  changedAt: string;
-}
-
 interface AiddChangeReadiness {
   ready: boolean;
   blockers: string[];
@@ -867,14 +862,6 @@ interface AiddChangeSection {
   title: string;
   body: string;
   editable: boolean;
-}
-
-interface AiddChangePlanPhase {
-  id: string;
-  title: string;
-  status: string;
-  fileName: string;
-  body: string;
 }
 
 interface AiddChangeRecord {
@@ -895,18 +882,10 @@ interface AiddChangeRecord {
   relativePath: string;
   createdAt: string;
   updatedAt: string;
-  targetDate?: string;
-  size?: AiddRoadmapSize;
-  blocked: boolean;
-  blockedReason?: string;
-  dependsOnChangeIds: string[];
-  statusHistory: AiddChangeStatusHistoryEntry[];
 }
 
 interface AiddChangeDetail extends AiddChangeRecord {
   sections: AiddChangeSection[];
-  strategyBody: string;
-  phases: AiddChangePlanPhase[];
   readiness: AiddChangeReadiness;
 }
 
@@ -919,14 +898,6 @@ interface AiddCreateChangeInput {
   risk?: AiddChangeRisk;
   linkedCapabilities?: string[];
   linkedComponents?: string[];
-  targetDate?: string;
-  size?: AiddRoadmapSize;
-  blocked?: boolean;
-  blockedReason?: string;
-  dependsOnChangeIds?: string[];
-  statusHistory?: AiddChangeStatusHistoryEntry[];
-  strategyBody?: string;
-  phases?: AiddChangePlanPhase[];
 }
 
 interface AiddSaveChangeInput {
@@ -940,14 +911,6 @@ interface AiddSaveChangeInput {
   linkedCapabilities?: string[];
   linkedComponents?: string[];
   sections?: AiddChangeSection[];
-  targetDate?: string;
-  size?: AiddRoadmapSize;
-  blocked?: boolean;
-  blockedReason?: string;
-  dependsOnChangeIds?: string[];
-  statusHistory?: AiddChangeStatusHistoryEntry[];
-  strategyBody?: string;
-  phases?: AiddChangePlanPhase[];
 }
 
 
@@ -1002,15 +965,6 @@ interface AiddDeliveryWorkspacePublishResult {
   message: string;
 }
 
-interface AiddReturnDeliveryPackageToChangesResult {
-  packageId: string;
-  changeIds: string[];
-  removedPackagePath: string;
-  removedWorkspacePath?: string;
-  deliveryPackages: AiddDeliveryPackageSummary[];
-  message: string;
-}
-
 interface AiddDeliveryReviewPackageResult {
   filePath: string;
   fileName: string;
@@ -1024,33 +978,6 @@ interface AiddDeliveryReviewPackageResult {
   sourceFileCount: number;
   entryCount: number;
   warnings: string[];
-}
-
-interface AiddChangeReviewPackageResult {
-  filePath: string;
-  fileName: string;
-  changeId: string;
-  changeFileCount: number;
-  capabilityFileCount: number;
-  componentFileCount: number;
-  standardsFileCount: number;
-  sourceRootCount: number;
-  sourceFileCount: number;
-  templateFileCount: number;
-  entryCount: number;
-  warnings: string[];
-}
-
-interface AiddChangeReviewPackageImportResult {
-  accepted: boolean;
-  zipPath: string;
-  changeId: string;
-  importedFiles: string[];
-  skippedFiles: string[];
-  backedUpFiles: string[];
-  backupDirectory?: string;
-  reviewIncluded: boolean;
-  reviewMarkdown?: string;
 }
 
 interface AiddDeliveryReviewPackageImportResult {
@@ -1420,14 +1347,12 @@ interface Window {
     createChange: (input: AiddCreateChangeInput) => Promise<AiddChangeDetail>;
     saveChange: (input: AiddSaveChangeInput) => Promise<AiddChangeDetail>;
     updateChangeStatus: (input: { projectPath: string; id: string; status: AiddChangeStatus }) => Promise<AiddChangeRecord[]>;
-    packageChangeForReview: (input: { projectPath: string; id: string }) => Promise<AiddChangeReviewPackageResult>;
-    importChangeReviewPackage: (input: { projectPath: string; id: string; zipPath: string }) => Promise<AiddChangeReviewPackageImportResult>;
     deleteChange: (input: { projectPath: string; id: string }) => Promise<AiddChangeRecord[]>;
     readRoadmap: (projectPath: string) => Promise<AiddRoadmapReport>;
     createChangeFromCapability: (input: { projectPath: string; capabilitySlug: string; type?: 'implement-capability' | 'update-capability' }) => Promise<AiddChangeDetail>;
     createChangeFromComponent: (input: { projectPath: string; componentSlug: string; type?: Extract<AiddChangeType, 'component-change' | 'technical-refactor' | 'bug-fix' | 'ux-improvement'> }) => Promise<AiddChangeDetail>;
     createChangeFromTechnicalChange: (input: { projectPath: string; componentSlug: string; technicalChangeId: string }) => Promise<AiddChangeDetail>;
-    createDeliveryPackageFromChanges: (input: { projectPath: string; changeIds: string[]; publishToWorkspace?: boolean }) => Promise<{ id: string; path: string; workspacePublish?: AiddDeliveryWorkspacePublishResult }>;
+    createDeliveryPackageFromChanges: (input: { projectPath: string; changeIds: string[] }) => Promise<{ id: string; path: string }>;
     createDeliveryPackageFromCapability: (input: { projectPath: string; capabilitySlug: string }) => Promise<{ id: string; path: string }>;
     createDeliveryPackageFromTechnicalChange: (input: { projectPath: string; componentSlug: string; technicalChangeId: string }) => Promise<{ id: string; path: string }>;
     readDeliveryPackages: (projectPath: string) => Promise<AiddDeliveryPackageSummary[]>;
@@ -1438,7 +1363,6 @@ interface Window {
     createDeliveryPackagePhase: (input: { projectPath: string; packageId: string; title: string; body?: string }) => Promise<AiddDeliveryPackageDetail>;
     assembleDeliveryPackage: (input: { projectPath: string; packageId: string }) => Promise<AiddDeliveryPackageDetail>;
     publishDeliveryPackageToWorkspace: (input: { projectPath: string; packageId: string }) => Promise<AiddDeliveryWorkspacePublishResult>;
-    returnDeliveryPackageToChanges: (input: { projectPath: string; packageId: string; removeWorkspacePackage?: boolean }) => Promise<AiddReturnDeliveryPackageToChangesResult>;
     packageDeliveryPackageForReview: (input: { projectPath: string; packageId: string }) => Promise<AiddDeliveryReviewPackageResult>;
     importDeliveryReviewPackage: (input: { projectPath: string; packageId: string; zipPath: string }) => Promise<AiddDeliveryReviewPackageImportResult>;
     readDecisions: (projectPath: string) => Promise<AiddDecisionRecord[]>;

@@ -13,6 +13,7 @@ import {
   createChangeFromCapability,
   createChangeFromComponent,
   createChangeFromTechnicalChange,
+  createChangeReviewBundle,
   createDecisionRecord,
   createDeliveryPackageFromChanges,
   createDeliveryPackageFromCapability,
@@ -29,6 +30,7 @@ import {
   importComponentReviewPackage,
   importComponentTechnicalChangeReviewPackage,
   importComponentTechnicalReviewPackage,
+  importChangeReviewPackage,
   importDeliveryReviewPackage,
   publishDeliveryPackageToWorkspace,
   readChange,
@@ -40,6 +42,8 @@ import {
   readDeliveryPackage,
   readDeliveryPackages,
   readProjectSetup,
+  readRoadmap,
+  returnDeliveryPackageToChanges,
   readSourceProjects,
   readSourceReference,
   saveChange,
@@ -57,6 +61,7 @@ import type {
   ComponentSourceDirectoryInput,
   ComponentTechnicalChangeReviewPackageInput,
   ComponentTechnicalReviewPackageInput,
+  ChangeReviewPackageInput,
   CreateCapabilityInput,
   CreateChangeFromCapabilityInput,
   CreateChangeFromComponentInput,
@@ -77,6 +82,7 @@ import type {
   DeliveryWorkspacePublishInput,
   GenerateComponentContractInput,
   ImportCapabilityReviewPackageInput,
+  ImportChangeReviewPackageInput,
   ImportComponentReviewPackageInput,
   ImportComponentTechnicalChangeReviewPackageInput,
   ImportComponentTechnicalReviewPackageInput,
@@ -87,6 +93,7 @@ import type {
   ReadCapabilityInput,
   ReadComponentInput,
   ReadComponentTechnicalChangeInput,
+  ReturnDeliveryPackageToChangesInput,
   SaveComponentTechnicalChangeInput,
   SaveChangeInput,
   SaveDeliveryPackageInput,
@@ -257,9 +264,24 @@ export function registerProjectDomainIpcHandlers() {
     return withProjectSaveSync(input.projectPath, () => updateChangeStatus(input));
   });
 
+  ipcMain.handle('project:packageChangeForReview', async (_event, input: ChangeReviewPackageInput) => {
+    if (!input?.projectPath || !input?.id) throw new Error('Project path and change id are required.');
+    return createChangeReviewBundle(input);
+  });
+
+  ipcMain.handle('project:importChangeReviewPackage', async (_event, input: ImportChangeReviewPackageInput) => {
+    if (!input?.projectPath || !input?.id || !input?.zipPath) throw new Error('Project path, change id and review response zip path are required.');
+    return withProjectSaveSync(input.projectPath, () => importChangeReviewPackage(input));
+  });
+
   ipcMain.handle('project:deleteChange', async (_event, input: DeleteChangeInput) => {
     if (!input?.projectPath || !input?.id) throw new Error('Project path and change id are required.');
     return withProjectSaveSync(input.projectPath, () => deleteChange(input));
+  });
+
+  ipcMain.handle('project:readRoadmap', async (_event, projectPath: string) => {
+    if (!projectPath) throw new Error('Project path is required.');
+    return readRoadmap(projectPath);
   });
 
   ipcMain.handle('project:createChangeFromCapability', async (_event, input: CreateChangeFromCapabilityInput) => {
@@ -303,6 +325,9 @@ export function registerProjectDomainIpcHandlers() {
   ipcMain.handle('project:assembleDeliveryPackage', async (_event, input: { projectPath: string; packageId: string }) => assembleDeliveryPackage(input));
   ipcMain.handle('project:publishDeliveryPackageToWorkspace', async (_event, input: DeliveryWorkspacePublishInput) => {
     return withProjectSaveSync(input.projectPath, () => publishDeliveryPackageToWorkspace(input));
+  });
+  ipcMain.handle('project:returnDeliveryPackageToChanges', async (_event, input: ReturnDeliveryPackageToChangesInput) => {
+    return withProjectSaveSync(input.projectPath, () => returnDeliveryPackageToChanges(input));
   });
 
   ipcMain.handle('project:packageDeliveryPackageForReview', async (_event, input: DeliveryReviewPackageInput) => {

@@ -8,6 +8,7 @@ import { TEMPLATE_VERSION, exists, readEntities, readJson, slugify, writeJson } 
 import { isSameOrInsideDiskPath, normaliseRelativePath } from './projectValidation';
 import type {
   ChangeDetail,
+  ChangePlanPhase,
   ChangePriority,
   ChangeReadiness,
   ChangeRecord,
@@ -15,6 +16,7 @@ import type {
   ChangeSection,
   ChangeSource,
   ChangeStatus,
+  ChangeStatusHistoryEntry,
   ChangeType,
   CreateChangeFromCapabilityInput,
   CreateChangeFromComponentInput,
@@ -22,6 +24,7 @@ import type {
   CreateChangeInput,
   DeleteChangeInput,
   ReadChangeInput,
+  RoadmapSize,
   SaveChangeInput,
   UpdateChangeStatusInput
 } from './types';
@@ -50,6 +53,7 @@ export const CHANGE_STATUSES = new Set<ChangeStatus>([
 export const CHANGE_PRIORITIES = new Set<ChangePriority>(['low', 'normal', 'high', 'urgent']);
 export const CHANGE_RISKS = new Set<ChangeRisk>(['low', 'medium', 'high', 'unknown']);
 export const CHANGE_SOURCES = new Set<ChangeSource>(['manual', 'capability', 'component', 'component-technical-change', 'review-import']);
+export const ROADMAP_SIZES = new Set<RoadmapSize>(['tiny', 'small', 'medium', 'large', 'too-large']);
 
 export const CHANGE_SECTIONS: Array<Omit<ChangeSection, 'body'>> = [
   { key: 'intent', fileName: 'intent.md', title: 'Intent', editable: true },
@@ -60,6 +64,9 @@ export const CHANGE_SECTIONS: Array<Omit<ChangeSection, 'body'>> = [
   { key: 'decisions', fileName: 'decisions.md', title: 'Decisions', editable: true },
   { key: 'review', fileName: 'review.md', title: 'Review', editable: true }
 ];
+
+export const CHANGE_STRATEGY_FILE = 'implementation-strategy.md';
+export const CHANGE_PHASE_FILE_PATTERN = /^(phase|stage)-[\w-]+\.md$/i;
 
 const CHANGE_SECTION_BY_FILE = new Map(
   CHANGE_SECTIONS.map((section) => [normaliseRelativePath(section.fileName).toLowerCase(), section])
@@ -147,8 +154,37 @@ export function normaliseChangeSource(value: unknown, fallback: ChangeSource = '
   return CHANGE_SOURCES.has(source) ? source : fallback;
 }
 
+export function normaliseRoadmapSize(value: unknown): RoadmapSize | undefined {
+  const size = String(value || '').trim().toLowerCase() as RoadmapSize;
+  return ROADMAP_SIZES.has(size) ? size : undefined;
+}
+
 function uniqueStrings(values: unknown[] | undefined) {
   return Array.from(new Set((values || []).map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
+function optionalString(value: unknown) {
+  const text = String(value || '').trim();
+  return text || undefined;
+}
+
+function optionalDateOnly(value: unknown) {
+  const text = optionalString(value);
+  return text && /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : undefined;
+}
+
+function optionalPositiveNumber(value: unknown) {
+  const number = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function normaliseStatusHistory(value: unknown): ChangeStatusHistoryEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry: any) => {
+    const status = normaliseChangeStatus(entry?.status, 'draft');
+    const changedAt = optionalString(entry?.changedAt);
+    return changedAt ? { status, changedAt } : null;
+  }).filter(Boolean) as ChangeStatusHistoryEntry[];
 }
 
 export function changeTypeLabel(type: ChangeType) {
@@ -210,7 +246,13 @@ export function changeMetadata(record: ChangeRecord) {
     legacyTechnicalChange: record.legacyTechnicalChange || null,
     relativePath: record.relativePath,
     createdAt: record.createdAt,
-    updatedAt: record.updatedAt
+    updatedAt: record.updatedAt,
+    ...(record.targetDate ? { targetDate: record.targetDate } : {}),
+    ...(record.size ? { size: record.size } : {}),
+    blocked: Boolean(record.blocked),
+    ...(record.blockedReason ? { blockedReason: record.blockedReason } : {}),
+    dependsOnChangeIds: record.dependsOnChangeIds || [],
+    statusHistory: record.statusHistory || []
   };
 }
 
@@ -237,7 +279,13 @@ export function normaliseChangeRecord(input: any, projectPath: string, changeDir
     legacyTechnicalChange: legacyTechnicalChange?.componentSlug && legacyTechnicalChange?.technicalChangeId ? legacyTechnicalChange : null,
     relativePath: normaliseRelativePath(input?.relativePath || path.relative(projectPath, changeDir)),
     createdAt: String(input?.createdAt || input?.updatedAt || ''),
-    updatedAt: String(input?.updatedAt || input?.createdAt || '')
+    updatedAt: String(input?.updatedAt || input?.createdAt || ''),
+    targetDate: optionalDateOnly(input?.targetDate),
+    size: normaliseRoadmapSize(input?.size),
+    blocked: Boolean(input?.blocked),
+    blockedReason: optionalString(input?.blockedReason),
+    dependsOnChangeIds: uniqueStrings(input?.dependsOnChangeIds),
+    statusHistory: normaliseStatusHistory(input?.statusHistory)
   };
 }
 
@@ -318,6 +366,44 @@ function defaultSectionBody(input: {
   };
 }
 
+export function defaultChangeStrategyBody() {
+  return [
+    '# Implementation Strategy',
+    '',
+    '## Approach',
+    '',
+    'TODO',
+    '',
+    '## Verification',
+    '',
+    'TODO',
+    ''
+  ].join('\n');
+}
+
+export function defaultChangePhaseBody(title: string) {
+  return [
+    `# ${title}`,
+    '',
+    '## Goal',
+    '',
+    'TODO',
+    '',
+    '## Implementation Steps',
+    '',
+    '- [ ] TODO',
+    '',
+    '## Source Areas',
+    '',
+    '- TODO',
+    '',
+    '## Verification',
+    '',
+    '- [ ] TODO',
+    ''
+  ].join('\n');
+}
+
 function typeSpecificImplementationPrompt(type: ChangeType) {
   switch (type) {
     case 'implement-capability':
@@ -377,6 +463,113 @@ export async function ensureChangeMarkdownFiles(changeDir: string, input: {
   }
 }
 
+export async function readChangeMarkdownBody(filePath: string) {
+  if (!(await exists(filePath))) return '';
+  try {
+    return matter(await fsp.readFile(filePath, 'utf8')).content.trim();
+  } catch {
+    return (await fsp.readFile(filePath, 'utf8')).trim();
+  }
+}
+
+export async function writeChangeMarkdownBody(filePath: string, body: string, fallbackData: Record<string, unknown> = {}) {
+  let data = fallbackData;
+  if (await exists(filePath)) {
+    try {
+      data = { ...fallbackData, ...matter(await fsp.readFile(filePath, 'utf8')).data };
+    } catch {
+      data = fallbackData;
+    }
+  }
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  await fsp.writeFile(filePath, matter.stringify((body || '').trim() + '\n', data), 'utf8');
+}
+
+export async function ensureChangePlanningFiles(changeDir: string, input: {
+  id: string;
+  title: string;
+  status: ChangeStatus;
+}) {
+  const strategyPath = resolveChangePath(changeDir, CHANGE_STRATEGY_FILE);
+  if (!(await exists(strategyPath))) {
+    await writeChangeMarkdownBody(strategyPath, defaultChangeStrategyBody(), {
+      aidd: { type: 'change-implementation-strategy', templateVersion: TEMPLATE_VERSION },
+      id: `${input.id}-strategy`,
+      change: input.id,
+      title: input.title,
+      status: input.status
+    });
+  }
+}
+
+export function changePhaseIdFromFileName(fileName: string) {
+  return path.basename(fileName).replace(/\.md$/i, '');
+}
+
+function changePhaseTitleFromFileName(fileName: string) {
+  return changePhaseIdFromFileName(fileName)
+    .replace(/^(phase|stage)-\d{1,3}-/i, '')
+    .replace(/^(phase|stage)-/i, '')
+    .replace(/-/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .trim() || 'Implementation Phase';
+}
+
+export async function readChangePlanPhases(changeDir: string): Promise<ChangePlanPhase[]> {
+  if (!(await exists(changeDir))) return [];
+  const entries = await fsp.readdir(changeDir, { withFileTypes: true });
+  const phases: ChangePlanPhase[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !CHANGE_PHASE_FILE_PATTERN.test(entry.name)) continue;
+    const filePath = resolveChangePath(changeDir, entry.name);
+    const parsed = matter(await fsp.readFile(filePath, 'utf8'));
+    phases.push({
+      id: String(parsed.data.id || changePhaseIdFromFileName(entry.name)),
+      title: String(parsed.data.title || changePhaseTitleFromFileName(entry.name)),
+      status: String(parsed.data.status || 'draft'),
+      fileName: entry.name,
+      body: parsed.content.trim()
+    });
+  }
+  return phases.sort((a, b) => a.fileName.localeCompare(b.fileName, undefined, { numeric: true }));
+}
+
+function normaliseChangePlanPhases(phases?: ChangePlanPhase[]) {
+  return (phases || []).map((phase, index) => {
+    const title = String(phase?.title || '').trim() || `Phase ${index + 1}`;
+    const fileName = String(phase?.fileName || '').trim() || `phase-${String(index + 1).padStart(2, '0')}-${slugify(title) || 'phase'}.md`;
+    return {
+      id: String(phase?.id || changePhaseIdFromFileName(fileName)).trim() || changePhaseIdFromFileName(fileName),
+      title,
+      status: String(phase?.status || 'draft').trim() || 'draft',
+      fileName: path.basename(fileName),
+      body: String(phase?.body || '')
+    };
+  });
+}
+
+export async function writeChangePlanPhases(changeDir: string, changeId: string, phases: ChangePlanPhase[]) {
+  const entries = await fsp.readdir(changeDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isFile() && CHANGE_PHASE_FILE_PATTERN.test(entry.name)) {
+      await fsp.rm(resolveChangePath(changeDir, entry.name), { force: true });
+    }
+  }
+
+  for (const [index, phase] of normaliseChangePlanPhases(phases).entries()) {
+    const title = phase.title || `Phase ${index + 1}`;
+    const fileName = `phase-${String(index + 1).padStart(2, '0')}-${slugify(title) || 'phase'}.md`;
+    await writeChangeMarkdownBody(resolveChangePath(changeDir, fileName), phase.body || '', {
+      aidd: { type: 'change-plan-phase', templateVersion: TEMPLATE_VERSION },
+      id: changePhaseIdFromFileName(fileName),
+      title,
+      status: phase.status || 'draft',
+      change: changeId,
+      order: index + 1
+    });
+  }
+}
+
 export function bodyHasSubstantialContent(body: string) {
   const cleaned = String(body || '')
     .replace(/^---[\s\S]*?---\s*/m, ' ')
@@ -407,6 +600,15 @@ export function evaluateChangeReadiness(change: ChangeDetail): ChangeReadiness {
   if (!bodyHasSubstantialContent(section('scope')?.body || '')) blockers.push('Define the scope.');
   if (!bodyHasSubstantialContent(section('acceptance-criteria')?.body || '')) blockers.push('Define acceptance criteria.');
   if (!change.linkedCapabilities.length && !change.linkedComponents.length) blockers.push('Link at least one capability or component.');
+  if (!bodyHasSubstantialContent(change.strategyBody || '')) blockers.push('Write the implementation strategy.');
+  if (!change.phases.length) {
+    blockers.push('Add at least one implementation phase.');
+  } else {
+    for (const [index, phase] of change.phases.entries()) {
+      if (!phase.title.trim()) blockers.push(`Name implementation phase ${index + 1}.`);
+      if (!bodyHasSubstantialContent(phase.body || '')) blockers.push(`Write implementation phase ${index + 1}.`);
+    }
+  }
 
   return {
     ready: blockers.length === 0,
@@ -463,6 +665,11 @@ export async function readChange(input: ReadChangeInput): Promise<ChangeDetail> 
     linkedCapabilities: target.record.linkedCapabilities,
     linkedComponents: target.record.linkedComponents
   });
+  await ensureChangePlanningFiles(target.changeDir, {
+    id: target.record.id,
+    title: target.record.title,
+    status: target.record.status
+  });
 
   const sections: ChangeSection[] = [];
   for (const section of CHANGE_SECTIONS) {
@@ -475,6 +682,8 @@ export async function readChange(input: ReadChangeInput): Promise<ChangeDetail> 
     ...target.record,
     relativePath: normaliseRelativePath(path.relative(input.projectPath, target.changeDir)),
     sections,
+    strategyBody: await readChangeMarkdownBody(resolveChangePath(target.changeDir, CHANGE_STRATEGY_FILE)),
+    phases: await readChangePlanPhases(target.changeDir),
     readiness: { ready: false, blockers: [] }
   };
   return {
@@ -514,6 +723,16 @@ export async function createChange(input: CreateChangeInput): Promise<ChangeDeta
     linkedComponents,
     sectionBodies: sectionsToBodies(input.sections)
   });
+  await writeChangeMarkdownBody(resolveChangePath(changeDir, CHANGE_STRATEGY_FILE), input.strategyBody ?? defaultChangeStrategyBody(), {
+    aidd: { type: 'change-implementation-strategy', templateVersion: TEMPLATE_VERSION },
+    id: `${id}-strategy`,
+    change: id,
+    title,
+    status: normaliseChangeStatus(input.status)
+  });
+  if (Array.isArray(input.phases)) {
+    await writeChangePlanPhases(changeDir, id, input.phases);
+  }
 
   const record: ChangeRecord = {
     id,
@@ -529,7 +748,13 @@ export async function createChange(input: CreateChangeInput): Promise<ChangeDeta
     legacyTechnicalChange: input.legacyTechnicalChange || null,
     relativePath: normaliseRelativePath(path.relative(input.projectPath, changeDir)),
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
+    targetDate: optionalDateOnly(input.targetDate),
+    size: normaliseRoadmapSize(input.size),
+    blocked: Boolean(input.blocked),
+    blockedReason: optionalString(input.blockedReason),
+    dependsOnChangeIds: uniqueStrings(input.dependsOnChangeIds),
+    statusHistory: normaliseStatusHistory(input.statusHistory)
   };
 
   const created = await readChangeFromRecord(input.projectPath, changeDir, record);
@@ -548,35 +773,68 @@ async function readChangeFromRecord(projectPath: string, changeDir: string, reco
     const body = await exists(filePath) ? await fsp.readFile(filePath, 'utf8') : '';
     sections.push({ ...section, body });
   }
-  const detail = { ...record, sections, readiness: { ready: false, blockers: [] } };
+  await ensureChangePlanningFiles(changeDir, {
+    id: record.id,
+    title: record.title,
+    status: record.status
+  });
+  const detail = {
+    ...record,
+    sections,
+    strategyBody: await readChangeMarkdownBody(resolveChangePath(changeDir, CHANGE_STRATEGY_FILE)),
+    phases: await readChangePlanPhases(changeDir),
+    readiness: { ready: false, blockers: [] }
+  };
   return { ...detail, readiness: evaluateChangeReadiness(detail) };
 }
 
 export async function saveChange(input: SaveChangeInput): Promise<ChangeDetail> {
   if (!input.projectPath || !input.id) throw new Error('Project path and change id are required.');
   const target = await findChangeTarget(input.projectPath, input.id);
+  const currentDetail = await readChange({ projectPath: input.projectPath, id: input.id });
   const nextSections = Array.isArray(input.sections)
     ? CHANGE_SECTIONS.map((template) => {
         const provided = input.sections?.find((section) => normaliseRelativePath(section.fileName).toLowerCase() === template.fileName.toLowerCase());
         return { ...template, body: provided?.body ?? '' };
       })
-    : (await readChange({ projectPath: input.projectPath, id: input.id })).sections;
+    : currentDetail.sections;
+  const nextStrategyBody = typeof input.strategyBody === 'string' ? input.strategyBody : currentDetail.strategyBody;
+  const nextPhases = Array.isArray(input.phases) ? normaliseChangePlanPhases(input.phases) : currentDetail.phases;
+
+  const nextStatus = typeof input.status === 'string' ? normaliseChangeStatus(input.status, target.record.status) : target.record.status;
+  const statusChanged = nextStatus !== target.record.status;
+  const statusHistory = statusChanged
+    ? [
+        ...(target.record.statusHistory.length
+          ? target.record.statusHistory
+          : [{ status: target.record.status, changedAt: target.record.updatedAt || target.record.createdAt || new Date().toISOString() }]),
+        { status: nextStatus, changedAt: new Date().toISOString() }
+      ]
+    : (Array.isArray(input.statusHistory) ? normaliseStatusHistory(input.statusHistory) : target.record.statusHistory);
 
   const updated: ChangeRecord = {
     ...target.record,
     title: typeof input.title === 'string' ? (input.title.trim() || target.record.title) : target.record.title,
     type: typeof input.type === 'string' ? normaliseChangeType(input.type, target.record.type) : target.record.type,
-    status: typeof input.status === 'string' ? normaliseChangeStatus(input.status, target.record.status) : target.record.status,
+    status: nextStatus,
     priority: typeof input.priority === 'string' ? normaliseChangePriority(input.priority, target.record.priority) : target.record.priority,
     risk: typeof input.risk === 'string' ? normaliseChangeRisk(input.risk, target.record.risk) : target.record.risk,
     linkedCapabilities: Array.isArray(input.linkedCapabilities) ? uniqueStrings(input.linkedCapabilities) : target.record.linkedCapabilities,
     linkedComponents: Array.isArray(input.linkedComponents) ? uniqueStrings(input.linkedComponents) : target.record.linkedComponents,
+    targetDate: input.targetDate === undefined ? target.record.targetDate : optionalDateOnly(input.targetDate),
+    size: input.size === undefined ? target.record.size : normaliseRoadmapSize(input.size),
+    blocked: input.blocked === undefined ? target.record.blocked : Boolean(input.blocked),
+    blockedReason: input.blockedReason === undefined ? target.record.blockedReason : optionalString(input.blockedReason),
+    dependsOnChangeIds: Array.isArray(input.dependsOnChangeIds) ? uniqueStrings(input.dependsOnChangeIds) : target.record.dependsOnChangeIds,
+    statusHistory,
     updatedAt: new Date().toISOString()
   };
 
   const nextDetail = {
     ...updated,
     sections: nextSections,
+    strategyBody: nextStrategyBody,
+    phases: nextPhases,
     readiness: { ready: false, blockers: [] }
   };
   const readiness = evaluateChangeReadiness(nextDetail);
@@ -592,6 +850,20 @@ export async function saveChange(input: SaveChangeInput): Promise<ChangeDetail> 
       await fsp.mkdir(path.dirname(filePath), { recursive: true });
       await fsp.writeFile(filePath, section.body || '', 'utf8');
     }
+  }
+
+  if (typeof input.strategyBody === 'string') {
+    await writeChangeMarkdownBody(resolveChangePath(target.changeDir, CHANGE_STRATEGY_FILE), input.strategyBody, {
+      aidd: { type: 'change-implementation-strategy', templateVersion: TEMPLATE_VERSION },
+      id: `${updated.id}-strategy`,
+      change: updated.id,
+      title: updated.title,
+      status: updated.status
+    });
+  }
+
+  if (Array.isArray(input.phases)) {
+    await writeChangePlanPhases(target.changeDir, updated.id, input.phases);
   }
 
   await writeJson(target.metadataPath, changeMetadata(updated));
@@ -736,7 +1008,7 @@ export async function appendDeliveryPackageToChanges(projectPath: string, change
     await saveChange({
       projectPath,
       id: changeId,
-      status: 'in-delivery',
+      status: 'accepted',
       linkedCapabilities: detail.linkedCapabilities,
       linkedComponents: detail.linkedComponents,
       sections: detail.sections,
@@ -748,7 +1020,7 @@ export async function appendDeliveryPackageToChanges(projectPath: string, change
     const target = await findChangeTarget(projectPath, changeId);
     await writeJson(target.metadataPath, changeMetadata({
       ...target.record,
-      status: 'in-delivery',
+      status: 'accepted',
       deliveryPackageIds,
       updatedAt: new Date().toISOString()
     }));

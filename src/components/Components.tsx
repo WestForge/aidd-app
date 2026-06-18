@@ -3,17 +3,22 @@ import {
   Archive,
   ArrowLeft,
   CheckCircle2,
+  CheckSquare,
   Circle,
   CircleDashed,
+  Copy,
   Database,
   Eye,
   FileText,
+  Filter,
   FolderOpen,
   GitBranch,
   Layers,
+  ListChecks,
   Pencil,
   PlayCircle,
   Plug,
+  PackagePlus,
   Plus,
   Puzzle,
   Save,
@@ -22,6 +27,7 @@ import {
   SkipForward,
   Sparkles,
   Trash2,
+  Upload,
   Workflow,
   Zap,
   X,
@@ -563,6 +569,15 @@ export function Components({
   const [dragError, setDragError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AiddComponentSummary | null>(null);
+  const [bulkDeleteTargets, setBulkDeleteTargets] = useState<AiddComponentSummary[] | null>(null);
+  const [componentSearch, setComponentSearch] = useState("");
+  const [componentStatusFilter, setComponentStatusFilter] = useState<string>("all");
+  const [componentCapabilityFilter, setComponentCapabilityFilter] = useState<string>("all");
+  const [componentLinkFilter, setComponentLinkFilter] = useState<string>("all");
+  const [componentSourceFilter, setComponentSourceFilter] = useState<string>("all");
+  const [componentContractFilter, setComponentContractFilter] = useState<string>("all");
+  const [selectedComponentSlugs, setSelectedComponentSlugs] = useState<string[]>([]);
+  const [componentZipDropActive, setComponentZipDropActive] = useState(false);
 
   const load = async () => {
     if (!activeProject?.path) return;
@@ -595,6 +610,100 @@ export function Components({
     }
     return counts;
   }, [setup?.components]);
+
+  const filteredComponents = useMemo(() => {
+    const components = setup?.components ?? [];
+    const capabilities = setup?.capabilities ?? [];
+    const search = componentSearch.trim().toLowerCase();
+
+    return components.filter((component) => {
+      const linkedCapabilities = capabilities.filter((capability) =>
+        capability.components?.includes(component.slug),
+      );
+      const sourceDirectory = component.source?.directory ?? "";
+      const contractStatus = component.contract?.status ?? "missing";
+      const searchable = [
+        component.title,
+        component.slug,
+        component.status ?? "draft",
+        sourceDirectory,
+        sourceTypeLabel(component.source?.type),
+        contractStatus,
+        ...linkedCapabilities.flatMap((capability) => [capability.title, capability.slug]),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      if (search && !searchable.includes(search)) return false;
+      if (componentStatusFilter !== "all" && (component.status ?? "draft") !== componentStatusFilter) return false;
+      if (componentCapabilityFilter !== "all" && !linkedCapabilities.some((capability) => capability.slug === componentCapabilityFilter)) return false;
+      if (componentLinkFilter === "linked" && linkedCapabilities.length === 0) return false;
+      if (componentLinkFilter === "unlinked" && linkedCapabilities.length > 0) return false;
+      if (componentSourceFilter === "mapped" && !sourceDirectory) return false;
+      if (componentSourceFilter === "unmapped" && sourceDirectory) return false;
+      if (componentSourceFilter === "workspace" && (!sourceDirectory || component.source?.isInsideWorkspace === false)) return false;
+      if (componentSourceFilter === "external" && component.source?.isInsideWorkspace !== false) return false;
+      if (componentContractFilter !== "all" && contractStatus !== componentContractFilter) return false;
+
+      return true;
+    });
+  }, [
+    setup?.components,
+    setup?.capabilities,
+    componentSearch,
+    componentStatusFilter,
+    componentCapabilityFilter,
+    componentLinkFilter,
+    componentSourceFilter,
+    componentContractFilter,
+  ]);
+
+  const selectedComponentsForBulk = useMemo(() => {
+    const bySlug = new Map((setup?.components ?? []).map((component) => [component.slug, component]));
+    return selectedComponentSlugs
+      .map((slug) => bySlug.get(slug))
+      .filter((component): component is AiddComponentSummary => Boolean(component));
+  }, [setup?.components, selectedComponentSlugs]);
+
+  const visibleComponentSlugs = filteredComponents.map((component) => component.slug);
+  const allVisibleComponentsSelected =
+    visibleComponentSlugs.length > 0 &&
+    visibleComponentSlugs.every((slug) => selectedComponentSlugs.includes(slug));
+
+  useEffect(() => {
+    const validSlugs = new Set((setup?.components ?? []).map((component) => component.slug));
+    setSelectedComponentSlugs((current) => current.filter((slug) => validSlugs.has(slug)));
+  }, [setup?.components]);
+
+  const clearComponentFilters = () => {
+    setComponentSearch("");
+    setComponentStatusFilter("all");
+    setComponentCapabilityFilter("all");
+    setComponentLinkFilter("all");
+    setComponentSourceFilter("all");
+    setComponentContractFilter("all");
+  };
+
+  const toggleComponentSelection = (slug: string) => {
+    setSelectedComponentSlugs((current) =>
+      current.includes(slug)
+        ? current.filter((item) => item !== slug)
+        : [...current, slug],
+    );
+  };
+
+  const selectVisibleComponents = () => {
+    setSelectedComponentSlugs((current) => {
+      const next = new Set(current);
+      for (const slug of visibleComponentSlugs) next.add(slug);
+      return Array.from(next);
+    });
+  };
+
+  const clearSelectedComponentsForBulk = () => setSelectedComponentSlugs([]);
+
+  const linkedCapabilitiesForComponent = (componentSlug: string) =>
+    (setup?.capabilities ?? []).filter((capability) => capability.components?.includes(componentSlug));
 
   const activeSection =
     sections.find((section) => section.key === activeSectionKey) ?? sections[0];
@@ -725,6 +834,17 @@ export function Components({
       ),
     );
 
+  const updateAllSectionStatuses = (nextStatus: AiddSetupStatus) =>
+    setSections((current) =>
+      current.map((section) => {
+        if (nextStatus === "skipped") {
+          return { ...section, status: nextStatus };
+        }
+        const { skipReason: _skipReason, ...rest } = section;
+        return { ...rest, status: nextStatus };
+      }),
+    );
+
   const updateActiveSectionSkipReason = (skipReason: string) =>
     setSections((current) =>
       current.map((section) =>
@@ -831,6 +951,7 @@ export function Components({
       });
       setSetup(next);
       setDeleteTarget(null);
+      setSelectedComponentSlugs((current) => current.filter((slug) => slug !== target.slug));
 
       if (editingSlug === target.slug) {
         resetForm();
@@ -842,6 +963,121 @@ export function Components({
         title: "Component deleted",
         body: target.title,
       });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const requestBulkComponentDelete = () => {
+    if (!selectedComponentsForBulk.length) return;
+    setError(null);
+    setDragError(null);
+    setMessage(null);
+    setBulkDeleteTargets(selectedComponentsForBulk);
+  };
+
+  const deleteBulkComponents = async () => {
+    if (!activeProject?.path || !bulkDeleteTargets?.length) return;
+
+    const targets = bulkDeleteTargets;
+    setSaving(true);
+    setError(null);
+    setDragError(null);
+    try {
+      let nextSetup = setup;
+      for (const target of targets) {
+        nextSetup = await window.aidd.deleteComponent({
+          projectPath: activeProject.path,
+          slug: target.slug,
+        });
+      }
+      if (nextSetup) setSetup(nextSetup);
+      setBulkDeleteTargets(null);
+      setSelectedComponentSlugs((current) =>
+        current.filter((slug) => !targets.some((target) => target.slug === slug)),
+      );
+
+      if (editingSlug && targets.some((target) => target.slug === editingSlug)) {
+        resetForm();
+        setView("list");
+      }
+
+      setMessage(`Deleted ${targets.length} component(s).`);
+      void window.aidd.notify({
+        title: "Components deleted",
+        body: `${targets.length} item(s) removed.`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const copySelectedComponentsForAi = async () => {
+    if (!selectedComponentsForBulk.length) return;
+
+    const payload = [
+      "# Selected components",
+      "",
+      ...selectedComponentsForBulk.flatMap((component) => {
+        const capabilities = linkedCapabilitiesForComponent(component.slug);
+        return [
+          `## ${component.title}`,
+          `- Slug: ${component.slug}`,
+          `- Status: ${statusLabel(component.status)}`,
+          `- Source: ${component.source?.directory || "Not mapped"}`,
+          `- Source type: ${sourceTypeLabel(component.source?.type)}`,
+          `- Contract: ${contractLabel(component.contract?.status)}`,
+          `- Linked capabilities: ${capabilities.map((capability) => capability.title).join(", ") || "None"}`,
+          "",
+        ];
+      }),
+    ].join("\n");
+
+    try {
+      await navigator.clipboard.writeText(payload);
+      setMessage(`Copied ${selectedComponentsForBulk.length} selected component(s) for AI context.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const createChangeFromSelectedComponents = async () => {
+    if (!activeProject?.path || !selectedComponentsForBulk.length) return;
+
+    const targets = selectedComponentsForBulk;
+    const linkedCapabilities = Array.from(
+      new Set(
+        targets.flatMap((component) =>
+          linkedCapabilitiesForComponent(component.slug).map((capability) => capability.slug),
+        ),
+      ),
+    );
+    const changeTitle =
+      targets.length === 1
+        ? `Change ${targets[0].title}`
+        : `Change ${targets.length} selected components`;
+
+    setSaving(true);
+    setError(null);
+    setDragError(null);
+    try {
+      const result = await window.aidd.createChange({
+        projectPath: activeProject.path,
+        title: changeTitle,
+        type: "component-change",
+        status: "draft",
+        priority: "normal",
+        risk: "unknown",
+        linkedComponents: targets.map((component) => component.slug),
+        linkedCapabilities,
+      });
+      setMessage(`Created Change ${result.id} from ${targets.length} selected component(s).`);
+      void window.aidd.notify({ title: "Change created", body: result.id });
+      onChangeCreated?.(result.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1002,21 +1238,23 @@ export function Components({
   const importComponentReviewPackage = async (event: DragEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
+    setComponentZipDropActive(false);
     if (!activeProject?.path) return;
 
     const zipPath = droppedZipPathFromEvent(event);
     if (!zipPath) {
-      setDragError("Drop a returned component review .zip onto this tile.");
+      setDragError("Drop a component .zip file.");
       return;
     }
     if (!zipPath.toLowerCase().endsWith(".zip")) {
-      setDragError("Review response rejected: drop a .zip file.");
+      setDragError("Component import rejected: drop a .zip file.");
       return;
     }
 
     setSaving(true);
     setError(null);
     setDragError(null);
+    setMessage(null);
     try {
       const result = await window.aidd.importComponentReviewPackage({
         projectPath: activeProject.path,
@@ -1026,9 +1264,14 @@ export function Components({
       setReviewPackageDragFilePath(null);
       await load();
       const importedSlug = result.importedComponents?.length === 1 ? result.importedComponents[0] : editingSlug;
+      setMessage(
+        result.componentCount
+          ? `Imported ${result.componentCount} component(s) from zip.`
+          : "No component files were imported from that zip.",
+      );
       if (importedSlug) await openEdit(importedSlug);
       void window.aidd.notify({
-        title: "Component review imported",
+        title: "Component zip imported",
         body: `${result.importedFiles.length} file(s) imported from ${result.componentCount} component(s).`,
       });
     } catch (err) {
@@ -1569,6 +1812,77 @@ export function Components({
     </div>
   ) : null;
 
+  const bulkDeleteDialog = bulkDeleteTargets?.length ? (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      role="presentation"
+      onClick={() => {
+        if (!saving) setBulkDeleteTargets(null);
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="bulk-delete-component-title"
+        className="w-full max-w-xl rounded-lg border bg-card p-5 shadow-lg"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <div className="rounded-full border border-destructive/30 bg-destructive/10 p-2 text-destructive">
+            <ShieldAlert className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 space-y-3">
+            <div>
+              <h2 id="bulk-delete-component-title" className="text-lg font-semibold">
+                Delete selected components?
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                This will remove {bulkDeleteTargets.length} component folder(s) and unlink them from capabilities. Git history can recover committed files, but AIDD will delete them from the current project state.
+              </p>
+            </div>
+            <div className="max-h-52 overflow-auto rounded-md border bg-muted/40 p-3 text-xs">
+              <div className="font-medium text-foreground">Selected components</div>
+              <ul className="mt-2 space-y-1 text-muted-foreground">
+                {bulkDeleteTargets.map((component) => {
+                  const capabilities = linkedCapabilitiesForComponent(component.slug);
+                  return (
+                    <li key={component.slug}>
+                      <span className="font-medium text-foreground">{component.title}</span>
+                      <span> - components/{component.slug}/</span>
+                      {capabilities.length ? <span> - unlinks {capabilities.length} capability item(s)</span> : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Linked Changes and Delivery packages are not deleted. Run Health Check afterwards if you want to review stale references.
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setBulkDeleteTargets(null)}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={deleteBulkComponents}
+            disabled={saving}
+          >
+            <Trash2 className="h-4 w-4" />
+            {saving ? "Deleting..." : `Delete ${bulkDeleteTargets.length} components`}
+          </Button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   if (!activeProject)
     return (
       <div className="flex h-full items-center justify-center p-6">
@@ -1584,6 +1898,7 @@ export function Components({
     return (
       <div className="flex h-full flex-col overflow-hidden">
         {deleteDialog}
+        {bulkDeleteDialog}
         <header className="flex h-16 shrink-0 items-center justify-between border-b px-6">
           <div>
             <h1 className="text-xl font-semibold">Components</h1>
@@ -1592,6 +1907,26 @@ export function Components({
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={saving}
+              className={cn("border-dashed", componentZipDropActive && "border-primary bg-primary/10")}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setComponentZipDropActive(true);
+              }}
+              onDragLeave={() => setComponentZipDropActive(false)}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "copy";
+                setComponentZipDropActive(true);
+              }}
+              onDrop={importComponentReviewPackage}
+              title="Drop a zip containing components/<slug>/ files"
+            >
+              <Upload className="h-4 w-4" /> Import ZIP
+            </Button>
             <Button
               onClick={() => {
                 resetForm();
@@ -1615,32 +1950,169 @@ export function Components({
               <AlertDescription>{message}</AlertDescription>
             </Alert>
           )}
+          {dragError && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTitle>Import failed</AlertTitle>
+              <AlertDescription>{dragError}</AlertDescription>
+            </Alert>
+          )}
           <div className="mb-6 grid gap-3 md:grid-cols-4">
             <Metric label="Total" value={setup?.components.length ?? 0} />
             <Metric label="Draft" value={statusCounts.get("draft") ?? 0} />
             <Metric label="Active" value={statusCounts.get("active") ?? 0} />
             <Metric label="Deprecated" value={statusCounts.get("deprecated") ?? 0} />
           </div>
+
+          <Card className="mb-4">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Filter className="h-4 w-4" /> Filter components
+                  </CardTitle>
+                  <CardDescription>
+                    Find components by status, linked capability, source mapping, or contract state before selecting bulk actions.
+                  </CardDescription>
+                </div>
+                <Badge variant="outline">
+                  {filteredComponents.length} / {setup?.components.length ?? 0} shown
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="relative md:col-span-2">
+                <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  className="pl-9"
+                  value={componentSearch}
+                  onChange={(event) => setComponentSearch(event.target.value)}
+                  placeholder="Search title, slug, source, contract, or capability..."
+                />
+              </div>
+              <Select
+                value={componentStatusFilter}
+                onChange={(event) => setComponentStatusFilter(event.target.value)}
+                aria-label="Filter components by status"
+              >
+                <option value="all">All statuses</option>
+                {statusOptions.map((option) => (
+                  <option key={option} value={option}>{statusLabel(option)}</option>
+                ))}
+              </Select>
+              <Select
+                value={componentLinkFilter}
+                onChange={(event) => setComponentLinkFilter(event.target.value)}
+                aria-label="Filter components by capability link state"
+              >
+                <option value="all">All link states</option>
+                <option value="linked">Has capabilities</option>
+                <option value="unlinked">No capabilities</option>
+              </Select>
+              <Select
+                value={componentCapabilityFilter}
+                onChange={(event) => setComponentCapabilityFilter(event.target.value)}
+                aria-label="Filter components by capability"
+              >
+                <option value="all">Any capability</option>
+                {(setup?.capabilities ?? []).map((capability) => (
+                  <option key={capability.slug} value={capability.slug}>{capability.title}</option>
+                ))}
+              </Select>
+              <Select
+                value={componentSourceFilter}
+                onChange={(event) => setComponentSourceFilter(event.target.value)}
+                aria-label="Filter components by source mapping"
+              >
+                <option value="all">Any source state</option>
+                <option value="mapped">Has source mapping</option>
+                <option value="unmapped">No source mapping</option>
+                <option value="workspace">Workspace source</option>
+                <option value="external">External source</option>
+              </Select>
+              <Select
+                value={componentContractFilter}
+                onChange={(event) => setComponentContractFilter(event.target.value)}
+                aria-label="Filter components by contract status"
+              >
+                <option value="all">Any contract</option>
+                <option value="current">Contract current</option>
+                <option value="stale">Contract stale</option>
+                <option value="blocked">Contract blocked</option>
+                <option value="missing">Contract missing</option>
+              </Select>
+              <div className="flex flex-wrap gap-2 xl:col-span-3">
+                <Button type="button" variant="outline" size="sm" onClick={clearComponentFilters}>
+                  <X className="h-4 w-4" /> Clear filters
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={allVisibleComponentsSelected ? clearSelectedComponentsForBulk : selectVisibleComponents}
+                  disabled={!filteredComponents.length}
+                >
+                  <CheckSquare className="h-4 w-4" />
+                  {allVisibleComponentsSelected ? "Clear selection" : "Select visible"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {selectedComponentsForBulk.length > 0 && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3">
+              <div className="text-sm">
+                <span className="font-medium">{selectedComponentsForBulk.length} component(s) selected</span>
+                <span className="ml-2 text-muted-foreground">Use selection to shape component Changes or remove stale items.</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={copySelectedComponentsForAi} disabled={saving}>
+                  <Copy className="h-4 w-4" /> Copy for AI
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={createChangeFromSelectedComponents} disabled={saving}>
+                  <PackagePlus className="h-4 w-4" /> Create Change
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={clearSelectedComponentsForBulk} disabled={saving}>
+                  <X className="h-4 w-4" /> Clear
+                </Button>
+                <Button type="button" variant="destructive" size="sm" onClick={requestBulkComponentDelete} disabled={saving}>
+                  <Trash2 className="h-4 w-4" /> Delete selected
+                </Button>
+              </div>
+            </div>
+          )}
+
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {setup?.components.map((component) => {
-              const capabilities = setup.capabilities.filter((capability) =>
-                capability.components?.includes(component.slug),
-              );
+            {filteredComponents.map((component) => {
+              const capabilities = linkedCapabilitiesForComponent(component.slug);
+              const isSelected = selectedComponentSlugs.includes(component.slug);
               return (
                 <Card
                   key={component.slug}
-                  className="cursor-pointer hover:bg-accent"
+                  className={cn(
+                    "cursor-pointer hover:bg-accent",
+                    isSelected && "border-primary bg-primary/5",
+                  )}
                   onClick={() => openEdit(component.slug)}
                 >
                   <CardHeader>
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <CardTitle className="text-base">{component.title}</CardTitle>
-                        <CardDescription>
-                          {capabilities.length
-                            ? `${capabilities.length} linked capability/capabilities`
-                            : "No capabilities linked yet"}
-                        </CardDescription>
+                      <div className="flex min-w-0 gap-3">
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4 accent-primary"
+                          aria-label={`Select ${component.title}`}
+                          checked={isSelected}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={() => toggleComponentSelection(component.slug)}
+                        />
+                        <div className="min-w-0">
+                          <CardTitle className="text-base">{component.title}</CardTitle>
+                          <CardDescription>
+                            {capabilities.length
+                              ? `${capabilities.length} linked capability item(s)`
+                              : "No capabilities linked yet"}
+                          </CardDescription>
+                        </div>
                       </div>
                       <div className="flex shrink-0 items-start gap-2">
                         <div className="flex flex-col items-end gap-1">
@@ -1697,6 +2169,22 @@ export function Components({
                 </Card>
               );
             })}
+            {setup && setup.components.length > 0 && filteredComponents.length === 0 && (
+              <Card className="md:col-span-2 xl:col-span-3">
+                <CardHeader>
+                  <Search className="h-6 w-6" />
+                  <CardTitle>No components match these filters</CardTitle>
+                  <CardDescription>
+                    Clear the filters or adjust the search to show more components.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Button variant="outline" onClick={clearComponentFilters}>
+                    <X className="h-4 w-4" /> Clear filters
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
             {setup && setup.components.length === 0 && (
               <Card className="md:col-span-2 xl:col-span-3">
                 <CardHeader>
@@ -1726,6 +2214,8 @@ export function Components({
   if (view === "technical-change" && editingTechnicalChange)
     return (
       <div className="flex h-full flex-col overflow-hidden">
+        {deleteDialog}
+        {bulkDeleteDialog}
         <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b px-6">
           <div className="flex min-w-0 items-center gap-2">
             <Button variant="ghost" size="icon" onClick={() => void backToComponentEditor()} title="Back to component">
@@ -1935,6 +2425,7 @@ export function Components({
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {deleteDialog}
+      {bulkDeleteDialog}
       <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b px-6">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -2317,7 +2808,7 @@ export function Components({
                 instead of copying architecture, data, or dependency rules.
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-3 text-sm md:grid-cols-4">
+            <CardContent className="grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-5">
               <div className="space-y-1">
                 <span className="text-muted-foreground">Lifecycle</span>
                 <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-1.5 text-sm">
@@ -2365,6 +2856,29 @@ export function Components({
                     placeholder="Why is this section skipped?"
                   />
                 )}
+              </div>
+              <div className="space-y-1">
+                <span className="text-muted-foreground">All sections</span>
+                <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-1.5 text-sm">
+                  <ListChecks className="h-4 w-4 text-muted-foreground" />
+                  <span>Bulk update</span>
+                </div>
+                <Select
+                  className="w-full"
+                  value=""
+                  aria-label="Set all component section statuses"
+                  onChange={(event) => {
+                    const nextStatus = event.target.value as AiddSetupStatus;
+                    if (nextStatus) updateAllSectionStatuses(nextStatus);
+                  }}
+                >
+                  <option value="">Set all to...</option>
+                  {componentSectionStatusOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {statusLabel(item)}
+                    </option>
+                  ))}
+                </Select>
               </div>
               <div className="flex items-center justify-between gap-3 md:flex-col md:items-start md:justify-center">
                 <div>
