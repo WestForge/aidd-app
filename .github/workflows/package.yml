@@ -161,4 +161,3 @@ jobs:
             --title "AIDD ${TAG_NAME}" \
             --generate-notes \
             --verify-tag
-Z
