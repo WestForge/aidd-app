@@ -43,62 +43,122 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Windows installer artifact
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v4
         with:
           name: aidd-windows-installer-${{ github.sha }}
           path: |
             dist/**/*.exe
             dist/**/*.msi
-            dist/**/*.zip
             dist/**/*.blockmap
-            dist/**/*.yml
+            dist/**/latest.yml
             release/**/*.exe
             release/**/*.msi
-            release/**/*.zip
             release/**/*.blockmap
-            release/**/*.yml
+            release/**/latest.yml
           if-no-files-found: warn
 
-      - name: Create GitHub Release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        shell: pwsh
+  package-macos:
+    name: macOS DMG and ZIP
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build macOS app
+        run: npx electron-builder --mac --universal --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aidd-macos-${{ github.sha }}
+          path: |
+            dist/**/*.dmg
+            dist/**/*.pkg
+            dist/**/*mac*.zip
+            dist/**/*.blockmap
+            dist/**/latest-mac.yml
+            release/**/*.dmg
+            release/**/*.pkg
+            release/**/*mac*.zip
+            release/**/*.blockmap
+            release/**/latest-mac.yml
+          if-no-files-found: warn
+
+  create-release:
+    name: Create GitHub Release
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    needs:
+      - package-windows
+      - package-macos
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
         run: |
-          $tag = "${{ github.ref_name }}"
+          set -euo pipefail
 
-          Write-Host "Creating release for tag: $tag"
+          echo "Creating release for tag: ${TAG_NAME}"
 
-          $roots = @("dist", "release") | Where-Object { Test-Path $_ }
+          mapfile -d '' assets < <(
+            find artifacts -type f \
+              \( -name '*.exe' \
+              -o -name '*.msi' \
+              -o -name '*.dmg' \
+              -o -name '*.pkg' \
+              -o -name '*mac*.zip' \
+              -o -name '*.blockmap' \
+              -o -name 'latest.yml' \
+              -o -name 'latest-mac.yml' \) \
+              -print0 | sort -z
+          )
 
-          if (-not $roots -or $roots.Count -eq 0) {
-            Write-Error "No dist or release directory found."
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No release assets found."
+            find artifacts -type f -maxdepth 4 -print || true
             exit 1
-          }
+          fi
 
-          $assets = Get-ChildItem -Path $roots -Recurse -File |
-            Where-Object {
-              $_.Extension -in @(".exe", ".msi", ".zip", ".blockmap", ".yml")
-            } |
-            Sort-Object FullName -Unique
-
-          if (-not $assets -or $assets.Count -eq 0) {
-            Write-Error "No release assets found."
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            echo "Release ${TAG_NAME} already exists. Delete it or use a new tag."
             exit 1
-          }
+          fi
 
-          if (gh release view $tag 2>$null) {
-            Write-Error "Release $tag already exists. Delete it or use a new tag."
-            exit 1
-          }
+          printf 'Release assets:\n'
+          printf ' - %s\n' "${assets[@]}"
 
-          Write-Host "Release assets:"
-          $assets | ForEach-Object { Write-Host $_.FullName }
-
-          $assetPaths = $assets | ForEach-Object { $_.FullName }
-
-          gh release create $tag $assetPaths `
-            --title "AIDD $tag" `
-            --generate-notes `
+          gh release create "${TAG_NAME}" "${assets[@]}" \
+            --title "AIDD ${TAG_NAME}" \
+            --generate-notes \
             --verify-tag
+Z
