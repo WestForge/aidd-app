@@ -112,6 +112,12 @@
       ],
       "icon": "build/icon.ico"
     },
+    "mac": {
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "icon": "build/icon.png"
+    },
     "nsis": {
       "oneClick": false,
       "perMachine": false,

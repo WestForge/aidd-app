@@ -95,11 +95,38 @@ jobs:
           fi
 
       - name: Build macOS packages
-        run: npx electron-builder --mac --universal --publish never
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          should_sign=false
+          if [ -n "${MAC_CSC_LINK:-}" ]; then
+            if [ "${MAC_CSC_LINK}" = "." ] || [ "${MAC_CSC_LINK}" = "${GITHUB_WORKSPACE}" ]; then
+              echo "::warning::MAC_CSC_LINK points to the workspace directory; building unsigned macOS packages."
+            elif [ -d "${MAC_CSC_LINK}" ]; then
+              echo "::warning::MAC_CSC_LINK points to a directory; building unsigned macOS packages."
+            else
+              should_sign=true
+            fi
+          else
+            echo "MAC_CSC_LINK is not configured; building unsigned macOS packages."
+          fi
+
+          if [ "${should_sign}" = "true" ]; then
+            export CSC_LINK="${MAC_CSC_LINK}"
+            export CSC_KEY_PASSWORD="${MAC_CSC_KEY_PASSWORD:-}"
+            npx electron-builder --mac --universal --publish never
+          else
+            unset CSC_LINK CSC_KEY_PASSWORD CSC_NAME
+            unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            unset APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER
+            unset APPLE_KEYCHAIN APPLE_KEYCHAIN_PROFILE
+            npx electron-builder --mac --universal --publish never -c.mac.identity=null -c.mac.notarize=false
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
