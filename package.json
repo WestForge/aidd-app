@@ -110,13 +110,13 @@
           ]
         }
       ],
-      "icon": "build/icon.ico"
+      "icon": "build/icons/icon.ico"
     },
     "mac": {
-      "icon": "build/icon.png"
+      "icon": "build/icons/icon.icns"
     },
     "linux": {
-      "icon": "build/icon.png"
+      "icon": "build/icons/512x512.png"
     },
     "nsis": {
       "oneClick": false,
