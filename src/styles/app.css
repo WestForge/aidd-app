@@ -3,57 +3,122 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    --background: 42 20% 96%;
-    --foreground: 220 16% 14%;
+  :root,
+  html[data-theme="light"] {
+    color-scheme: light;
+
+    --color-bg: #f6f7fb;
+    --color-bg-elevated: #ffffff;
+    --color-bg-subtle: #f1f5f9;
+    --color-surface: #ffffff;
+    --color-surface-hover: #eef2ff;
+    --color-border: #dbe3ef;
+    --color-border-strong: #cbd5e1;
+    --color-text: #0f172a;
+    --color-text-muted: #475569;
+    --color-text-subtle: #64748b;
+    --color-heading: #0f172a;
+    --color-link: #4f46e5;
+    --color-primary: #5b4bff;
+    --color-primary-hover: #4938f0;
+    --color-primary-soft: #ecebff;
+    --color-success: #15803d;
+    --color-success-soft: #dcfce7;
+    --color-warning: #c2410c;
+    --color-warning-soft: #ffedd5;
+    --color-danger: #dc2626;
+    --color-danger-soft: #fee2e2;
+    --color-info: #2563eb;
+    --color-info-soft: #dbeafe;
+    --color-purple: #7c3aed;
+    --color-purple-soft: #ede9fe;
+    --shadow-card: 0 1px 2px rgb(15 23 42 / 0.07), 0 8px 24px rgb(15 23 42 / 0.05);
+    --shadow-panel: 0 16px 40px rgb(15 23 42 / 0.08);
+    --radius-card: 0.5rem;
+    --radius-panel: 0.625rem;
+    --radius-pill: 9999px;
+
+    --background: 225 38% 97%;
+    --foreground: 222 47% 11%;
     --card: 0 0% 100%;
-    --card-foreground: 220 16% 14%;
+    --card-foreground: 222 47% 11%;
     --popover: 0 0% 100%;
-    --popover-foreground: 220 16% 14%;
-    --primary: 212 44% 32%;
-    --primary-foreground: 42 25% 98%;
-    --secondary: 40 16% 91%;
-    --secondary-foreground: 220 14% 18%;
-    --muted: 40 15% 92%;
-    --muted-foreground: 220 9% 42%;
-    --accent: 211 38% 91%;
-    --accent-foreground: 213 42% 24%;
-    --destructive: 0 65% 45%;
-    --destructive-foreground: 42 25% 98%;
-    --border: 36 14% 80%;
-    --input: 36 14% 76%;
-    --ring: 212 44% 32%;
-    --radius: 0.1875rem;
+    --popover-foreground: 222 47% 11%;
+    --primary: 246 100% 65%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 20% 35%;
+    --accent: 242 100% 96%;
+    --accent-foreground: 244 64% 36%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 42% 90%;
+    --input: 215 31% 83%;
+    --ring: 246 100% 65%;
+    --radius: var(--radius-card);
 
     --surface-raised: 0 0% 100%;
-    --surface-subtle: 40 15% 92%;
-    --shadow-soft: 0 1px 2px rgb(30 34 40 / 0.08);
+    --surface-subtle: 210 40% 96%;
+    --shadow-soft: var(--shadow-card);
   }
 
-  .dark {
-    --background: 220 10% 10%;
-    --foreground: 40 18% 92%;
-    --card: 220 9% 14%;
-    --card-foreground: 40 18% 92%;
-    --popover: 220 9% 14%;
-    --popover-foreground: 40 18% 92%;
-    --primary: 211 58% 70%;
-    --primary-foreground: 220 16% 10%;
-    --secondary: 220 8% 19%;
-    --secondary-foreground: 40 16% 90%;
-    --muted: 220 8% 18%;
-    --muted-foreground: 38 9% 68%;
-    --accent: 215 22% 24%;
-    --accent-foreground: 211 58% 82%;
-    --destructive: 0 58% 48%;
-    --destructive-foreground: 40 18% 94%;
-    --border: 220 7% 28%;
-    --input: 220 7% 34%;
-    --ring: 211 58% 70%;
+  html.dark,
+  html[data-theme="dark"] {
+    color-scheme: dark;
 
-    --surface-raised: 220 9% 15%;
-    --surface-subtle: 220 8% 18%;
-    --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.35);
+    --color-bg: #07111f;
+    --color-bg-elevated: #111f33;
+    --color-bg-subtle: #16243a;
+    --color-surface: #0d1828;
+    --color-surface-hover: #182941;
+    --color-border: #22324a;
+    --color-border-strong: #334761;
+    --color-text: #f8fafc;
+    --color-text-muted: #cbd5e1;
+    --color-text-subtle: #94a3b8;
+    --color-heading: #f8fafc;
+    --color-link: #93c5fd;
+    --color-primary: #7c6dff;
+    --color-primary-hover: #9589ff;
+    --color-primary-soft: #201d45;
+    --color-success: #4ade80;
+    --color-success-soft: #123822;
+    --color-warning: #fb923c;
+    --color-warning-soft: #43230f;
+    --color-danger: #f87171;
+    --color-danger-soft: #451a1a;
+    --color-info: #60a5fa;
+    --color-info-soft: #102a4c;
+    --color-purple: #a78bfa;
+    --color-purple-soft: #2c214f;
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.32), 0 14px 36px rgb(0 0 0 / 0.18);
+    --shadow-panel: 0 20px 48px rgb(0 0 0 / 0.24);
+
+    --background: 214 64% 7%;
+    --foreground: 210 40% 98%;
+    --card: 215 51% 10%;
+    --card-foreground: 210 40% 98%;
+    --popover: 215 51% 10%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 246 100% 71%;
+    --primary-foreground: 214 64% 7%;
+    --secondary: 216 44% 16%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 216 44% 16%;
+    --muted-foreground: 214 32% 91%;
+    --accent: 216 42% 19%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 91% 71%;
+    --destructive-foreground: 214 64% 7%;
+    --border: 216 37% 21%;
+    --input: 216 31% 29%;
+    --ring: 246 100% 71%;
+
+    --surface-raised: 215 50% 13%;
+    --surface-subtle: 216 44% 16%;
+    --shadow-soft: var(--shadow-card);
   }
 
   * { @apply border-border; }
@@ -70,6 +135,20 @@
     text-rendering: optimizeLegibility;
   }
 
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    color: var(--color-heading);
+  }
+
+  a {
+    color: var(--color-link);
+    text-underline-offset: 2px;
+  }
+
   ::selection {
     background: hsl(var(--primary) / 0.18);
   }
@@ -77,7 +156,29 @@
   input,
   select,
   textarea {
-    background-color: hsl(var(--card));
+    background-color: var(--color-surface);
+    color: var(--color-text);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-text-subtle);
+    opacity: 1;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [role="button"]:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  :disabled,
+  [aria-disabled="true"] {
+    color: color-mix(in srgb, var(--color-text-muted) 82%, transparent);
   }
 
   textarea {
@@ -89,6 +190,84 @@
   .shadow,
   .shadow-sm {
     box-shadow: var(--shadow-soft);
+  }
+
+  .shadow-lg,
+  .shadow-xl,
+  .shadow-2xl {
+    box-shadow: var(--shadow-panel);
+  }
+
+  .text-success { color: var(--color-success) !important; }
+  .text-warning { color: var(--color-warning) !important; }
+  .text-danger { color: var(--color-danger) !important; }
+  .text-info { color: var(--color-info) !important; }
+  .text-purple { color: var(--color-purple) !important; }
+  .text-muted { color: var(--color-text-muted) !important; }
+  .text-subtle { color: var(--color-text-subtle) !important; }
+
+  .status-success {
+    --status-color: var(--color-success);
+    --status-soft: var(--color-success-soft);
+    --status-border: color-mix(in srgb, var(--color-success) 44%, transparent);
+  }
+
+  .status-warning {
+    --status-color: var(--color-warning);
+    --status-soft: var(--color-warning-soft);
+    --status-border: color-mix(in srgb, var(--color-warning) 44%, transparent);
+  }
+
+  .status-danger {
+    --status-color: var(--color-danger);
+    --status-soft: var(--color-danger-soft);
+    --status-border: color-mix(in srgb, var(--color-danger) 44%, transparent);
+  }
+
+  .status-info {
+    --status-color: var(--color-info);
+    --status-soft: var(--color-info-soft);
+    --status-border: color-mix(in srgb, var(--color-info) 44%, transparent);
+  }
+
+  .status-purple {
+    --status-color: var(--color-purple);
+    --status-soft: var(--color-purple-soft);
+    --status-border: color-mix(in srgb, var(--color-purple) 44%, transparent);
+  }
+
+  .status-neutral {
+    --status-color: var(--color-text-muted);
+    --status-soft: var(--color-bg-subtle);
+    --status-border: var(--color-border-strong);
+  }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    width: fit-content;
+    border: 1px solid var(--status-border, var(--color-border)) !important;
+    border-radius: var(--radius-pill);
+    background: var(--status-soft, var(--color-bg-subtle)) !important;
+    color: var(--status-color, var(--color-text-muted)) !important;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1rem;
+    padding: 0.125rem 0.55rem;
+  }
+
+  .status-text {
+    color: var(--status-color, var(--color-text-muted)) !important;
+  }
+
+  .status-surface {
+    border-color: var(--status-border, var(--color-border)) !important;
+    background: var(--status-soft, var(--color-bg-subtle)) !important;
+  }
+
+  .status-bar {
+    background: var(--status-color, var(--color-text-muted)) !important;
   }
 }
 

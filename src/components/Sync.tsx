@@ -4,6 +4,7 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { GitReviewPanel } from './GitReviewPanel';
+import { statusPillClass, statusSurfaceClass } from '../lib/statusTheme';
 
 function setupStatusLabel(state: AiddGitProjectConnectionState) {
   switch (state) {
@@ -252,13 +253,13 @@ export function Sync({ bundles, activeProject }: { bundles: DeliveryBundle[]; ac
                 <CardTitle>Sync status</CardTitle>
                 <CardDescription>Checkpoint local changes and share them with the configured repository.</CardDescription>
               </div>
-              <Badge variant={syncBadgeVariant(currentSyncStatus.state)}>{syncStatusLabel(currentSyncStatus.state)}</Badge>
+              <Badge variant={syncBadgeVariant(currentSyncStatus.state)} className={statusPillClass(currentSyncStatus.state)}>{syncStatusLabel(currentSyncStatus.state)}</Badge>
             </div>
           </CardHeader>
           <CardContent className="grid gap-4">
             <p className="text-sm text-muted-foreground">{currentSyncStatus.message}</p>
 
-            {message ? <div className="rounded-md border px-3 py-2 text-sm">{message}</div> : null}
+            {message ? <div className={statusSurfaceClass(currentSyncStatus.state, "rounded-md border px-3 py-2 text-sm")}>{message}</div> : null}
 
             <div className="grid gap-3 md:grid-cols-2">
               <div>
@@ -272,7 +273,7 @@ export function Sync({ bundles, activeProject }: { bundles: DeliveryBundle[]; ac
             </div>
 
             {currentSyncStatus.state === 'review_needed' ? (
-              <div className="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive">
+              <div className={statusSurfaceClass("review-needed", "rounded-md border px-3 py-2 text-sm text-warning")}>
                 Sync stopped before making a destructive change. Review handling will be added in the conflict-safe collaboration phase.
               </div>
             ) : null}
@@ -286,7 +287,7 @@ export function Sync({ bundles, activeProject }: { bundles: DeliveryBundle[]; ac
                 <CardTitle>Git setup</CardTitle>
                 <CardDescription>Local Git is mandatory. Remote repository sync is optional.</CardDescription>
               </div>
-              <Badge variant={setupBadgeVariant(currentSetupStatus.state)}>{setupStatusLabel(currentSetupStatus.state)}</Badge>
+              <Badge variant={setupBadgeVariant(currentSetupStatus.state)} className={statusPillClass(currentSetupStatus.state)}>{setupStatusLabel(currentSetupStatus.state)}</Badge>
             </div>
           </CardHeader>
           <CardContent className="grid gap-4">

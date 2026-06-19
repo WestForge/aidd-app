@@ -23,6 +23,7 @@ import { Input } from "./ui/input";
 import { Select } from "./ui/select";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { cn } from "../lib/utils";
+import { statusPillClass, statusSurfaceClass, statusTextClass } from "../lib/statusTheme";
 
 interface ChangesProps {
   activeProject?: AiddTrackedProject | null;
@@ -627,7 +628,7 @@ export function Changes({
                     </div>
                   </div>
                   <div className="flex items-start">
-                    <Badge variant={statusBadgeVariant(change.status)} className="capitalize">{label(change.status)}</Badge>
+                    <Badge variant={statusBadgeVariant(change.status)} className={statusPillClass(change.status, "capitalize")}>{label(change.status)}</Badge>
                   </div>
                   <div className="min-w-0 truncate text-muted-foreground">{typeLabel(change.type)}</div>
                 </button>
@@ -661,7 +662,7 @@ export function Changes({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge variant="outline">{detail.id}</Badge>
-                      <Badge variant={detail.readiness.ready ? "secondary" : "outline"}>
+                      <Badge variant="outline" className={statusPillClass(detail.readiness.ready ? "ready" : "needs-detail")}>
                         {detail.readiness.ready ? "Ready to package" : "Needs detail"}
                       </Badge>
                       <Badge variant="outline">{detail.phases.length} phase{detail.phases.length === 1 ? "" : "s"}</Badge>
@@ -765,7 +766,7 @@ export function Changes({
                             <span className="mt-1 block truncate text-xs text-muted-foreground">{phase.fileName}</span>
                           </button>
                           <div className="flex items-center justify-between gap-2 border-t bg-muted/30 px-2 py-1">
-                            <Badge variant={phase.status === "ready" ? "secondary" : "outline"} className="text-[10px]">
+                            <Badge variant="outline" className={statusPillClass(phase.status, "text-[10px]")}>
                               {label(phase.status)}
                             </Badge>
                             <div className="flex items-center gap-1">
@@ -912,7 +913,7 @@ export function Changes({
                         draggable={Boolean(reviewPackageDragFilePath)}
                         className={cn(
                           "flex h-16 w-full flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-3 text-[11px] transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60",
-                          reviewPackageDragFilePath && "cursor-grab border-emerald-500/70 bg-emerald-500/10 active:cursor-grabbing",
+                          reviewPackageDragFilePath && statusSurfaceClass("ready", "cursor-grab active:cursor-grabbing"),
                         )}
                         onClick={() => void createChangeReviewPackage()}
                         onDragStart={startChangeReviewPackageDrag}
@@ -927,7 +928,7 @@ export function Changes({
                         {saving ? (
                           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                         ) : (
-                          <Archive className={cn("h-4 w-4 text-muted-foreground", reviewPackageDragFilePath && "text-green-400")} />
+                          <Archive className={cn("h-4 w-4 text-muted-foreground", reviewPackageDragFilePath && statusTextClass("ready"))} />
                         )}
                         <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
                           {reviewPackageDragFilePath ? "Ready to drag/drop" : "Create bundle"}
@@ -947,13 +948,13 @@ export function Changes({
                       <div className="text-sm font-medium">Readiness</div>
                       {detail.readiness.ready ? (
                         <div className="flex items-center gap-2 rounded-md border bg-muted/30 p-3 text-sm">
-                          <CheckCircle2 className="h-4 w-4 text-green-500" />
+                          <CheckCircle2 className={cn("h-4 w-4", statusTextClass("ready"))} />
                           {detail.status === "accepted" ? "Accepted into Delivery." : "Ready to move into Delivery."}
                         </div>
                       ) : (
                         <div className="rounded-md border bg-muted/30 p-3 text-sm">
                           <div className="mb-2 flex items-center gap-2 font-medium">
-                            <ShieldAlert className="h-4 w-4 text-amber-500" />
+                            <ShieldAlert className={cn("h-4 w-4", statusTextClass("blocked"))} />
                             Blockers
                           </div>
                           <ul className="space-y-1 text-muted-foreground">

@@ -2,7 +2,10 @@
   "name": "aidd-app-starter",
   "version": "0.10.1",
   "private": true,
-  "author": "WestForge",
+  "author": {
+    "name": "WestForge",
+    "email": "maintainers@westforge.net"
+  },
   "description": "AIDD desktop app starter: project creation, workflow-first, Markdown-backed, Git-ready.",
   "main": "dist/main/main.js",
   "scripts": {
@@ -34,7 +37,9 @@
     "dist:win:clean": "node scripts/clean-release.mjs && npm run dist:win",
     "installer:win": "npm run dist:win",
     "dist:win:publish": "npm run build && electron-builder --win nsis --publish always",
-    "dist:win:publish:clean": "node scripts/clean-release.mjs && npm run dist:win:publish"
+    "dist:win:publish:clean": "node scripts/clean-release.mjs && npm run dist:win:publish",
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb tar.gz --publish never",
+    "dist:linux:clean": "node scripts/clean-release.mjs && npm run dist:linux"
   },
   "dependencies": {
     "@isomorphic-git/lightning-fs": "^4.6.0",
@@ -116,7 +121,10 @@
       "icon": "build/icons/icon.icns"
     },
     "linux": {
-      "icon": "build/icons/512x512.png"
+      "icon": "build/icons/512x512.png",
+      "category": "Development",
+      "maintainer": "WestForge <maintainers@westforge.invalid>",
+      "syncDesktopName": true
     },
     "nsis": {
       "oneClick": false,
@@ -138,6 +146,7 @@
         "owner": "WestForge",
         "repo": "aidd-app"
       }
-    ]
+    ],
+    "desktopName": "AIDD"
   }
 }

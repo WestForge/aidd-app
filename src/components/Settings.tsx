@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { Monitor, Moon, Sun } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
 import { Label } from './ui/label';
+import { cn } from '../lib/utils';
 
 type ThemeMode = 'system' | 'light' | 'dark';
 type GitSyncMessageTone = 'success' | 'warning' | 'error' | null;
@@ -21,6 +23,12 @@ type IdentityFormState = {
   authorEmail: string;
   source: AiddGitIdentity['source'];
 };
+
+const themeOptions: Array<{ value: ThemeMode; label: string; icon: typeof Monitor }> = [
+  { value: 'system', label: 'System', icon: Monitor },
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon }
+];
 
 const emptyGitSyncForm: GitSyncFormState = {
   provider: 'github',
@@ -233,13 +241,20 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
   }
 
   const gitSyncDisabled = !activeProject?.path || gitSyncBusy;
-  const identityMessageClass = identityOk === false ? 'rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive' : 'rounded-md border px-3 py-2 text-sm';
+  const identityMessageClass =
+    identityOk === false
+      ? 'status-surface status-danger rounded-md border px-3 py-2 text-sm text-danger'
+      : identityOk === true
+        ? 'status-surface status-success rounded-md border px-3 py-2 text-sm text-success'
+        : 'rounded-md border px-3 py-2 text-sm';
   const gitSyncMessageClass =
     gitSyncTone === 'error'
-      ? 'rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive'
+      ? 'status-surface status-danger rounded-md border px-3 py-2 text-sm text-danger'
       : gitSyncTone === 'warning'
-        ? 'rounded-md border border-yellow-500/40 bg-yellow-500/5 px-3 py-2 text-sm text-yellow-700 dark:text-yellow-300'
-        : 'rounded-md border px-3 py-2 text-sm';
+        ? 'status-surface status-warning rounded-md border px-3 py-2 text-sm text-warning'
+        : gitSyncTone === 'success'
+          ? 'status-surface status-success rounded-md border px-3 py-2 text-sm text-success'
+          : 'rounded-md border px-3 py-2 text-sm';
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -254,15 +269,31 @@ export function Settings({ activeProject, themeMode, onThemeModeChange }: { acti
           <Card>
             <CardHeader>
               <CardTitle>Appearance</CardTitle>
-              <CardDescription>Use shadcn light/dark theme classes.</CardDescription>
+              <CardDescription>Choose a readable AIDD theme or follow your operating system.</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-2">
               <Label>Theme</Label>
-              <Select value={themeMode} onChange={(event) => onThemeModeChange(event.target.value as ThemeMode)}>
-                <option value="system">Follow system</option>
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-              </Select>
+              <div className="grid grid-cols-3 overflow-hidden rounded-md border bg-muted/30 p-1" role="group" aria-label="Theme mode">
+                {themeOptions.map((option) => {
+                  const Icon = option.icon;
+                  const selected = themeMode === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      aria-pressed={selected}
+                      className={cn(
+                        'inline-flex h-9 items-center justify-center gap-2 rounded-[calc(var(--radius-card)-0.125rem)] px-3 text-sm font-medium text-muted-foreground transition hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        selected && 'bg-card text-foreground shadow-sm'
+                      )}
+                      onClick={() => onThemeModeChange(option.value)}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
             </CardContent>
           </Card>
 

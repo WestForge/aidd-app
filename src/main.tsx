@@ -24,6 +24,8 @@ import { AiWebChatSidecar, useAiWebChatSidecarState } from './components/AiWebCh
 export type Screen = 'projects' | 'project-create' | 'home' | 'foundation' | 'standards' | 'capabilities' | 'components' | 'changes' | 'delivery-packages' | 'roadmap' | 'bundle-editor' | 'reviews' | 'validation' | 'settings';
 
 type ThemeMode = 'system' | 'light' | 'dark';
+const THEME_STORAGE_KEY = 'aidd-theme';
+const LEGACY_THEME_STORAGE_KEY = 'aidd.themeMode';
 
 type RendererBootState = {
   startedAt: string;
@@ -79,16 +81,16 @@ function writeLocalStorage(key: string, value: string) {
 
 function StartupFailureScreen({ title, detail }: { title: string; detail: string }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 p-8 text-slate-100">
-      <div className="w-full max-w-3xl rounded-2xl border border-slate-700 bg-slate-900 p-8 shadow-2xl">
-        <div className="mb-5 grid h-12 w-12 place-items-center rounded-xl border border-slate-600 bg-slate-800 text-xl font-bold">A</div>
+    <div className="flex min-h-screen items-center justify-center bg-background p-8 text-foreground">
+      <div className="w-full max-w-3xl rounded-[var(--radius-panel)] border bg-card p-8 shadow-2xl">
+        <div className="mb-5 grid h-12 w-12 place-items-center rounded-[var(--radius-card)] border bg-muted text-xl font-bold">A</div>
         <h1 className="text-2xl font-semibold">{title}</h1>
-        <p className="mt-3 text-sm leading-6 text-slate-300">
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
           The packaged window opened, but the renderer could not finish starting. This is normally a build path, preload, or startup exception rather than a UI layout issue.
         </p>
-        <pre className="mt-5 max-h-80 overflow-auto whitespace-pre-wrap rounded-xl border border-slate-700 bg-slate-950 p-4 text-xs text-slate-200">{detail}</pre>
-        <p className="mt-5 text-sm text-slate-400">
-          Rebuild with a clean dist folder after applying the Vite <code className="rounded bg-slate-800 px-1">base: './'</code> setting.
+        <pre className="mt-5 max-h-80 overflow-auto whitespace-pre-wrap rounded-[var(--radius-card)] border bg-muted p-4 text-xs text-foreground">{detail}</pre>
+        <p className="mt-5 text-sm text-muted-foreground">
+          Rebuild with a clean dist folder after applying the Vite <code className="rounded bg-muted px-1">base: './'</code> setting.
         </p>
       </div>
     </div>
@@ -169,7 +171,7 @@ function applyStatus(item: DeliveryBundle, status: BundleStatus): DeliveryBundle
 }
 
 function getStoredThemeMode(): ThemeMode {
-  const value = readLocalStorage('aidd.themeMode');
+  const value = readLocalStorage(THEME_STORAGE_KEY) ?? readLocalStorage(LEGACY_THEME_STORAGE_KEY);
   return value === 'light' || value === 'dark' || value === 'system' ? value : 'system';
 }
 
@@ -188,13 +190,17 @@ function App() {
   const aiSidecar = useAiWebChatSidecarState();
 
   useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
     const applyTheme = () => {
-      const isDark = themeMode === 'dark' || (themeMode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      const isDark = themeMode === 'dark' || (themeMode === 'system' && media.matches);
+      const resolvedTheme = isDark ? 'dark' : 'light';
       document.documentElement.classList.toggle('dark', isDark);
-      writeLocalStorage('aidd.themeMode', themeMode);
+      document.documentElement.dataset.theme = resolvedTheme;
+      document.documentElement.dataset.themeMode = themeMode;
+      writeLocalStorage(THEME_STORAGE_KEY, themeMode);
+      writeLocalStorage(LEGACY_THEME_STORAGE_KEY, themeMode);
     };
     applyTheme();
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
     media.addEventListener('change', applyTheme);
     return () => media.removeEventListener('change', applyTheme);
   }, [themeMode]);

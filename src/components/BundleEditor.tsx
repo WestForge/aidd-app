@@ -31,6 +31,7 @@ import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Select } from "./ui/select";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { cn } from "../lib/utils";
+import { statusSurfaceClass, statusTextClass } from "../lib/statusTheme";
 
 interface BundleEditorProps {
   bundle: DeliveryBundle;
@@ -158,10 +159,10 @@ const deliveryStatusVisuals: Record<
   string,
   { icon: LucideIcon; className: string }
 > = {
-  packaging: { icon: ClipboardList, className: "text-sky-400" },
-  approved: { icon: CheckCircle2, className: "text-emerald-400" },
-  "in-progress": { icon: PlayCircle, className: "text-blue-400" },
-  done: { icon: PackageCheck, className: "text-green-400" },
+  packaging: { icon: ClipboardList, className: statusTextClass("packaging") },
+  approved: { icon: CheckCircle2, className: statusTextClass("approved") },
+  "in-progress": { icon: PlayCircle, className: statusTextClass("in-progress") },
+  done: { icon: PackageCheck, className: statusTextClass("done") },
 };
 
 function getDeliveryStatusVisual(status?: string) {
@@ -189,6 +190,19 @@ function phaseTabId(phase: AiddDeliveryPackagePhase) {
   return `phase:${phase.id}`;
 }
 
+function fileTabId(file: AiddDeliveryPackageFile) {
+  return `file:${encodeURIComponent(file.relativePath)}`;
+}
+
+function filePathFromTabId(tab: EditorTab) {
+  if (!tab.startsWith("file:")) return "";
+  try {
+    return decodeURIComponent(tab.slice("file:".length));
+  } catch {
+    return "";
+  }
+}
+
 function tabForDeliveryFile(file: AiddDeliveryPackageFile, detail: AiddDeliveryPackageDetail): EditorTab | null {
   if (file.kind !== "file") return null;
   if (file.relativePath === "implementation-strategy.md") return "strategy";
@@ -196,7 +210,10 @@ function tabForDeliveryFile(file: AiddDeliveryPackageFile, detail: AiddDeliveryP
   if (file.relativePath === "delivery-package.md" || file.relativePath === "package.md") return "packaged";
 
   const phase = detail.phases.find((item) => item.fileName === file.relativePath);
-  return phase ? phaseTabId(phase) : null;
+  if (phase) return phaseTabId(phase);
+
+  const isMarkdown = file.extension === ".md" || file.relativePath.toLowerCase().endsWith(".md");
+  return isMarkdown && typeof file.body === "string" ? fileTabId(file) : null;
 }
 
 function statusForDeliveryFile(file: AiddDeliveryPackageFile, detail: AiddDeliveryPackageDetail) {
@@ -207,10 +224,11 @@ function statusForDeliveryFile(file: AiddDeliveryPackageFile, detail: AiddDelive
   }
 
   const phase = detail.phases.find((item) => item.fileName === file.relativePath);
-  return phase?.status;
+  return phase?.status || file.status;
 }
 
 function labelForDeliveryFile(file: AiddDeliveryPackageFile) {
+  if (file.title) return file.title;
   if (file.relativePath === "implementation-strategy.md") return "Implementation strategy";
   if (file.relativePath === "snapshot.md") return "Context snapshot";
   if (file.relativePath === "delivery-package.md" || file.relativePath === "package.md") return "Packaged document";
@@ -306,6 +324,13 @@ export function BundleEditor({
     if (!detail || !activeTab.startsWith("phase:")) return null;
     const phaseId = activeTab.slice("phase:".length);
     return detail.phases.find((phase) => phase.id === phaseId) ?? null;
+  }, [activeTab, detail]);
+
+  const currentFile = useMemo(() => {
+    if (!detail || !activeTab.startsWith("file:")) return null;
+    const relativePath = filePathFromTabId(activeTab);
+    if (!relativePath) return null;
+    return detail.files.find((file) => file.kind === "file" && file.relativePath === relativePath) ?? null;
   }, [activeTab, detail]);
 
   const currentDragDocument = useMemo(() => {
@@ -833,6 +858,10 @@ export function BundleEditor({
       await window.aidd.showItemInFolder(detail.packagePath);
   };
 
+  const packageFolderLabel = detail?.workspacePackagePath && detail.packagePath === detail.workspacePackagePath
+    ? "Open workspace"
+    : "Open folder";
+
 
 
   if (!activeProject) {
@@ -893,7 +922,7 @@ export function BundleEditor({
             onClick={openFolder}
             disabled={!detail?.packagePath}
           >
-            Open folder
+            {packageFolderLabel}
           </Button>
           <Button
             variant="outline"
@@ -922,7 +951,7 @@ export function BundleEditor({
             draggable={Boolean(reviewPackageDragFilePath) && !reviewing && !importingReview}
             className={cn(
               "relative flex h-16 w-36 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-3 text-[11px] transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60",
-              reviewPackageDragFilePath && "cursor-grab border-emerald-500/70 bg-emerald-500/10 active:cursor-grabbing",
+              reviewPackageDragFilePath && statusSurfaceClass("ready", "cursor-grab active:cursor-grabbing"),
               (reviewing || importingReview) && "cursor-wait opacity-80",
             )}
             onClick={() => void createDeliveryReviewPackage()}
@@ -942,7 +971,7 @@ export function BundleEditor({
             {reviewing || importingReview ? (
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
             ) : (
-              <Archive className={cn("h-4 w-4 text-muted-foreground", reviewPackageDragFilePath && "text-green-400")} />
+              <Archive className={cn("h-4 w-4 text-muted-foreground", reviewPackageDragFilePath && statusTextClass("ready"))} />
             )}
             <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
               Review package
@@ -956,7 +985,7 @@ export function BundleEditor({
             type="button"
             className={cn(
               "relative flex h-16 w-40 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-3 text-[11px] transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60",
-              packageLocked && detail.workspacePackagePath && "border-blue-500/70 bg-blue-500/10",
+              packageLocked && detail.workspacePackagePath && statusSurfaceClass("in-progress"),
             )}
             onClick={() => void copyAgenticAiStartPrompt()}
             disabled={!detail || !packageLocked || !detail.workspacePackagePath}
@@ -972,7 +1001,7 @@ export function BundleEditor({
               status={packageLocked && detail.workspacePackagePath ? "in-progress" : "packaging"}
               className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
             />
-            <PlayCircle className={cn("h-4 w-4 text-muted-foreground", packageLocked && detail.workspacePackagePath && "text-blue-400")} />
+            <PlayCircle className={cn("h-4 w-4 text-muted-foreground", packageLocked && detail.workspacePackagePath && statusTextClass("in-progress"))} />
             <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
               Start agentic AI
             </span>
@@ -995,7 +1024,7 @@ export function BundleEditor({
           <Alert className="mb-4">
             <AlertTitle>Delivery package approved and locked</AlertTitle>
             <AlertDescription>
-              The approved delivery files are read-only in AIDD. Use Republish workspace to refresh <code>workspace/delivery/{detail.id}</code>, then use Start agentic AI to copy the development prompt.
+              The approved delivery files are read-only in AIDD. Refresh reads current progress from <code>workspace/delivery/{detail.id}</code>; Republish workspace refreshes that folder from AIDD.
             </AlertDescription>
           </Alert>
         )}
@@ -1245,6 +1274,21 @@ export function BundleEditor({
                       initialValue={currentPhase.body}
                       readOnly={packageLocked}
                       onChange={(markdown) => updatePhase(currentPhase.id, { body: markdown })}
+                    />
+                  </EditorCard>
+                )}
+
+                {currentFile && (
+                  <EditorCard
+                    title={labelForDeliveryFile(currentFile)}
+                    description={`${currentFile.relativePath}${currentFile.status ? ` - ${statusLabel(currentFile.status)}` : ""}`}
+                  >
+                    <MarkdownEditor
+                      editorKey={`package-${detail.id}-file-${currentFile.relativePath}`}
+                      className="flex-1 bg-muted/40"
+                      value={currentFile.body || ""}
+                      initialValue={currentFile.body || ""}
+                      readOnly
                     />
                   </EditorCard>
                 )}

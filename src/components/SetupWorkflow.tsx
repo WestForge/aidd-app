@@ -29,6 +29,7 @@ import { Select } from "./ui/select";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { cn } from "../lib/utils";
+import { statusSurfaceClass, statusTextClass } from "../lib/statusTheme";
 
 type SetupStep = "foundation" | "standards" | "starting-point";
 
@@ -70,13 +71,13 @@ function stepComplete(step: SetupStep, setup?: AiddProjectSetupState) {
 }
 
 const statusVisuals: Record<string, { icon: LucideIcon; className: string }> = {
-  "not-started": { icon: CircleDashed, className: "text-muted-foreground" },
-  draft: { icon: Pencil, className: "text-sky-400" },
-  "in-review": { icon: Eye, className: "text-amber-400" },
-  active: { icon: PlayCircle, className: "text-emerald-400" },
-  deprecated: { icon: Archive, className: "text-orange-400" },
-  complete: { icon: CheckCircle2, className: "text-green-400" },
-  skipped: { icon: SkipForward, className: "text-zinc-400" },
+  "not-started": { icon: CircleDashed, className: statusTextClass("not-started") },
+  draft: { icon: Pencil, className: statusTextClass("draft") },
+  "in-review": { icon: Eye, className: statusTextClass("in-review") },
+  active: { icon: PlayCircle, className: statusTextClass("active") },
+  deprecated: { icon: Archive, className: statusTextClass("deprecated") },
+  complete: { icon: CheckCircle2, className: statusTextClass("complete") },
+  skipped: { icon: SkipForward, className: statusTextClass("skipped") },
 };
 
 function getStatusVisual(status?: string) {
@@ -253,7 +254,7 @@ function FoundationReviewTile({
       }
       className={cn(
         "relative flex h-16 w-28 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border/70 bg-card px-2 text-[11px] transition hover:bg-accent",
-        ready && "border-emerald-500/70 bg-emerald-500/10",
+        ready && statusSurfaceClass("ready"),
         dropActive && "border-ring bg-accent ring-1 ring-ring",
         busy && "cursor-wait opacity-70",
       )}

@@ -15,6 +15,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Input } from './ui/input';
 import { Select } from './ui/select';
 import { cn } from '../lib/utils';
+import { statusPillClass, statusTextClass } from '../lib/statusTheme';
 
 interface RoadmapProps {
   activeProject: AiddTrackedProject | null;
@@ -227,7 +228,7 @@ export function Roadmap({ activeProject }: RoadmapProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {roadmap && <Badge variant={COURSE_VARIANTS[roadmap.overallStatus]}>{COURSE_LABELS[roadmap.overallStatus]}</Badge>}
+            {roadmap && <Badge variant={COURSE_VARIANTS[roadmap.overallStatus]} className={statusPillClass(roadmap.overallStatus)}>{COURSE_LABELS[roadmap.overallStatus]}</Badge>}
             <Button type="button" variant="outline" onClick={() => loadRoadmap()} disabled={loading}>
               <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
               Refresh
@@ -296,11 +297,11 @@ export function Roadmap({ activeProject }: RoadmapProps) {
                   <div className="h-72">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={roadmap.sizeBuckets} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="label" />
-                        <YAxis allowDecimals={false} />
-                        <Tooltip />
-                        <Bar dataKey="count" name="Capabilities" radius={[6, 6, 0, 0]} />
+                        <CartesianGrid stroke="var(--color-border)" strokeDasharray="3 3" />
+                        <XAxis dataKey="label" tick={{ fill: 'var(--color-text-muted)' }} axisLine={{ stroke: 'var(--color-border-strong)' }} tickLine={{ stroke: 'var(--color-border)' }} />
+                        <YAxis allowDecimals={false} tick={{ fill: 'var(--color-text-muted)' }} axisLine={{ stroke: 'var(--color-border-strong)' }} tickLine={{ stroke: 'var(--color-border)' }} />
+                        <Tooltip contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-card)', color: 'var(--color-text)' }} />
+                        <Bar dataKey="count" name="Capabilities" fill="var(--color-primary)" radius={[6, 6, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -317,14 +318,14 @@ export function Roadmap({ activeProject }: RoadmapProps) {
                 <div className="h-80">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={roadmap.pressureByTargetMonth} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="month" />
-                      <YAxis allowDecimals={false} />
-                      <Tooltip />
-                      <Bar dataKey="capabilityCount" name="Capabilities" radius={[6, 6, 0, 0]} />
-                      <Bar dataKey="largeOrTooLargeCount" name="Large / too large" radius={[6, 6, 0, 0]} />
-                      <Bar dataKey="atRiskCount" name="At risk / off course" radius={[6, 6, 0, 0]} />
-                      <Bar dataKey="lowConfidenceCount" name="Low confidence" radius={[6, 6, 0, 0]} />
+                      <CartesianGrid stroke="var(--color-border)" strokeDasharray="3 3" />
+                      <XAxis dataKey="month" tick={{ fill: 'var(--color-text-muted)' }} axisLine={{ stroke: 'var(--color-border-strong)' }} tickLine={{ stroke: 'var(--color-border)' }} />
+                      <YAxis allowDecimals={false} tick={{ fill: 'var(--color-text-muted)' }} axisLine={{ stroke: 'var(--color-border-strong)' }} tickLine={{ stroke: 'var(--color-border)' }} />
+                      <Tooltip contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-card)', color: 'var(--color-text)' }} />
+                      <Bar dataKey="capabilityCount" name="Capabilities" fill="var(--color-primary)" radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="largeOrTooLargeCount" name="Large / too large" fill="var(--color-warning)" radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="atRiskCount" name="At risk / off course" fill="var(--color-danger)" radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="lowConfidenceCount" name="Low confidence" fill="var(--color-info)" radius={[6, 6, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -430,7 +431,7 @@ function RoadmapCapabilityCard({
         <div className="min-w-0">
           <h3 className="truncate font-medium">{capability.title}</h3>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            <Badge variant={COURSE_VARIANTS[capability.course.status]}>{COURSE_LABELS[capability.course.status]}</Badge>
+            <Badge variant={COURSE_VARIANTS[capability.course.status]} className={statusPillClass(capability.course.status)}>{COURSE_LABELS[capability.course.status]}</Badge>
             {capability.suggestedSplit && <Badge variant="outline">Split suggested</Badge>}
           </div>
         </div>
@@ -506,7 +507,7 @@ function RoadmapCapabilityCard({
       {capability.course.reasons.length > 0 && (
         <div className="mt-3 space-y-1 text-xs text-muted-foreground">
           {capability.course.reasons.slice(0, 2).map((reason) => (
-            <div key={reason} className="flex gap-1.5"><ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />{reason}</div>
+            <div key={reason} className="flex gap-1.5"><ShieldAlert className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", statusTextClass("needs-attention"))} />{reason}</div>
           ))}
         </div>
       )}

@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '../../lib/utils';
-const alertVariants = cva('relative w-full rounded-lg border px-4 py-3 text-sm', {
-  variants: { variant: { default: 'bg-background text-foreground', destructive: 'border-destructive/50 text-destructive dark:border-destructive' } },
+const alertVariants = cva('relative w-full rounded-[var(--radius-card)] border px-4 py-3 text-sm', {
+  variants: { variant: { default: 'bg-card text-foreground shadow-sm', destructive: 'status-surface status-danger text-danger' } },
   defaultVariants: { variant: 'default' }
 });
 export interface AlertProps extends React.HTMLAttributes<HTMLDivElement>, VariantProps<typeof alertVariants> {}

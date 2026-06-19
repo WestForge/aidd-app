@@ -1138,6 +1138,9 @@ export interface DeliveryPackageFileDetail {
   sizeBytes?: number;
   extension?: string;
   editable: boolean;
+  title?: string;
+  status?: string;
+  body?: string;
 }
 
 export interface DeliveryPackageDetail extends DeliveryPackageSummary {

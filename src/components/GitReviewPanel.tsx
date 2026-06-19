@@ -4,6 +4,7 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Select } from './ui/select';
 import { Textarea } from './ui/textarea';
+import { statusPillClass, statusSurfaceClass } from '../lib/statusTheme';
 
 type ReviewVersion = 'local' | 'remote' | 'base';
 
@@ -161,14 +162,14 @@ export function GitReviewPanel({ activeProject }: GitReviewPanelProps) {
   }
 
   return (
-    <Card className="border-yellow-500/40">
+    <Card className={statusSurfaceClass('review-needed')}>
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <CardTitle>Review needed</CardTitle>
             <CardDescription>{state.message}</CardDescription>
           </div>
-          <Badge variant="secondary">{statusLabel(state.status)}</Badge>
+          <Badge variant="outline" className={statusPillClass(state.status)}>{statusLabel(state.status)}</Badge>
         </div>
       </CardHeader>
 
@@ -233,7 +234,7 @@ export function GitReviewPanel({ activeProject }: GitReviewPanelProps) {
           </div>
         ) : null}
 
-        {message ? <div className="rounded-md border px-3 py-2 text-sm">{message}</div> : null}
+        {message ? <div className={statusSurfaceClass(state.status, "rounded-md border px-3 py-2 text-sm")}>{message}</div> : null}
 
         <div className="flex flex-wrap justify-end gap-2">
           <Button type="button" variant="outline" disabled={busy} onClick={cancelReview}>Cancel review</Button>

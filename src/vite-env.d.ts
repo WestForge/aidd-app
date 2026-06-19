@@ -1083,6 +1083,9 @@ interface AiddDeliveryPackageFile {
   sizeBytes?: number;
   extension?: string;
   editable: boolean;
+  title?: string;
+  status?: string;
+  body?: string;
 }
 
 interface AiddDeliveryPackageDetail extends AiddDeliveryPackageSummary {

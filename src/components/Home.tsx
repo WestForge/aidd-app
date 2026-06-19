@@ -17,6 +17,8 @@ import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
+import { cn } from '../lib/utils';
+import { statusPillClass, statusTextClass, statusToneClass } from '../lib/statusTheme';
 
 interface HomeProps {
   packages: DeliveryBundle[];
@@ -92,7 +94,7 @@ function ActionRow({
         <div className="truncate text-sm font-medium">{title}</div>
         <div className="truncate text-xs text-muted-foreground">{detail}</div>
       </div>
-      <Badge variant="secondary" className="shrink-0 capitalize">{formatStatus(status)}</Badge>
+      <Badge variant="outline" className={statusPillClass(status, 'shrink-0 capitalize')}>{formatStatus(status)}</Badge>
     </button>
   );
 }
@@ -221,7 +223,7 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
                   {blockers.map((item) => (
                     <div key={item.id} className="flex items-center justify-between rounded-lg border p-3">
                       <div className="flex items-start gap-3">
-                        <CircleAlert className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                        <CircleAlert className={cn("mt-0.5 h-4 w-4", statusTextClass("blocked"))} />
                         <div>
                           <div className="text-sm font-medium">{item.label}</div>
                           <div className="text-sm text-muted-foreground">{item.detail}</div>
@@ -334,7 +336,7 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
                     </div>
                     {workspaceHasAiddBoundaryIssue && (
                       <Alert>
-                        <CircleAlert className="h-4 w-4" />
+                        <CircleAlert className={cn("h-4 w-4", statusTextClass("needs-attention"))} />
                         <AlertTitle>{workspaceContainsAiddProject ? 'Workspace contains the active AIDD project' : 'Workspace is inside the active AIDD project'}</AlertTitle>
                         <AlertDescription>Choose the source-code workspace only. The active AIDD project must stay outside the workspace that agents will read.</AlertDescription>
                       </Alert>
@@ -352,7 +354,7 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
                 ) : (
                   <>
                     <Alert>
-                      <CircleAlert className="h-4 w-4" />
+                      <CircleAlert className={cn("h-4 w-4", statusTextClass("needs-attention"))} />
                       <AlertTitle>Source workspace not set</AlertTitle>
                       <AlertDescription>Health Check will warn until you choose the implementation directory that contains the source code.</AlertDescription>
                     </Alert>
@@ -372,7 +374,7 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
               <CardHeader>
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2"><UploadCloud className="h-5 w-5" /><CardTitle>Workspace publishing</CardTitle></div>
-                  {publishStatus && <Badge variant={publishStateVariant(publishStatus.state)}>{publishStatus.label}</Badge>}
+                  {publishStatus && <Badge variant={publishStateVariant(publishStatus.state)} className={statusPillClass(publishStatus.state)}>{publishStatus.label}</Badge>}
                 </div>
                 <CardDescription>Publish approved AIDD context into the source workspace docs directory for agents to read.</CardDescription>
               </CardHeader>
@@ -403,7 +405,7 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
 
                     {publishStatus.blockers.length > 0 && (
                       <Alert>
-                        <CircleAlert className="h-4 w-4" />
+                        <CircleAlert className={cn("h-4 w-4", statusTextClass("blocked"))} />
                         <AlertTitle>Publishing blocked — {publishBlockingReason}</AlertTitle>
                         <AlertDescription>
                           <ul className="mt-2 list-disc space-y-1 pl-4">
@@ -417,7 +419,7 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
 
                     {publishStatus.blockers.length === 0 && publishStatus.state !== 'up-to-date' && (
                       <Alert>
-                        <CircleAlert className="h-4 w-4" />
+                        <CircleAlert className={cn("h-4 w-4", statusTextClass("needs-attention"))} />
                         <AlertTitle>{publishStatus.label}</AlertTitle>
                         <AlertDescription>{publishStatus.message}</AlertDescription>
                       </Alert>
@@ -429,7 +431,7 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
                         <ul className="list-disc space-y-1 pl-4 text-muted-foreground">
                           {publishOutputIssues.slice(0, 8).map((output) => (
                             <li key={output.path}>
-                              <span className="font-medium text-foreground">{output.path}</span>: {output.status} — {output.message}
+                              <span className="font-medium text-foreground">{output.path}</span>: <span className={cn("status-text", statusToneClass(output.status))}>{output.status}</span> — {output.message}
                             </li>
                           ))}
                         </ul>
@@ -441,7 +443,7 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
 
                     {publishStatus.warnings.length > 0 && (
                       <div className="rounded-lg border p-3 text-xs">
-                        <div className="mb-2 font-medium text-foreground">Warnings</div>
+                        <div className={cn("mb-2 font-medium", statusTextClass("warning"))}>Warnings</div>
                         <ul className="list-disc space-y-1 pl-4 text-muted-foreground">
                           {publishStatus.warnings.map((warning) => (
                             <li key={warning}>{warning}</li>
@@ -452,7 +454,7 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
 
                     {publishResult && (
                       <div className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
-                        Published: {publishResult.writtenFiles.length} generated file{publishResult.writtenFiles.length === 1 ? '' : 's'} updated, {publishResult.skippedFiles.length} skipped.
+                        <span className={statusTextClass("published")}>Published:</span> {publishResult.writtenFiles.length} generated file{publishResult.writtenFiles.length === 1 ? '' : 's'} updated, {publishResult.skippedFiles.length} skipped.
                       </div>
                     )}
 
@@ -493,7 +495,7 @@ export function Home({ packages, onSelectPackage, activeProject, onProjectUpdate
                 {status?.setup.map((item) => (
                   <div key={item.id} className="flex items-center justify-between gap-3 text-sm">
                     <span>{item.label}</span>
-                    {item.complete ? <CheckCircle2 className="h-4 w-4" /> : <Badge variant="outline">Required</Badge>}
+                    {item.complete ? <CheckCircle2 className={cn("h-4 w-4", statusTextClass("complete"))} /> : <Badge variant="outline" className={statusPillClass("blocked")}>Required</Badge>}
                   </div>
                 ))}
               </CardContent>

@@ -2,5 +2,49 @@ import type { DeliveryBundle } from '../domain/types';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { statusPillClass } from '../lib/statusTheme';
 interface ReviewsProps { bundles: DeliveryBundle[]; selectedId: string; onSelectBundle: (id: string) => void; bundle: DeliveryBundle; onChange: (bundle: DeliveryBundle) => void; }
-export function Reviews({ bundles, selectedId, onSelectBundle, bundle, onChange }: ReviewsProps) { return <div className="flex h-full flex-col overflow-hidden"><header className="flex h-16 shrink-0 items-center border-b px-6"><div><h1 className="text-xl font-semibold">Review</h1><p className="text-sm text-muted-foreground">Review delivery package readiness and approvals.</p></div></header><main className="grid min-h-0 flex-1 gap-4 overflow-hidden p-6 xl:grid-cols-[360px_1fr]"><Card className="overflow-auto"><CardHeader><CardTitle>Packages</CardTitle></CardHeader><CardContent className="space-y-2">{bundles.map((item) => <button key={item.id} onClick={() => onSelectBundle(item.id)} className={`w-full rounded-lg border p-3 text-left hover:bg-accent ${selectedId === item.id ? 'ring-2 ring-ring' : ''}`}><div className="font-medium">{item.id}</div><div className="text-sm text-muted-foreground">{item.title}</div></button>)}</CardContent></Card><Card><CardHeader><CardTitle>{bundle.title}</CardTitle><CardDescription>{bundle.id}</CardDescription></CardHeader><CardContent className="space-y-3"><Badge variant="outline">{bundle.status.replace(/-/g, ' ')}</Badge><div className="flex gap-2"><Button variant="outline" onClick={() => onChange({ ...bundle, status: 'changes-requested' })}>Request changes</Button><Button onClick={() => onChange({ ...bundle, status: 'approved-for-ai' })}>Approve</Button></div></CardContent></Card></main></div>; }
+export function Reviews({ bundles, selectedId, onSelectBundle, bundle, onChange }: ReviewsProps) {
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <header className="flex h-16 shrink-0 items-center border-b px-6">
+        <div>
+          <h1 className="text-xl font-semibold">Review</h1>
+          <p className="text-sm text-muted-foreground">Review delivery package readiness and approvals.</p>
+        </div>
+      </header>
+      <main className="grid min-h-0 flex-1 gap-4 overflow-hidden p-6 xl:grid-cols-[360px_1fr]">
+        <Card className="overflow-auto">
+          <CardHeader>
+            <CardTitle>Packages</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {bundles.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => onSelectBundle(item.id)}
+                className={`w-full rounded-lg border p-3 text-left hover:bg-accent ${selectedId === item.id ? 'ring-2 ring-ring' : ''}`}
+              >
+                <div className="font-medium">{item.id}</div>
+                <div className="text-sm text-muted-foreground">{item.title}</div>
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>{bundle.title}</CardTitle>
+            <CardDescription>{bundle.id}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Badge variant="outline" className={statusPillClass(bundle.status)}>{bundle.status.replace(/-/g, ' ')}</Badge>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => onChange({ ...bundle, status: 'changes-requested' })}>Request changes</Button>
+              <Button onClick={() => onChange({ ...bundle, status: 'approved-for-ai' })}>Approve</Button>
+            </div>
+          </CardContent>
+        </Card>
+      </main>
+    </div>
+  );
+}

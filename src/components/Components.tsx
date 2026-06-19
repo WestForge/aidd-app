@@ -46,6 +46,7 @@ import { Select } from "./ui/select";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { cn } from "../lib/utils";
+import { statusBarClass, statusPillClass, statusSurfaceClass, statusTextClass } from "../lib/statusTheme";
 
 const statusOptions: AiddSetupStatus[] = [
   "not-started",
@@ -378,53 +379,52 @@ const statusVisuals: Record<
 > = {
   "not-started": {
     icon: CircleDashed,
-    className: "text-muted-foreground",
-    surfaceClassName: "border-muted-foreground/30 bg-muted/20",
-    badgeClassName:
-      "border-muted-foreground/30 bg-muted/40 text-muted-foreground",
-    barClassName: "bg-muted-foreground/45",
+    className: statusTextClass("not-started"),
+    surfaceClassName: statusSurfaceClass("not-started"),
+    badgeClassName: statusPillClass("not-started"),
+    barClassName: statusBarClass("not-started"),
   },
   draft: {
     icon: Pencil,
-    className: "text-sky-400",
-    surfaceClassName: "border-sky-400/45 bg-sky-400/10",
-    badgeClassName: "border-sky-400/45 bg-sky-400/15 text-sky-100",
-    barClassName: "bg-sky-400",
+    className: statusTextClass("draft"),
+    surfaceClassName: statusSurfaceClass("draft"),
+    badgeClassName: statusPillClass("draft"),
+    barClassName: statusBarClass("draft"),
   },
   "in-review": {
     icon: Eye,
-    className: "text-amber-400",
-    surfaceClassName: "border-amber-400/50 bg-amber-400/10",
-    badgeClassName: "border-amber-400/50 bg-amber-400/15 text-amber-100",
-    barClassName: "bg-amber-400",
+    className: statusTextClass("in-review"),
+    surfaceClassName: statusSurfaceClass("in-review"),
+    badgeClassName: statusPillClass("in-review"),
+    barClassName: statusBarClass("in-review"),
   },
   active: {
     icon: PlayCircle,
-    className: "text-emerald-400",
-    surfaceClassName: "border-emerald-400/55 bg-emerald-400/10",
-    badgeClassName: "border-emerald-400/55 bg-emerald-400/15 text-emerald-100",
-    barClassName: "bg-emerald-400",
+    className: statusTextClass("active"),
+    surfaceClassName: statusSurfaceClass("active"),
+    badgeClassName: statusPillClass("active"),
+    barClassName: statusBarClass("active"),
   },
   deprecated: {
     icon: Archive,
-    className: "text-orange-400",
-    surfaceClassName: "border-orange-400/50 bg-orange-400/10",
-    badgeClassName: "border-orange-400/50 bg-orange-400/15 text-orange-100",
-    barClassName: "bg-orange-400",
+    className: statusTextClass("deprecated"),
+    surfaceClassName: statusSurfaceClass("deprecated"),
+    badgeClassName: statusPillClass("deprecated"),
+    barClassName: statusBarClass("deprecated"),
   },
   complete: {
     icon: CheckCircle2,
-    className: "text-green-400",
-    surfaceClassName: "border-green-400/55 bg-green-400/10",
-    badgeClassName: "border-green-400/55 bg-green-400/15 text-green-100",
-    barClassName: "bg-green-400",
+    className: statusTextClass("complete"),
+    surfaceClassName: statusSurfaceClass("complete"),
+    badgeClassName: statusPillClass("complete"),
+    barClassName: statusBarClass("complete"),
   },
   skipped: {
     icon: SkipForward,
-    className: "text-zinc-400",
-    surfaceClassName: "border-zinc-400/40 bg-zinc-400/10",
-    badgeClassName: "border-zinc-400/40 bg-zinc-400/15 text-zinc-100",
-    barClassName: "bg-zinc-400",
+    className: statusTextClass("skipped"),
+    surfaceClassName: statusSurfaceClass("skipped"),
+    badgeClassName: statusPillClass("skipped"),
+    barClassName: statusBarClass("skipped"),
   },
 };
 
@@ -450,7 +450,7 @@ function StatusIcon({
 
 function StatusPill({ status }: { status?: string }) {
   return (
-    <span className="inline-flex items-center gap-1.5 capitalize">
+    <span className={cn("inline-flex items-center gap-1.5 capitalize", statusTextClass(status))}>
       <StatusIcon status={status} />
       {statusLabel(status)}
     </span>
@@ -462,7 +462,7 @@ function StatusBadge({ status, label }: { status?: string; label?: string }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs font-medium capitalize",
+        "capitalize",
         visual.badgeClassName,
       )}
     >
@@ -2116,10 +2116,10 @@ export function Components({
                       </div>
                       <div className="flex shrink-0 items-start gap-2">
                         <div className="flex flex-col items-end gap-1">
-                          <Badge variant="outline">
+                          <Badge variant="outline" className={statusPillClass(component.status)}>
                             <StatusPill status={component.status} />
                           </Badge>
-                          <Badge variant={component.contract?.status === "current" ? "secondary" : "outline"}>
+                          <Badge variant="outline" className={statusPillClass(component.contract?.status === "current" ? "current" : "not-started")}>
                             Contract: {contractLabel(component.contract?.status)}
                           </Badge>
                         </div>
@@ -2224,7 +2224,7 @@ export function Components({
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <Badge variant="outline">{editingTechnicalChange.id}</Badge>
-                <Badge variant={editingTechnicalChange.status === "approved" ? "secondary" : "outline"} className="capitalize">
+                <Badge variant="outline" className={statusPillClass(editingTechnicalChange.status, "capitalize")}>
                   {technicalChangeStatusLabel(editingTechnicalChange.status)}
                 </Badge>
               </div>
@@ -2351,7 +2351,7 @@ export function Components({
               status={technicalChangeReviewPackageDragFilePath ? "complete" : "not-started"}
               className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
             />
-            <Archive className={cn("h-4 w-4 text-muted-foreground", technicalChangeReviewPackageDragFilePath && "text-green-400")} />
+            <Archive className={cn("h-4 w-4 text-muted-foreground", technicalChangeReviewPackageDragFilePath && statusTextClass("ready"))} />
             <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
               Review package
             </span>
@@ -2731,7 +2731,7 @@ export function Components({
             className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
           />
           <div className="flex items-center gap-1.5 text-muted-foreground">
-            <Archive className={cn("h-4 w-4", reviewPackageDragFilePath && "text-green-400")} />
+            <Archive className={cn("h-4 w-4", reviewPackageDragFilePath && statusTextClass("ready"))} />
           </div>
           <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
             Review package
@@ -2766,7 +2766,7 @@ export function Components({
             className="absolute right-1.5 top-1.5 h-3.5 w-3.5"
           />
           <div className="flex items-center gap-1.5 text-muted-foreground">
-            <ShieldAlert className={cn("h-4 w-4", technicalReviewPackageDragFilePath && "text-green-400")} />
+            <ShieldAlert className={cn("h-4 w-4", technicalReviewPackageDragFilePath && statusTextClass("ready"))} />
           </div>
           <span className="line-clamp-1 px-1 text-center font-medium leading-tight">
             Technical review
@@ -3015,10 +3015,10 @@ export function Components({
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-medium">{change.id}</span>
-                            <Badge variant={change.status === "approved" ? "secondary" : "outline"} className="capitalize">
+                            <Badge variant="outline" className={statusPillClass(change.status, "capitalize")}>
                               {technicalChangeStatusLabel(change.status)}
                             </Badge>
-                            <Badge variant="outline" className="capitalize">
+                            <Badge variant="outline" className={statusPillClass(change.risk, "capitalize")}>
                               {change.risk} risk
                             </Badge>
                           </div>

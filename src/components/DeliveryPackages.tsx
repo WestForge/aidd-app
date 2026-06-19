@@ -14,6 +14,8 @@ import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
+import { cn } from '../lib/utils';
+import { statusPillClass, statusToneClass } from '../lib/statusTheme';
 
 interface DeliveryPackagesProps {
   packages: DeliveryBundle[];
@@ -139,6 +141,10 @@ function workspacePublishLabel(item: DeliveryWorkItem) {
   if (item.workspacePublishStatus === 'missing') return 'Not in workspace';
   if (item.workspacePublishStatus === 'not-configured') return 'No workspace';
   return 'Not published';
+}
+
+function statusValueLabel(status?: string) {
+  return (status || 'draft').replace(/-/g, ' ');
 }
 
 export function DeliveryPackages({ packages, selectedId, onSelectPackage, activeProject }: DeliveryPackagesProps) {
@@ -307,6 +313,7 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, active
                 <CardContent className="flex-1 space-y-3">
                   {columnItems.map((item) => {
                     const created = formatDate(item.createdAt);
+                    const workspaceFiles = (item.workspaceDeliveryFiles || []).filter((file) => file.toLowerCase().endsWith('.md'));
                     return (
                       <article
                         key={item.id}
@@ -319,11 +326,11 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, active
                               <h3 className="mt-1 line-clamp-2 text-sm font-semibold leading-5">{item.title}</h3>
                             </div>
                             <div className="flex shrink-0 flex-col items-end gap-1">
-                              <Badge variant={item.packageType === 'technical' ? 'outline' : 'secondary'} className="text-[10px]">
+                              <Badge variant="outline" className={statusPillClass(item.packageType ?? 'capability', 'text-[10px]')}>
                                 {item.packageType === 'technical' ? 'Technical' : item.packageType === 'change' ? 'Change' : 'Capability'}
                               </Badge>
-                              <Badge variant="secondary" className="text-[10px]">
-                                {statusLabels[item.status] ?? item.status.replace(/-/g, ' ')}
+                              <Badge variant="outline" className={statusPillClass(item.status, 'text-[10px]')}>
+                                {statusValueLabel(item.status)}
                               </Badge>
                             </div>
                           </div>
@@ -350,10 +357,16 @@ export function DeliveryPackages({ packages, selectedId, onSelectPackage, active
                             </div>
                             <div className="flex items-center justify-between gap-2 pt-1">
                               <span>{item.workspacePhaseCount ?? item.phaseCount ?? 0} phase{(item.workspacePhaseCount ?? item.phaseCount) === 1 ? '' : 's'}</span>
-                              <span>{workspacePublishLabel(item)}</span>
+                              <span className={cn("status-text", statusToneClass(item.workspacePublishStatus))}>{workspacePublishLabel(item)}</span>
                             </div>
                             {item.workspaceStatus && item.workspacePublished && (
-                              <div className="text-[11px]">Workspace status: {statusLabels[item.workspaceStatus] ?? item.workspaceStatus.replace(/-/g, ' ')}</div>
+                              <div className="text-[11px]">Workspace status: <span className={cn("status-text", statusToneClass(item.workspaceStatus))}>{statusLabels[item.workspaceStatus] ?? item.workspaceStatus.replace(/-/g, ' ')}</span></div>
+                            )}
+                            {workspaceFiles.length > 0 && (
+                              <div className="line-clamp-2 text-[11px]">
+                                Workspace files: {workspaceFiles.slice(0, 4).join(', ')}
+                                {workspaceFiles.length > 4 ? ` +${workspaceFiles.length - 4}` : ''}
+                              </div>
                             )}
                             {item.workspacePackagePath && (
                               <div className="break-all text-[11px]">Workspace: {item.workspacePackagePath}</div>

@@ -4,6 +4,8 @@ import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
+import { cn } from '../lib/utils';
+import { statusPillClass, statusTextClass } from '../lib/statusTheme';
 
 function severityVariant(severity: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (severity === 'error') return 'destructive';
@@ -111,7 +113,7 @@ export function ProjectValidation({ activeProject, onProjectChanged }: { activeP
             <AlertDescription className="space-y-2">
               <div>{repair.changes.length ? repair.changes.join(', ') : 'Required project data already matched safe repair expectations.'}</div>
               {repair.logPath ? <div>Data repair log: <code>{repair.logPath}</code></div> : null}
-              {repair.warnings.length ? <div className="text-yellow-700 dark:text-yellow-300">Warnings: {repair.warnings.join(', ')}</div> : null}
+              {repair.warnings.length ? <div className={statusTextClass('warning')}>Warnings: {repair.warnings.join(', ')}</div> : null}
             </AlertDescription>
           </Alert>
         )}
@@ -132,7 +134,7 @@ export function ProjectValidation({ activeProject, onProjectChanged }: { activeP
                 </ul>
               ) : <div>No template or front matter changes were needed.</div>}
               {upgrade.logPath ? <div>Template repair log: <code>{upgrade.logPath}</code></div> : null}
-              {upgrade.warnings.length ? <div className="text-yellow-700 dark:text-yellow-300">Warnings: {upgrade.warnings.join(', ')}</div> : null}
+              {upgrade.warnings.length ? <div className={statusTextClass('warning')}>Warnings: {upgrade.warnings.join(', ')}</div> : null}
             </AlertDescription>
           </Alert>
         )}
@@ -176,7 +178,7 @@ export function ProjectValidation({ activeProject, onProjectChanged }: { activeP
                   {section.items.map((item) => (
                     <div key={item.id} className="flex items-start justify-between gap-3 rounded-lg border p-3">
                       <div className="flex min-w-0 items-start gap-3">
-                        {item.severity === 'success' ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />}
+                        {item.severity === 'success' ? <CheckCircle2 className={cn("mt-0.5 h-4 w-4 shrink-0", statusTextClass("success"))} /> : <CircleAlert className={cn("mt-0.5 h-4 w-4 shrink-0", statusTextClass(item.severity))} />}
                         <div className="min-w-0">
                           <div className="text-sm font-medium">{item.title}</div>
                           <div className="text-sm text-muted-foreground">{item.message}</div>
@@ -184,7 +186,7 @@ export function ProjectValidation({ activeProject, onProjectChanged }: { activeP
                           {item.action && <div className="mt-2 text-xs font-medium text-muted-foreground">Action: {item.action}</div>}
                         </div>
                       </div>
-                      <Badge variant={severityVariant(item.severity)}>{item.severity}</Badge>
+                      <Badge variant={severityVariant(item.severity)} className={statusPillClass(item.severity)}>{item.severity}</Badge>
                     </div>
                   ))}
                 </CardContent>
@@ -222,7 +224,7 @@ function RepairLogPanel({ logs, logPaths }: { logs: AiddProjectRepairLogEntry[];
           {latest.map((entry, index) => (
             <div key={`${entry.timestamp}-${entry.stage}-${index}`} className="rounded-lg border p-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant={logVariant(entry.level)}>{entry.level}</Badge>
+                <Badge variant={logVariant(entry.level)} className={statusPillClass(entry.level)}>{entry.level}</Badge>
                 <span className="font-medium">{entry.stage}</span>
                 <span className="text-xs text-muted-foreground">{new Date(entry.timestamp).toLocaleString()}</span>
               </div>

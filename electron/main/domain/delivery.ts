@@ -236,23 +236,47 @@ export function markdownHasCheckedTask(markdown: string) {
 export async function readWorkspaceDeliveryExecutionState(targetPath: string, publishedManifest?: any) {
   const files: string[] = [];
   const phaseStatuses: string[] = [];
+  const progressStatuses: string[] = [];
   let hasCheckedTask = false;
+  let phaseCount = 0;
 
   if (await exists(targetPath)) {
-    const entries = await fsp.readdir(targetPath, { withFileTypes: true });
-    entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-    for (const entry of entries) {
-      if (!entry.isFile() || !isWorkspaceDeliveryFileName(entry.name)) continue;
-      files.push(entry.name);
-      if (!isDeliveryPhaseFileName(entry.name)) continue;
-      const content = await fsp.readFile(path.join(targetPath, entry.name), 'utf8');
-      const phaseStatus = extractWorkspacePhaseStatus(content);
-      if (phaseStatus) phaseStatuses.push(phaseStatus);
-      if (markdownHasCheckedTask(content)) hasCheckedTask = true;
+    async function walk(currentDir: string, relativeDir = '') {
+      const entries = await fsp.readdir(currentDir, { withFileTypes: true });
+      entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+      for (const entry of entries) {
+        const relativePath = relativeDir ? normaliseRelativePath(path.join(relativeDir, entry.name)) : entry.name;
+        const absolutePath = path.join(currentDir, entry.name);
+
+        if (entry.isDirectory()) {
+          await walk(absolutePath, relativePath);
+          continue;
+        }
+
+        if (!entry.isFile()) continue;
+        files.push(relativePath);
+
+        const isTopLevelDeliveryFile = !relativeDir && isWorkspaceDeliveryFileName(entry.name);
+        const isMarkdown = path.extname(entry.name).toLowerCase() === '.md';
+        if (!isTopLevelDeliveryFile && !isMarkdown) continue;
+
+        const content = await fsp.readFile(absolutePath, 'utf8');
+        if (isTopLevelDeliveryFile && isDeliveryPhaseFileName(entry.name)) {
+          phaseCount += 1;
+          const phaseStatus = extractWorkspacePhaseStatus(content);
+          if (phaseStatus) phaseStatuses.push(phaseStatus);
+        } else if (isMarkdown) {
+          const progressStatus = extractWorkspacePhaseStatus(content);
+          if (progressStatus) progressStatuses.push(progressStatus);
+        }
+        if (markdownHasCheckedTask(content)) hasCheckedTask = true;
+      }
     }
+
+    await walk(targetPath);
   }
 
-  const phaseCount = files.filter(isDeliveryPhaseFileName).length;
   const manifestStatusRaw = String(publishedManifest?.status || '').trim();
   const manifestStatus = manifestStatusRaw ? normaliseStatusForDelivery(manifestStatusRaw) : '';
   const completeStatuses = new Set(['done', 'accepted', 'complete']);
@@ -261,7 +285,11 @@ export async function readWorkspaceDeliveryExecutionState(targetPath: string, pu
   let workspaceStatus = manifestStatus && manifestStatus !== 'packaging' ? manifestStatus : 'approved';
   if (phaseCount > 0 && phaseStatuses.length === phaseCount && phaseStatuses.every((status) => completeStatuses.has(status))) {
     workspaceStatus = 'done';
-  } else if (phaseStatuses.some((status) => inProgressStatuses.has(status) || completeStatuses.has(status)) || hasCheckedTask) {
+  } else if (
+    phaseStatuses.some((status) => inProgressStatuses.has(status) || completeStatuses.has(status)) ||
+    progressStatuses.some((status) => inProgressStatuses.has(status) || completeStatuses.has(status)) ||
+    hasCheckedTask
+  ) {
     workspaceStatus = 'in-progress';
   }
 
@@ -374,8 +402,9 @@ export async function writeDeliveryGeneratedTree(sourceRoot: string, targetRoot:
 
 export async function readDeliveryWorkspacePublicationState(projectPath: string, packageId: string, manifest?: any): Promise<Partial<DeliveryPackageSummary>> {
   const workspacePath = await readWorkspacePathForProject(projectPath);
-  if (!workspacePath) return { workspacePublishStatus: 'not-configured', workspacePublished: false };
-  const targetPath = workspaceDeliveryPackagePath(workspacePath, packageId);
+  const manifestWorkspacePath = String(manifest?.workspaceDelivery?.path || '').trim();
+  if (!workspacePath && !manifestWorkspacePath) return { workspacePublishStatus: 'not-configured', workspacePublished: false };
+  const targetPath = workspacePath ? workspaceDeliveryPackagePath(workspacePath, packageId) : manifestWorkspacePath;
   const manifestPath = path.join(targetPath, 'manifest.json');
   if (!(await exists(manifestPath))) {
     return { workspacePackagePath: targetPath, workspacePublishStatus: 'missing', workspacePublished: false };
@@ -1302,8 +1331,30 @@ export function phaseIdFromFileName(fileName: string) {
   return fileName.replace(/\.md$/i, '');
 }
 
-export async function listDeliveryPackageFiles(packageDir: string): Promise<DeliveryPackageFileDetail[]> {
+export async function readDeliveryPackagePhasesFromDir(packageDir: string): Promise<DeliveryPackagePhaseDetail[]> {
+  if (!(await exists(packageDir))) return [];
+
+  const entries = await fsp.readdir(packageDir, { withFileTypes: true });
+  const phases: DeliveryPackagePhaseDetail[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !isDeliveryPhaseFileName(entry.name)) continue;
+    const filePath = path.join(packageDir, entry.name);
+    const parsed = matter(await fsp.readFile(filePath, 'utf8'));
+    phases.push({
+      id: String(parsed.data.id || phaseIdFromFileName(entry.name)),
+      title: String(parsed.data.title || phaseIdFromFileName(entry.name).replace(/^(phase|stage)-/, '').replace(/-/g, ' ')),
+      status: String(parsed.data.status || 'draft'),
+      fileName: entry.name,
+      body: parsed.content.trim()
+    });
+  }
+
+  return phases.sort((a, b) => a.fileName.localeCompare(b.fileName, undefined, { numeric: true }));
+}
+
+export async function listDeliveryPackageFiles(packageDir: string, options: { includeMarkdownBody?: boolean } = {}): Promise<DeliveryPackageFileDetail[]> {
   const files: DeliveryPackageFileDetail[] = [];
+  if (!(await exists(packageDir))) return files;
 
   async function walk(currentDir: string, relativeDir = '') {
     const entries = await fsp.readdir(currentDir, { withFileTypes: true });
@@ -1328,14 +1379,28 @@ export async function listDeliveryPackageFiles(packageDir: string): Promise<Deli
 
       const stat = await fsp.stat(absolutePath);
       const extension = path.extname(entry.name).toLowerCase();
-      files.push({
+      const file: DeliveryPackageFileDetail = {
         name: entry.name,
         relativePath,
         kind: 'file',
         sizeBytes: stat.size,
         extension,
         editable: extension === '.md'
-      });
+      };
+
+      if (options.includeMarkdownBody && extension === '.md') {
+        const content = await fsp.readFile(absolutePath, 'utf8');
+        try {
+          const parsed = matter(content);
+          file.body = parsed.content.trim();
+          if (parsed.data.title) file.title = String(parsed.data.title);
+          if (parsed.data.status) file.status = String(parsed.data.status);
+        } catch {
+          file.body = content.trim();
+        }
+      }
+
+      files.push(file);
     }
   }
 
@@ -1372,30 +1437,30 @@ export async function readDeliveryPackage(input: { projectPath: string; id: stri
     ...(await readDeliveryWorkspacePublicationState(input.projectPath, fallbackId, manifest))
   };
 
-  const entries = await fsp.readdir(target.dir, { withFileTypes: true });
-  const phases: DeliveryPackagePhaseDetail[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !/^(phase|stage)-[\w-]+\.md$/i.test(entry.name)) continue;
-    const filePath = path.join(target.dir, entry.name);
-    const parsed = matter(await fsp.readFile(filePath, 'utf8'));
-    phases.push({
-      id: String(parsed.data.id || phaseIdFromFileName(entry.name)),
-      title: String(parsed.data.title || phaseIdFromFileName(entry.name).replace(/^(phase|stage)-/, '').replace(/-/g, ' ')),
-      status: String(parsed.data.status || 'draft'),
-      fileName: entry.name,
-      body: parsed.content.trim()
-    });
+  const workspacePackagePath = String(summary.workspacePackagePath || '').trim();
+  let workspacePackageExists = false;
+  if (workspacePackagePath && await exists(workspacePackagePath)) {
+    try {
+      workspacePackageExists = (await fsp.stat(workspacePackagePath)).isDirectory();
+    } catch {
+      workspacePackageExists = false;
+    }
   }
-  phases.sort((a, b) => a.fileName.localeCompare(b.fileName, undefined, { numeric: true }));
+  const readPackageDir = workspacePackageExists ? workspacePackagePath : target.dir;
+  const sourcePhases = await readDeliveryPackagePhasesFromDir(target.dir);
+  const workspacePhases = workspacePackageExists ? await readDeliveryPackagePhasesFromDir(workspacePackagePath) : [];
+  const sourceStrategyBody = await readMarkdownBody(path.join(target.dir, 'implementation-strategy.md'));
+  const workspaceStrategyBody = workspacePackageExists ? await readMarkdownBody(path.join(workspacePackagePath, 'implementation-strategy.md')) : '';
+  const displayFiles = await listDeliveryPackageFiles(readPackageDir, { includeMarkdownBody: true });
 
   return {
     ...summary,
-    packagePath: target.dir,
+    packagePath: readPackageDir,
     snapshotBody: await readMarkdownBody(path.join(target.dir, 'snapshot.md')),
-    strategyBody: await readMarkdownBody(path.join(target.dir, 'implementation-strategy.md')),
+    strategyBody: workspaceStrategyBody || sourceStrategyBody,
     packagedBody: await readMarkdownBody(path.join(target.dir, 'delivery-package.md')) || await readMarkdownBody(path.join(target.dir, 'package.md')),
-    phases,
-    files: await listDeliveryPackageFiles(target.dir)
+    phases: workspacePhases.length ? workspacePhases : sourcePhases,
+    files: displayFiles.length ? displayFiles : await listDeliveryPackageFiles(target.dir, { includeMarkdownBody: true })
   };
 }
 
