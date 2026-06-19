@@ -138,12 +138,12 @@ jobs:
           path: |
             dist/**/*.dmg
             dist/**/*.pkg
-            dist/**/*mac*.zip
+            dist/**/*.zip
             dist/**/*.blockmap
             dist/**/latest-mac.yml
             release/**/*.dmg
             release/**/*.pkg
-            release/**/*mac*.zip
+            release/**/*.zip
             release/**/*.blockmap
             release/**/latest-mac.yml
           if-no-files-found: warn
@@ -217,6 +217,11 @@ jobs:
       - package-linux
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -233,12 +238,14 @@ jobs:
           echo "Creating release for tag: ${TAG_NAME}"
 
           mapfile -d '' assets < <(
-            find artifacts -type f \
+            find artifacts \
+              -path '*/win-unpacked/*' -prune \
+              -o -type f \
               \( -name '*.exe' \
               -o -name '*.msi' \
               -o -name '*.dmg' \
               -o -name '*.pkg' \
-              -o -name '*mac*.zip' \
+              -o -name '*.zip' \
               -o -name '*.AppImage' \
               -o -name '*.deb' \
               -o -name '*.tar.gz' \
