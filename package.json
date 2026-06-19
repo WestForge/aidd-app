@@ -7,6 +7,7 @@
     "email": "maintainers@westforge.net"
   },
   "description": "AIDD desktop app starter: project creation, workflow-first, Markdown-backed, Git-ready.",
+  "desktopName": "AIDD",
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:main\"",
@@ -146,7 +147,6 @@
         "owner": "WestForge",
         "repo": "aidd-app"
       }
-    ],
-    "desktopName": "AIDD"
+    ]
   }
 }
